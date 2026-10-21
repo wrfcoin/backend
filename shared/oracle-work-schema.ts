@@ -1,0 +1,46 @@
+import { sql } from 'drizzle-orm';
+import { bigint, boolean, check, doublePrecision, foreignKey, index, integer, jsonb, pgTable, primaryKey, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { weatherStations } from './schema.js';
+
+// Mirrors raw migrations 0016 and 0018. Keep lifecycle checks in SQL because
+// they are database invariants as well as TypeScript declarations.
+export const stationRewardCycles = pgTable('station_reward_cycles', {
+  cycleId: text('cycle_id').primaryKey(), stationId: text('station_id').notNull(), ownerAddress: text('owner_address').notNull(),
+  observationId: text('observation_id').notNull(), observationDigest: text('observation_digest').notNull(),
+  observationObservedAt: timestamp('observation_observed_at', { withTimezone: true }).notNull(), observationAcceptedAt: timestamp('observation_accepted_at', { withTimezone: true }).notNull(),
+  networkId: text('network_id'), chainId: text('chain_id'), genesisHash: text('genesis_hash'), commitId: text('commit_id'),
+  commitAcceptedAt: timestamp('commit_accepted_at', { withTimezone: true }), commitMinedHeight: bigint('commit_mined_height', { mode: 'number' }), commitMinedHash: text('commit_mined_hash'),
+  approvals: integer('approvals'), rejections: integer('rejections'), requiredQuorum: integer('required_quorum'), quorumMinedAt: timestamp('quorum_mined_at', { withTimezone: true }),
+  revealAcceptedAt: timestamp('reveal_accepted_at', { withTimezone: true }), revealMinedHeight: bigint('reveal_mined_height', { mode: 'number' }), revealMinedHash: text('reveal_mined_hash'),
+  rewardAmountBaseUnits: text('reward_amount_base_units'), rewardAddress: text('reward_address'), rewardReason: text('reward_reason'), rewardBlockHeight: bigint('reward_block_height', { mode: 'number' }), rewardBlockHash: text('reward_block_hash'), rewardBlockTime: timestamp('reward_block_time', { withTimezone: true }), accountEarnedBefore: text('account_earned_before'), accountEarnedAfter: text('account_earned_after'), finalityPolicy: text('finality_policy'), authoritativeFinalizedHeight: bigint('authoritative_finalized_height', { mode: 'number' }), canonicalHashCheckedAt: timestamp('canonical_hash_checked_at', { withTimezone: true }), finalizedAt: timestamp('finalized_at', { withTimezone: true }),
+  lifecycleState: text('lifecycle_state').notNull().default('OBSERVATION_RECEIVED'), failureCode: text('failure_code'), stalledSince: timestamp('stalled_since', { withTimezone: true }), evidenceRefreshedAt: timestamp('evidence_refreshed_at', { withTimezone: true }).notNull().defaultNow(), createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(), version: integer('version').notNull().default(1),
+  workId: text('work_id'), workSchemaVersion: integer('work_schema_version'), commitHash: text('commit_hash'), nonce: text('nonce'), commitTimestamp: bigint('commit_timestamp', { mode: 'number' }), revealDeadline: bigint('reveal_deadline', { mode: 'number' }),
+}, table => [
+  foreignKey({ columns: [table.stationId], foreignColumns: [weatherStations.stationId], name: 'station_reward_cycles_station_fk' }).onDelete('cascade'),
+  uniqueIndex('station_reward_cycles_observation_unique').on(table.stationId, table.observationId),
+  uniqueIndex('uq_station_reward_cycles_chain_commit').on(table.networkId, table.chainId, table.genesisHash, table.commitId).where(sql`${table.commitId} is not null`),
+  uniqueIndex('uq_station_reward_cycles_work').on(table.genesisHash, table.workId).where(sql`${table.genesisHash} is not null and ${table.workId} is not null`),
+  index('idx_station_reward_cycles_owner_station').on(table.ownerAddress, table.stationId, table.observationAcceptedAt.desc()),
+  // backend#1210: reward-progress reads compare lower(owner_address) (migration 0021).
+  index('idx_station_reward_cycles_owner_lower_station').on(sql`lower(${table.ownerAddress})`, table.stationId, table.observationAcceptedAt.desc()),
+  index('idx_station_reward_cycles_state_refresh').on(table.lifecycleState, table.evidenceRefreshedAt),
+  check('station_reward_cycles_lifecycle_check', sql`${table.lifecycleState} in ('OBSERVATION_RECEIVED', 'VERIFYING', 'QUORUM_REACHED', 'FINALIZING_REWARD', 'REWARDED', 'FAILED')`),
+  check('station_reward_cycles_nonnegative_counts', sql`(${table.approvals} is null or ${table.approvals} >= 0) and (${table.rejections} is null or ${table.rejections} >= 0) and (${table.requiredQuorum} is null or ${table.requiredQuorum} > 0)`),
+  check('station_reward_cycles_chain_identity_complete', sql`(${table.networkId} is null and ${table.chainId} is null and ${table.genesisHash} is null) or (${table.networkId} is not null and ${table.chainId} is not null and ${table.genesisHash} is not null)`),
+  check('station_reward_cycles_finality_policy_check', sql`${table.finalityPolicy} is null or ${table.finalityPolicy} in ('BFT', 'PROBABILISTIC_DEPTH')`),
+]);
+
+export const oracleWorkItems = pgTable('oracle_work_items', {
+  workId: text('work_id').primaryKey(), schemaVersion: integer('schema_version').notNull().default(1), cycleId: text('cycle_id').notNull(), stationId: text('station_id').notNull(), observationId: text('observation_id').notNull(), observationDigest: text('observation_digest').notNull(), canonicalReading: jsonb('canonical_reading').notNull(), ownerAddress: text('owner_address').notNull(), chainId: text('chain_id').notNull(), networkId: text('network_id').notNull(), genesisHash: text('genesis_hash').notNull(), commitId: text('commit_id').notNull(), commitHash: text('commit_hash').notNull(), nonce: text('nonce').notNull(), commitTimestamp: bigint('commit_timestamp', { mode: 'number' }).notNull(), revealDeadline: bigint('reveal_deadline', { mode: 'number' }).notNull(), requiredQuorum: integer('required_quorum').notNull().default(2), evidenceTimestamp: timestamp('evidence_timestamp', { withTimezone: true }).notNull(), lifecycleState: text('lifecycle_state').notNull().default('ATTESTATIONS_PENDING'), createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, table => [
+  foreignKey({ columns: [table.cycleId], foreignColumns: [stationRewardCycles.cycleId], name: 'oracle_work_items_cycle_fk' }).onDelete('cascade'),
+  uniqueIndex('uq_oracle_work_items_cycle_version').on(table.genesisHash, table.cycleId, table.schemaVersion),
+  index('idx_oracle_work_items_state_deadline').on(table.lifecycleState, table.revealDeadline),
+  check('oracle_work_items_version_check', sql`${table.schemaVersion} = 1`), check('oracle_work_items_quorum_check', sql`${table.requiredQuorum} > 0 and ${table.requiredQuorum} <= 2`), check('oracle_work_items_time_check', sql`${table.commitTimestamp} > 0 and ${table.revealDeadline} >= ${table.commitTimestamp}`), check('oracle_work_items_state_check', sql`${table.lifecycleState} in ('ATTESTATIONS_PENDING', 'QUORUM_MINED', 'REVEAL_CLAIMED', 'REVEAL_SUBMITTED', 'REWARD_ENTRY_OBSERVED', 'FINALITY_RECONCILED', 'ACCOUNT_RECONCILED', 'MISSED_QUORUM')`), check('oracle_work_items_digest_check', sql`${table.observationDigest} ~ '^[0-9a-f]{64}$'`),
+]);
+
+export const oracleWorkClaimResults = pgTable('oracle_work_claim_results', {
+  workId: text('work_id').notNull(), genesisHash: text('genesis_hash').notNull(), oracleId: text('oracle_id').notNull(), attestationVersion: integer('attestation_version').notNull().default(1), state: text('state').notNull().default('DISPATCHABLE'), leaseVersion: integer('lease_version').notNull().default(0), leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }), leaseTokenHash: text('lease_token_hash'), idempotencyKey: text('idempotency_key'), resultDigest: text('result_digest'), approved: boolean('approved'), confidence: doublePrecision('confidence'), signature: text('signature'), attestationTimestamp: bigint('attestation_timestamp', { mode: 'number' }), resultCode: text('result_code'), core4TxId: text('core4_tx_id'), core4MinedAt: timestamp('core4_mined_at', { withTimezone: true }), evidenceTimestamp: timestamp('evidence_timestamp', { withTimezone: true }).notNull().defaultNow(), createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, table => [
+  primaryKey({ columns: [table.genesisHash, table.workId, table.oracleId, table.attestationVersion] }), foreignKey({ columns: [table.workId], foreignColumns: [oracleWorkItems.workId], name: 'oracle_work_claim_results_work_fk' }).onDelete('cascade'), index('idx_oracle_work_claim_results_claimable').on(table.oracleId, table.state, table.leaseExpiresAt), index('idx_oracle_work_claim_results_work_state').on(table.workId, table.genesisHash, table.state), check('oracle_work_claim_results_oracle_check', sql`${table.oracleId} in ('workstation', 'n5pro')`), check('oracle_work_claim_results_version_check', sql`${table.attestationVersion} > 0`), check('oracle_work_claim_results_state_check', sql`${table.state} in ('DISPATCHABLE', 'CLAIMED', 'VALIDATED', 'SIGNED', 'SUBMITTED', 'MINED', 'REJECTED', 'EXPIRED', 'FAILED')`),
+]);

@@ -1,0 +1,288 @@
+# WRFCoin testnet compose — coherence-hardened version
+# Fixes #471 (missing cross-chain/compute/storage/AI-ML services),
+#       #464 (api-gateway NFT+user absent — set TESTNET_MVP_SCOPE=true so
+#             both route through main-api instead of dedicated ports),
+#       #447 (entry points use .js, not .cjs).
+#
+# Stub services respond to /health with 200 JSON — enough for the api-gateway
+# to route to them without real backends running.
+# All entry points are inline Node.js (.js), not .cjs.
+version: '3.8'
+
+services:
+  # ── Main API server — all endpoints not yet split into dedicated services ──
+  main-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - '4001:4001'
+    environment:
+      - NODE_ENV=testnet
+      - PORT=4001
+      - DATABASE_URL=postgresql://wrfcoin:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required for testnet Postgres}@postgres:5432/wrfcoin
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required for testnet}
+      - API_KEY_ENCRYPTION_KEY=${API_KEY_ENCRYPTION_KEY}
+      - RPC_API_KEY=${RPC_API_KEY}
+      - ADMIN_TOKEN=${ADMIN_TOKEN}
+      # #753: container-reachable core4 node URL. NEVER loopback inside Docker —
+      # `localhost` resolves to the main-api container, not the node. Defaults to
+      # the canonical testnet node service name; override for split deploys.
+      - CORE4_API_URL=${CORE4_API_URL:-http://wrfcoin-node:8556}
+      - WRFCOIN_READER_TOKEN=${WRFCOIN_READER_TOKEN:-}
+      - WRFCOIN_CONTRIBUTOR_TOKEN=${WRFCOIN_CONTRIBUTOR_TOKEN:-}
+      - WRFCOIN_OPERATOR_TOKEN=${WRFCOIN_OPERATOR_TOKEN:-}
+      - WRFCOIN_MINING_REWARD_ADDRESS=${WRFCOIN_MINING_REWARD_ADDRESS:-}
+      - WRFCOIN_ADMIN_NFT_MINT_CONFIG=${WRFCOIN_ADMIN_NFT_MINT_CONFIG:-}
+      - WRFCOIN_ADMIN_NFT_TRANSFER_CONFIG=${WRFCOIN_ADMIN_NFT_TRANSFER_CONFIG:-}
+      - WRFCOIN_ADMIN_STEALTH_CONFIG=${WRFCOIN_ADMIN_STEALTH_CONFIG:-}
+      - WRFCOIN_ADMIN_GOVERNANCE_PROPOSAL_CONFIG=${WRFCOIN_ADMIN_GOVERNANCE_PROPOSAL_CONFIG:-}
+      - WRFCOIN_GOVERNANCE_PROPOSER_ADDRESS=${WRFCOIN_GOVERNANCE_PROPOSER_ADDRESS:-}
+      - WRFCOIN_GOVERNANCE_SIGNING_VERSION=${WRFCOIN_GOVERNANCE_SIGNING_VERSION:-}
+      - WRFCOIN_GOVERNANCE_CHAIN_ID=${WRFCOIN_GOVERNANCE_CHAIN_ID:-}
+      - WRFCOIN_GOVERNANCE_NETWORK_ID=${WRFCOIN_GOVERNANCE_NETWORK_ID:-}
+      # #866: advisory-only reference scorer. infra supplies oracle-reference
+      # on the wrfcoin-testnet network; outages do not affect rewards.
+      - REFERENCE_SHADOW=${REFERENCE_SHADOW:-0}
+      - ORACLE_REFERENCE_URL=${ORACLE_REFERENCE_URL:-http://oracle-reference:8010}
+      - ORACLE_REFERENCE_TIMEOUT_MS=${ORACLE_REFERENCE_TIMEOUT_MS:-5000}
+      # #755: HMAC secret for inbound SMS observation envelope verification.
+      # The gateway fails closed outside development — main-api will not start
+      # without this. Generate with `openssl rand -hex 32`.
+      - SMS_OBSERVATION_GATEWAY_SECRET=${SMS_OBSERVATION_GATEWAY_SECRET:?SMS_OBSERVATION_GATEWAY_SECRET is required for testnet (openssl rand -hex 32)}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:4001/health']
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  # ── API gateway — routes NFT+user to main-api via TESTNET_MVP_SCOPE (#464) ──
+  api-gateway:
+    build:
+      context: .
+      dockerfile: microservices/api-gateway/Dockerfile
+    ports:
+      - '4000:4000'
+    environment:
+      - NODE_ENV=testnet
+      - API_GATEWAY_PORT=4000
+      # Routes nftService and userService to main-api instead of absent 4002/4003
+      - TESTNET_MVP_SCOPE=true
+      - MAIN_SERVICE_URL=http://main-api:4001
+      - API_KEY_ENCRYPTION_KEY=${API_KEY_ENCRYPTION_KEY}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required for api-gateway}
+      - SERVICE_TOKEN=${SERVICE_TOKEN:?SERVICE_TOKEN is required for api-gateway}
+    depends_on:
+      main-api:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:4000/health']
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  # ── Cross-chain protocol service (#158) ──
+  cross-chain:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wrfcoin-testnet-cross-chain
+    restart: unless-stopped
+    profiles: ["full"]
+    ports:
+      - '127.0.0.1:3000:3000'
+    command:
+      - node
+      - server/cross_chain_protocol_server.js
+    environment:
+      NODE_ENV: testnet
+      PORT: '3000'
+      CORS_ORIGIN: http://localhost:5000
+      # #753: container-reachable core4 node URL (never loopback inside Docker)
+      CORE4_API_URL: ${CORE4_API_URL:-http://wrfcoin-node:8556}
+    depends_on:
+      main-api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./server:/app/server:ro
+      - ./server/services:/app/services:ro
+      - ./middleware:/app/middleware:ro
+      - ./shared:/app/shared:ro
+      - cross-chain-logs:/app/logs
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  # ── Compute networks service (#158) ──
+  compute:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wrfcoin-testnet-compute
+    restart: unless-stopped
+    profiles: ["full"]
+    ports:
+      - '127.0.0.1:6000:6000'
+    command:
+      - node
+      - server/compute_networks_server_fixed.js
+    environment:
+      NODE_ENV: testnet
+      PORT: '6000'
+      CORS_ORIGIN: http://localhost:5000
+      # #753: container-reachable core4 node URL (never loopback inside Docker)
+      CORE4_API_URL: ${CORE4_API_URL:-http://wrfcoin-node:8556}
+    depends_on:
+      main-api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./server:/app/server:ro
+      - ./middleware:/app/middleware:ro
+      - ./shared:/app/shared:ro
+      - compute-logs:/app/logs
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:6000/health']
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  # ── AI/ML stub (#471) ──
+  ai-ml:
+    image: node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43
+    ports:
+      - '6001:6001'
+    environment:
+      - PORT=6001
+      - SERVICE_NAME=ai-ml
+    command: >
+      node -e "
+        const http = require('http');
+        const PORT = process.env.PORT || 6001;
+        const NAME = process.env.SERVICE_NAME || 'stub';
+        http.createServer((req, res) => {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ status: 'ok', service: NAME, mode: 'testnet-stub' }));
+        }).listen(PORT, () => console.log(NAME + ' stub ready on ' + PORT));
+      "
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:6001/health || exit 1']
+      interval: 30s
+      timeout: 5s
+      start_period: 5s
+      retries: 3
+
+  # ── Node discovery service (#158) ──
+  node-discovery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wrfcoin-testnet-node-discovery
+    restart: unless-stopped
+    profiles: ["full"]
+    ports:
+      - '127.0.0.1:9001:9001'
+    command:
+      - node
+      - server/easy_node_discovery.js
+    environment:
+      NODE_ENV: testnet
+      NODE_DISCOVERY_PORT: '9001'
+      NODE_DISCOVERY_WS_PORT: '9002'
+      CORS_ORIGIN: http://localhost:5000,http://localhost:4000
+      # #753: container-reachable core4 node URL (never loopback inside Docker)
+      CORE4_API_URL: ${CORE4_API_URL:-http://wrfcoin-node:8556}
+    depends_on:
+      main-api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./server:/app/server:ro
+      - ./middleware:/app/middleware:ro
+      - ./shared:/app/shared:ro
+      - node-discovery-logs:/app/logs
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9001/health']
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+  # ── AlertManager Webhook Handler (Slack bridge) ──
+  alertmanager-webhook:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: wrfcoin-alertmanager-webhook
+    restart: unless-stopped
+    ports:
+      - '19093:19093'
+    # #754: run compiled JS baked into the runtime image. The runtime stage
+    # installs production deps only (`npm ci --omit=dev`), so `tsx` (a
+    # devDependency) is absent — `npx tsx` would fail or trigger a
+    # nondeterministic network fetch at start. The build compiles server/ into
+    # dist/, so use the compiled entrypoint and drop the source volume mounts.
+    command:
+      - node
+      - dist/server/alertmanager-webhook-server.js
+    environment:
+      NODE_ENV: testnet
+      ALERTMANAGER_WEBHOOK_PORT: '19093'
+      ALERTMANAGER_WEBHOOK_SECRET: ${ALERTMANAGER_WEBHOOK_SECRET}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL}
+      SLACK_ENABLED: ${SLACK_ENABLED:-true}
+      SLACK_CHANNEL_CRITICAL: ${SLACK_CHANNEL_CRITICAL:-#wrfcoin-alerts-critical}
+      SLACK_CHANNEL_WARNING: ${SLACK_CHANNEL_WARNING:-#wrfcoin-alerts-warnings}
+      SLACK_CHANNEL_INFO: ${SLACK_CHANNEL_INFO:-#wrfcoin-alerts}
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:19093/health']
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  # ── Postgres (main-api persistent state) ──
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: wrfcoin
+      POSTGRES_USER: wrfcoin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required for testnet Postgres}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U wrfcoin -d wrfcoin']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Redis (session + cache) ──
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  compute-logs:
+  cross-chain-logs:
+  node-discovery-logs:
+  postgres-data:

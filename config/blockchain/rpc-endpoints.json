@@ -1,0 +1,315 @@
+{
+  "$schema": "./rpc-endpoints-schema.json",
+  "version": "1.0.0",
+  "lastUpdated": "2026-01-21",
+  "chains": {
+    "ethereum": {
+      "name": "Ethereum",
+      "chainId": 1,
+      "nativeCurrency": "ETH",
+      "mainnet": {
+        "primary": "${ETHEREUM_RPC_PRIMARY}",
+        "fallback": [
+          "${ETHEREUM_RPC_FALLBACK}",
+          "https://ethereum.publicnode.com",
+          "https://eth.llamarpc.com"
+        ],
+        "explorer": "https://etherscan.io"
+      },
+      "testnet": {
+        "name": "Goerli",
+        "chainId": 5,
+        "primary": "${ETHEREUM_GOERLI_RPC}",
+        "fallback": [
+          "https://goerli.infura.io/v3/${INFURA_PROJECT_ID}",
+          "https://eth-goerli.g.alchemy.com/v2/${ALCHEMY_API_KEY}"
+        ],
+        "explorer": "https://goerli.etherscan.io"
+      }
+    },
+    "polygon": {
+      "name": "Polygon",
+      "chainId": 137,
+      "nativeCurrency": "MATIC",
+      "mainnet": {
+        "primary": "${POLYGON_RPC_PRIMARY}",
+        "fallback": [
+          "${POLYGON_RPC_FALLBACK}",
+          "https://polygon-rpc.com",
+          "https://polygon.llamarpc.com"
+        ],
+        "explorer": "https://polygonscan.com"
+      },
+      "testnet": {
+        "name": "Mumbai",
+        "chainId": 80001,
+        "primary": "${POLYGON_MUMBAI_RPC}",
+        "fallback": [
+          "https://rpc-mumbai.maticvigil.com",
+          "https://polygon-mumbai.g.alchemy.com/v2/${ALCHEMY_API_KEY}"
+        ],
+        "explorer": "https://mumbai.polygonscan.com"
+      }
+    },
+    "bsc": {
+      "name": "BNB Smart Chain",
+      "chainId": 56,
+      "nativeCurrency": "BNB",
+      "mainnet": {
+        "primary": "${BSC_RPC_PRIMARY}",
+        "fallback": [
+          "https://bsc-dataseed.binance.org",
+          "https://bsc-dataseed1.defibit.io",
+          "https://bsc.publicnode.com"
+        ],
+        "explorer": "https://bscscan.com"
+      },
+      "testnet": {
+        "name": "BSC Testnet",
+        "chainId": 97,
+        "primary": "${BSC_TESTNET_RPC}",
+        "fallback": [
+          "https://data-seed-prebsc-1-s1.binance.org:8545",
+          "https://data-seed-prebsc-2-s1.binance.org:8545"
+        ],
+        "explorer": "https://testnet.bscscan.com"
+      }
+    },
+    "avalanche": {
+      "name": "Avalanche",
+      "chainId": 43114,
+      "nativeCurrency": "AVAX",
+      "mainnet": {
+        "primary": "${AVALANCHE_RPC_PRIMARY}",
+        "fallback": [
+          "https://api.avax.network/ext/bc/C/rpc",
+          "https://avalanche.public-rpc.com",
+          "https://avalanche.drpc.org"
+        ],
+        "explorer": "https://snowtrace.io"
+      },
+      "testnet": {
+        "name": "Fuji",
+        "chainId": 43113,
+        "primary": "${AVALANCHE_FUJI_RPC}",
+        "fallback": [
+          "https://api.avax-test.network/ext/bc/C/rpc"
+        ],
+        "explorer": "https://testnet.snowtrace.io"
+      }
+    },
+    "arbitrum": {
+      "name": "Arbitrum One",
+      "chainId": 42161,
+      "nativeCurrency": "ETH",
+      "mainnet": {
+        "primary": "${ARBITRUM_RPC_PRIMARY}",
+        "fallback": [
+          "https://arb1.arbitrum.io/rpc",
+          "https://arbitrum.llamarpc.com",
+          "https://arbitrum.drpc.org"
+        ],
+        "explorer": "https://arbiscan.io"
+      },
+      "testnet": {
+        "name": "Arbitrum Goerli",
+        "chainId": 421613,
+        "primary": "${ARBITRUM_GOERLI_RPC}",
+        "fallback": [
+          "https://goerli-rollup.arbitrum.io/rpc"
+        ],
+        "explorer": "https://goerli.arbiscan.io"
+      }
+    },
+    "optimism": {
+      "name": "Optimism",
+      "chainId": 10,
+      "nativeCurrency": "ETH",
+      "mainnet": {
+        "primary": "${OPTIMISM_RPC_PRIMARY}",
+        "fallback": [
+          "https://mainnet.optimism.io",
+          "https://optimism.llamarpc.com",
+          "https://optimism.drpc.org"
+        ],
+        "explorer": "https://optimistic.etherscan.io"
+      },
+      "testnet": {
+        "name": "Optimism Goerli",
+        "chainId": 420,
+        "primary": "${OPTIMISM_GOERLI_RPC}",
+        "fallback": [
+          "https://goerli.optimism.io"
+        ],
+        "explorer": "https://goerli-optimism.etherscan.io"
+      }
+    },
+    "base": {
+      "name": "Base",
+      "chainId": 8453,
+      "nativeCurrency": "ETH",
+      "mainnet": {
+        "primary": "${BASE_RPC_PRIMARY}",
+        "fallback": [
+          "https://mainnet.base.org",
+          "https://base.llamarpc.com",
+          "https://base.publicnode.com"
+        ],
+        "explorer": "https://basescan.org"
+      },
+      "testnet": {
+        "name": "Base Goerli",
+        "chainId": 84531,
+        "primary": "${BASE_GOERLI_RPC}",
+        "fallback": [
+          "https://goerli.base.org"
+        ],
+        "explorer": "https://goerli.basescan.org"
+      }
+    },
+    "fantom": {
+      "name": "Fantom",
+      "chainId": 250,
+      "nativeCurrency": "FTM",
+      "mainnet": {
+        "primary": "${FANTOM_RPC_PRIMARY}",
+        "fallback": [
+          "https://rpc.ftm.tools",
+          "https://fantom.publicnode.com",
+          "https://fantom.drpc.org"
+        ],
+        "explorer": "https://ftmscan.com"
+      },
+      "testnet": {
+        "name": "Fantom Testnet",
+        "chainId": 4002,
+        "primary": "${FANTOM_TESTNET_RPC}",
+        "fallback": [
+          "https://rpc.testnet.fantom.network"
+        ],
+        "explorer": "https://testnet.ftmscan.com"
+      }
+    },
+    "solana": {
+      "name": "Solana",
+      "chainId": -1,
+      "nativeCurrency": "SOL",
+      "mainnet": {
+        "primary": "${SOLANA_RPC_PRIMARY}",
+        "fallback": [
+          "https://api.mainnet-beta.solana.com",
+          "https://solana-api.projectserum.com"
+        ],
+        "explorer": "https://solscan.io"
+      },
+      "testnet": {
+        "name": "Solana Testnet",
+        "chainId": -1,
+        "primary": "${SOLANA_TESTNET_RPC}",
+        "fallback": [
+          "https://api.testnet.solana.com"
+        ],
+        "explorer": "https://solscan.io?cluster=testnet"
+      },
+      "devnet": {
+        "name": "Solana Devnet",
+        "primary": "https://api.devnet.solana.com",
+        "fallback": [],
+        "explorer": "https://solscan.io?cluster=devnet"
+      }
+    },
+    "cosmos": {
+      "name": "Cosmos Hub",
+      "chainId": -1,
+      "nativeCurrency": "ATOM",
+      "mainnet": {
+        "primary": "${COSMOS_RPC_PRIMARY}",
+        "fallback": [
+          "https://rpc-cosmoshub.keplr.app",
+          "https://cosmos-rpc.polkachu.com"
+        ],
+        "explorer": "https://www.mintscan.io/cosmos"
+      },
+      "testnet": {
+        "name": "Theta Testnet",
+        "chainId": -1,
+        "primary": "${COSMOS_TESTNET_RPC}",
+        "fallback": [
+          "https://rpc.sentry-01.theta-testnet.polypore.xyz"
+        ],
+        "explorer": "https://explorer.theta-testnet.polypore.xyz"
+      }
+    },
+    "osmosis": {
+      "name": "Osmosis",
+      "chainId": -1,
+      "nativeCurrency": "OSMO",
+      "mainnet": {
+        "primary": "${OSMOSIS_RPC_PRIMARY}",
+        "fallback": [
+          "https://rpc-osmosis.keplr.app",
+          "https://osmosis-rpc.polkachu.com"
+        ],
+        "explorer": "https://www.mintscan.io/osmosis"
+      }
+    },
+    "polkadot": {
+      "name": "Polkadot",
+      "chainId": -1,
+      "nativeCurrency": "DOT",
+      "mainnet": {
+        "primary": "${POLKADOT_RPC_PRIMARY}",
+        "fallback": [
+          "wss://rpc.polkadot.io",
+          "wss://polkadot.api.onfinality.io/public-ws"
+        ],
+        "explorer": "https://polkadot.subscan.io"
+      }
+    },
+    "kusama": {
+      "name": "Kusama",
+      "chainId": -1,
+      "nativeCurrency": "KSM",
+      "mainnet": {
+        "primary": "${KUSAMA_RPC_PRIMARY}",
+        "fallback": [
+          "wss://kusama-rpc.polkadot.io",
+          "wss://kusama.api.onfinality.io/public-ws"
+        ],
+        "explorer": "https://kusama.subscan.io"
+      }
+    }
+  },
+  "bridgeProtocols": {
+    "wormhole": {
+      "mainnet": {
+        "api": "https://wormhole-v2-mainnet-api.wormhole.com",
+        "guardian": "https://wormhole-v2-mainnet-api.wormhole.com"
+      },
+      "testnet": {
+        "api": "https://wormhole-v2-testnet-api.wormhole.com",
+        "guardian": "https://wormhole-v2-testnet-api.wormhole.com"
+      }
+    },
+    "axelar": {
+      "mainnet": {
+        "api": "https://axelar-mainnet.api.gmp.axelarscan.io",
+        "scanner": "https://axelarscan.io"
+      },
+      "testnet": {
+        "api": "https://axelar-testnet.api.gmp.axelarscan.io",
+        "scanner": "https://testnet.axelarscan.io"
+      }
+    },
+    "layerzero": {
+      "mainnet": {
+        "api": "https://api.layerzero.network",
+        "scanner": "https://layerzeroscan.com"
+      },
+      "testnet": {
+        "api": "https://testnet-api.layerzero.network",
+        "scanner": "https://testnet.layerzeroscan.com"
+      }
+    }
+  }
+}

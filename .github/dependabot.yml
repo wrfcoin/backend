@@ -1,0 +1,86 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      # Production deps split by surface area so each PR stays digestible.
+      # PRs #725 (46 updates) / #726 (11 dev updates) proved the prior two-group
+      # config works but produced an overly broad prod PR — see backend#724.
+      prod-web-api:
+        dependency-type: production
+        patterns:
+          - "@apollo/*"
+          - "express*"
+          - "graphql*"
+          - "ws"
+        update-types:
+          - minor
+          - patch
+      prod-cloud-sdk:
+        dependency-type: production
+        patterns:
+          - "@aws-sdk/*"
+          - "@neondatabase/*"
+        update-types:
+          - minor
+          - patch
+      prod-observability:
+        dependency-type: production
+        patterns:
+          - "@opentelemetry/*"
+        update-types:
+          - minor
+          - patch
+      prod-data-cache:
+        dependency-type: production
+        patterns:
+          - "pg"
+          - "postgres"
+          - "mongoose"
+          - "redis"
+          - "ioredis"
+          - "bullmq"
+        update-types:
+          - minor
+          - patch
+      prod-security-auth:
+        dependency-type: production
+        patterns:
+          - "@noble/*"
+          - "@peculiar/*"
+          - "@simplewebauthn/*"
+          - "jose"
+          - "otplib"
+          - "validator"
+          - "isomorphic-dompurify"
+          - "file-type"
+          - "zod"
+        update-types:
+          - minor
+          - patch
+      prod-messaging-ml:
+        dependency-type: production
+        patterns:
+          - "aedes"
+          - "twilio"
+          - "onnxruntime-node"
+          - "node-vault"
+          - "cbor-x"
+          - "dotenv"
+          - "uuid"
+          - "axios"
+          - "yaml"
+        update-types:
+          - minor
+          - patch
+      dev-tooling:
+        dependency-type: development
+        update-types:
+          - minor
+          - patch
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]

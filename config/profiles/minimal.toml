@@ -1,0 +1,30 @@
+# Minimal Configuration Profile
+# This profile enables only essential core modules for a lightweight deployment
+
+[meta]
+name = "minimal"
+description = "Minimal configuration with only essential services"
+createdAt = "2025-05-22T02:20:00.000Z"
+
+[core]
+enabled = true
+
+[consensus]
+enabled = true
+
+[network]
+enabled = true
+
+[storage]
+enabled = true
+
+[api_server]
+enabled = true
+
+[websocket_server]
+enabled = true
+
+[blockchain]
+enabled = true
+
+# All other modules are disabled by default in this minimal configuration

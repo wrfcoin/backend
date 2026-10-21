@@ -1,0 +1,59 @@
+{
+  "metadata": {
+    "source": "fixture-gfs",
+    "runTime": "2026-03-05T00:00:00Z"
+  },
+  "variables": {
+    "temperature": {
+      "units": "K",
+      "projection": "latlon",
+      "latitudes": [40, 39.5],
+      "longitudes": [-105, -104.5, -104],
+      "values": [
+        [289.1, 289.4, 289.8],
+        [288.7, 289.0, 289.3]
+      ]
+    },
+    "wind_u": {
+      "units": "m/s",
+      "projection": "latlon",
+      "latitudes": [40, 39.5],
+      "longitudes": [-105, -104.5, -104],
+      "values": [
+        [3.1, 4.0, 4.5],
+        [2.8, 3.6, 4.2]
+      ]
+    },
+    "wind_v": {
+      "units": "m/s",
+      "projection": "latlon",
+      "latitudes": [40, 39.5],
+      "longitudes": [-105, -104.5, -104],
+      "values": [
+        [1.1, 1.5, 1.7],
+        [0.9, 1.2, 1.5]
+      ]
+    },
+    "pressure": {
+      "units": "Pa",
+      "projection": "latlon",
+      "latitudes": [40, 39.5],
+      "longitudes": [-105, -104.5, -104],
+      "values": [
+        [85000, 84900, 84800],
+        [85100, 85000, 84900]
+      ]
+    },
+    "relative_humidity": {
+      "units": "%",
+      "projection": "latlon",
+      "latitudes": [40, 39.5],
+      "longitudes": [-105, -104.5, -104],
+      "values": [
+        [50, 52, 54],
+        [55, 57, 58]
+      ]
+    }
+  }
+}
+

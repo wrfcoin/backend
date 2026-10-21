@@ -1,0 +1,15 @@
+{
+  "port": 5000,
+  "host": "0.0.0.0",
+  "peers": [],
+  "discovery": {
+    "enabled": true,
+    "bootstrap_nodes": [],
+    "mdns": true
+  },
+  "nat": {
+    "enabled": true,
+    "upnp": true,
+    "port_mapping_ttl": 3600
+  }
+}

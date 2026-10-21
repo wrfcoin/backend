@@ -1,0 +1,158 @@
+[
+ {
+  "raw": "1008.2767333984375",
+  "rawRust": "1008.2767333984376",
+  "quantized": "1008.28",
+  "quantizedRust": "1008.28"
+ },
+ {
+  "raw": "29.876432418823242",
+  "rawRust": "29.87643241882324",
+  "quantized": "29.88",
+  "quantizedRust": "29.88"
+ },
+ {
+  "raw": "983.7742716528799",
+  "rawRust": "983.77427165288",
+  "quantized": "983.77",
+  "quantizedRust": "983.77"
+ },
+ {
+  "raw": "-14.623193740844727",
+  "rawRust": "-14.623193740844728",
+  "quantized": "-14.62",
+  "quantizedRust": "-14.62"
+ },
+ {
+  "raw": "11.133861541748047",
+  "rawRust": "11.133861541748049",
+  "quantized": "11.13",
+  "quantizedRust": "11.13"
+ },
+ {
+  "raw": "986.6014394478993",
+  "rawRust": "986.6014394478992",
+  "quantized": "986.6",
+  "quantizedRust": "986.6"
+ },
+ {
+  "raw": "91.87244415283203",
+  "rawRust": "91.87244415283205",
+  "quantized": "91.87",
+  "quantizedRust": "91.87"
+ },
+ {
+  "raw": "18.848947525024414",
+  "rawRust": "18.848947525024418",
+  "quantized": "18.85",
+  "quantizedRust": "18.85"
+ },
+ {
+  "raw": "961.1067660186405",
+  "rawRust": "961.1067660186404",
+  "quantized": "961.11",
+  "quantizedRust": "961.11"
+ },
+ {
+  "raw": "975.4142425460773",
+  "rawRust": "975.4142425460772",
+  "quantized": "975.41",
+  "quantizedRust": "975.41"
+ },
+ {
+  "raw": "21.526437759399414",
+  "rawRust": "21.526437759399418",
+  "quantized": "21.53",
+  "quantizedRust": "21.53"
+ },
+ {
+  "raw": "952.2795318172925",
+  "rawRust": "952.2795318172924",
+  "quantized": "952.28",
+  "quantizedRust": "952.28"
+ },
+ {
+  "raw": "0",
+  "rawRust": "0",
+  "quantized": "0",
+  "quantizedRust": "0"
+ },
+ {
+  "raw": "-0",
+  "rawRust": "-0.0",
+  "quantized": "0",
+  "quantizedRust": "0"
+ },
+ {
+  "raw": "0.005",
+  "rawRust": "0.005",
+  "quantized": "0.01",
+  "quantizedRust": "0.01"
+ },
+ {
+  "raw": "-0.005",
+  "rawRust": "-0.005",
+  "quantized": "-0.01",
+  "quantizedRust": "-0.01"
+ },
+ {
+  "raw": "0.015",
+  "rawRust": "0.015",
+  "quantized": "0.02",
+  "quantizedRust": "0.02"
+ },
+ {
+  "raw": "1.005",
+  "rawRust": "1.005",
+  "quantized": "1",
+  "quantizedRust": "1"
+ },
+ {
+  "raw": "2.675",
+  "rawRust": "2.675",
+  "quantized": "2.68",
+  "quantizedRust": "2.68"
+ },
+ {
+  "raw": "-1.005",
+  "rawRust": "-1.005",
+  "quantized": "-1",
+  "quantizedRust": "-1"
+ },
+ {
+  "raw": "1013.25",
+  "rawRust": "1013.25",
+  "quantized": "1013.25",
+  "quantizedRust": "1013.25"
+ },
+ {
+  "raw": "99999.994",
+  "rawRust": "99999.994",
+  "quantized": "99999.99",
+  "quantizedRust": "99999.99"
+ },
+ {
+  "raw": "1e-7",
+  "rawRust": "1e-7",
+  "quantized": "0",
+  "quantizedRust": "0"
+ },
+ {
+  "raw": "-1e-7",
+  "rawRust": "-1e-7",
+  "quantized": "0",
+  "quantizedRust": "0"
+ },
+ {
+  "raw": "22.5",
+  "rawRust": "22.5",
+  "quantized": "22.5",
+  "quantizedRust": "22.5"
+ },
+ {
+  "raw": "0.125",
+  "rawRust": "0.125",
+  "quantized": "0.13",
+  "quantizedRust": "0.13"
+ }
+]

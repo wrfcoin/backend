@@ -1,0 +1,841 @@
+# Wrfcoin GraphQL Schema
+# Comprehensive GraphQL API for the Wrfcoin ecosystem
+# Supports all smart contracts, blockchain operations, and data models
+
+type Block {
+  id: ID!
+  height: BigInt!
+  hash: String!
+  timestamp: DateTime!
+  transactions: [Bytes32!]!
+  producer: Address
+}
+
+type BridgeLock {
+  id: ID!
+  txId: String!
+  amount: WeiAmount!
+  bridge: Address
+  timestamp: DateTime!
+}
+
+# Scalar types
+scalar DateTime
+scalar BigInt
+scalar Bytes32
+scalar Address
+scalar WeiAmount
+
+# Core token information
+type WRFToken {
+  id: ID!
+  address: Address!
+  symbol: String!
+  name: String!
+  decimals: Int!
+  totalSupply: WeiAmount!
+  maxSupply: WeiAmount!
+  paused: Boolean!
+
+  # Weather station rewards
+  weatherRewardRate: WeiAmount!
+  weatherStations: [WeatherStation!]!
+
+  # Governance features
+  votes: [Vote!]!
+  proposals: [GovernanceProposal!]!
+}
+
+# Weather stations and data
+type WeatherStation {
+  id: ID!
+  address: Address!
+  stationId: String!
+  location: String!
+  isActive: Boolean!
+  lastRewardTime: DateTime
+  totalRewards: WeiAmount!
+  qualityScore: Float!
+
+  # Weather data
+  weatherData: [WeatherData!]!
+  latestWeatherData: WeatherData
+}
+
+type WeatherData {
+  id: ID!
+  stationId: String!
+  timestamp: DateTime!
+  temperature: Float! @deprecated(reason: "Use temperature_c")
+  temperature_c: Float! # In celsius * 100
+  humidity: Float! @deprecated(reason: "Use humidity_percent")
+  humidity_percent: Float! # 0-100%
+  pressure: Float! @deprecated(reason: "Use pressure_hpa")
+  pressure_hpa: Float! # In hPa * 100
+  windSpeed: Float! @deprecated(reason: "Use wind_speed_ms")
+  wind_speed_ms: Float! # In m/s * 100
+  rainfall: Float! @deprecated(reason: "Use precipitation_mm")
+  precipitation_mm: Float! # In mm * 100
+  confidence: Float! # 0-100%
+  station: WeatherStation!
+}
+
+# Carbon credits and environmental data
+type CarbonCredit {
+  id: ID!
+  tokenId: BigInt!
+  carbonOffset: BigInt! # CO2 equivalent in grams
+  projectType: String!
+  verificationStandard: String!
+  issuanceDate: DateTime!
+  expiryDate: DateTime!
+  location: String!
+  isRetired: Boolean!
+  issuer: Address!
+  certificationHash: String!
+
+  # Trading information
+  forSale: Boolean!
+  price: WeiAmount
+  owner: Address!
+
+  # Marketplace data
+  transfers: [CarbonCreditTransfer!]!
+  retirements: [CarbonCreditRetirement!]!
+}
+
+type CarbonCreditTransfer {
+  id: ID!
+  tokenId: BigInt!
+  from: Address!
+  to: Address!
+  price: WeiAmount
+  timestamp: DateTime!
+  transactionHash: String!
+}
+
+type CarbonCreditRetirement {
+  id: ID!
+  tokenId: BigInt!
+  retiringEntity: Address!
+  carbonOffset: BigInt!
+  timestamp: DateTime!
+  transactionHash: String!
+}
+
+# Computational NFTs
+type ComputationalNFT {
+  id: ID!
+  tokenId: BigInt!
+  modelType: ModelType!
+  modelName: String!
+  inputData: String!
+  computeResources: String!
+  executionTime: BigInt!
+  stakeAmount: WeiAmount!
+  status: ComputeStatus!
+  resultData: String
+  resultHash: String
+  createdAt: DateTime!
+  executedAt: DateTime
+  computeProvider: Address
+  isVerified: Boolean!
+
+  owner: Address!
+  job: ComputeJob!
+}
+
+enum ModelType {
+  WEATHER_FORECAST
+  CLIMATE_MODEL
+  AIR_QUALITY
+  CARBON_ANALYSIS
+}
+
+enum ComputeStatus {
+  CREATED
+  QUEUED
+  EXECUTING
+  COMPLETED
+  FAILED
+}
+
+type ComputeJob {
+  id: ID!
+  nft: ComputationalNFT!
+  provider: ComputeProvider
+  rewards: [ComputeReward!]!
+}
+
+type ComputeProvider {
+  id: ID!
+  address: Address!
+  isAuthorized: Boolean!
+  totalComputeTime: BigInt!
+  successfulJobs: BigInt!
+  failedJobs: BigInt!
+  stakedTokens: WeiAmount!
+  hardwareSpecs: String!
+
+  jobs: [ComputeJob!]!
+}
+
+type ComputeReward {
+  id: ID!
+  provider: Address!
+  amount: WeiAmount!
+  computeTime: BigInt!
+  timestamp: DateTime!
+  transactionHash: String!
+}
+
+# Governance system
+type GovernanceProposal {
+  id: ID!
+  proposalId: BigInt!
+  title: String!
+  description: String!
+  proposer: Address!
+  targets: [Address!]!
+  values: [WeiAmount!]!
+  calldatas: [String!]!
+
+  # Voting configuration
+  votingType: VotingType!
+  votingDelay: BigInt!
+  votingPeriod: BigInt!
+  quorumFraction: BigInt!
+  emergencyProposal: Boolean!
+
+  # State
+  state: ProposalState!
+  startBlock: BigInt!
+  endBlock: BigInt!
+  forVotes: WeiAmount!
+  againstVotes: WeiAmount!
+  abstainVotes: WeiAmount!
+
+  # Votes
+  votes: [Vote!]!
+
+  # Timestamps
+  createdAt: DateTime!
+  executedAt: DateTime
+}
+
+enum VotingType {
+  SIMPLE_MAJORITY
+  QUADRATIC
+  RANKED_CHOICE
+  FRACTIONAL
+}
+
+enum ProposalState {
+  PENDING
+  ACTIVE
+  CANCELED
+  DEFEATED
+  SUCCEEDED
+  QUEUED
+  EXPIRED
+  EXECUTED
+}
+
+type Vote {
+  id: ID!
+  proposalId: BigInt!
+  voter: Address!
+  support: VoteChoice!
+  weight: WeiAmount!
+  reason: String
+  timestamp: DateTime!
+  transactionHash: String!
+
+  # Voting type specific data
+  quadraticCredits: BigInt
+  rankedChoices: [Int!]
+  fractionalVotes: FractionalVote
+}
+
+enum VoteChoice {
+  AGAINST
+  FOR
+  ABSTAIN
+}
+
+type FractionalVote {
+  forVotes: WeiAmount!
+  againstVotes: WeiAmount!
+  abstainVotes: WeiAmount!
+}
+
+# Carbon credit AMM and trading
+type CarbonCreditAMM {
+  id: ID!
+  address: Address!
+  token0: Address!
+  token1: Address!
+  reserve0: WeiAmount!
+  reserve1: WeiAmount!
+  feeBasisPoints: Int!
+  protocolFeeBasisPoints: Int!
+  totalSupply: WeiAmount!
+
+  # Price information
+  price0CumulativeLast: BigInt!
+  price1CumulativeLast: BigInt!
+  kLast: BigInt!
+
+  # Trading activity
+  swaps: [Swap!]!
+  mints: [Mint!]!
+  burns: [Burn!]!
+  flashLoans: [FlashLoan!]!
+}
+
+type Swap {
+  id: ID!
+  pool: CarbonCreditAMM!
+  sender: Address!
+  to: Address!
+  amount0In: WeiAmount!
+  amount1In: WeiAmount!
+  amount0Out: WeiAmount!
+  amount1Out: WeiAmount!
+  timestamp: DateTime!
+  transactionHash: String!
+}
+
+type Mint {
+  id: ID!
+  pool: CarbonCreditAMM!
+  sender: Address!
+  amount0: WeiAmount!
+  amount1: WeiAmount!
+  liquidity: WeiAmount!
+  timestamp: DateTime!
+  transactionHash: String!
+}
+
+type Burn {
+  id: ID!
+  pool: CarbonCreditAMM!
+  sender: Address!
+  to: Address!
+  amount0: WeiAmount!
+  amount1: WeiAmount!
+  liquidity: WeiAmount!
+  timestamp: DateTime!
+  transactionHash: String!
+}
+
+type FlashLoan {
+  id: ID!
+  pool: CarbonCreditAMM!
+  borrower: Address!
+  amount0: WeiAmount!
+  amount1: WeiAmount!
+  fee0: WeiAmount!
+  fee1: WeiAmount!
+  timestamp: DateTime!
+  transactionHash: String!
+}
+
+# User accounts and activity
+type User {
+  id: ID!
+  address: Address!
+
+  # Token balances
+  wrfBalance: WeiAmount!
+  carbonCredits: [CarbonCredit!]!
+  computationalNFTs: [ComputationalNFT!]!
+
+  # Activity
+  carbonFootprint: CarbonFootprint
+  votes: [Vote!]!
+  proposals: [GovernanceProposal!]!
+  weatherStations: [WeatherStation!]!
+
+  # Trading activity
+  swaps: [Swap!]!
+  liquidityPositions: [LiquidityPosition!]!
+
+  # Staking and rewards
+  stakingPositions: [StakingPosition!]!
+  rewards: [Reward!]!
+}
+
+type CarbonFootprint {
+  id: ID!
+  user: Address!
+  totalEmissions: Float! # kg CO2e
+  totalOffsets: Float! # kg CO2e
+  netEmissions: Float! # kg CO2e
+  calculationDate: DateTime!
+
+  activities: [CarbonActivity!]!
+  recommendations: [CarbonRecommendation!]!
+}
+
+type CarbonActivity {
+  id: ID!
+  user: Address!
+  activityType: CarbonActivityType!
+  category: String!
+  amount: Float!
+  unit: String!
+  carbonEmission: Float! # kg CO2e
+  confidence: Float!
+  source: String!
+  timestamp: DateTime!
+  location: Location
+}
+
+enum CarbonActivityType {
+  TRANSPORTATION
+  ENERGY
+  FOOD
+  DIGITAL
+}
+
+type Location {
+  latitude: Float
+  longitude: Float
+}
+
+type CarbonRecommendation {
+  id: ID!
+  user: Address!
+  title: String!
+  description: String!
+  potentialSavings: Float! # kg CO2e
+  priority: String!
+  category: String!
+  generatedAt: DateTime!
+}
+
+type LiquidityPosition {
+  id: ID!
+  user: Address!
+  pool: CarbonCreditAMM!
+  liquidity: WeiAmount!
+  token0Amount: WeiAmount!
+  token1Amount: WeiAmount!
+  createdAt: DateTime!
+  updatedAt: DateTime!
+}
+
+type StakingPosition {
+  id: ID!
+  user: Address!
+  amount: WeiAmount!
+  lockDuration: BigInt!
+  rewardRate: WeiAmount!
+  stakedAt: DateTime!
+  unlocksAt: DateTime!
+  claimed: Boolean!
+}
+
+type Reward {
+  id: ID!
+  user: Address!
+  type: RewardType!
+  amount: WeiAmount!
+  source: String!
+  timestamp: DateTime!
+  transactionHash: String!
+}
+
+enum RewardType {
+  WEATHER_DATA
+  COMPUTE_PROVISION
+  STAKING
+  GOVERNANCE
+  CARBON_OFFSET
+}
+
+# Analytics and market data
+type MarketData {
+  id: ID!
+  timestamp: DateTime!
+
+  # Token prices
+  wrfPrice: Float!
+  wrfMarketCap: Float!
+  wrfVolume24h: Float!
+
+  # Carbon credit market
+  carbonCreditVolume24h: Float!
+  averageCarbonPrice: Float!
+  totalCarbonCredits: BigInt!
+  retiredCarbonCredits: BigInt!
+
+  # Network statistics
+  totalUsers: BigInt!
+  activeWeatherStations: BigInt!
+  computeJobs24h: BigInt!
+  totalValueLocked: Float!
+}
+
+type PlatformAnalytics {
+  timeframe: String!
+  totalUsers: Int!
+  activeUsers: Int!
+  totalWeatherData: Int!
+  totalWeatherForecasts: Int!
+  totalNFTs: Int!
+  totalValidators: Int!
+  totalTransactions: Int!
+  totalComputationalNFTs: Int!
+  completedJobs: Int!
+  totalProposals: Int!
+  activeProposals: Int!
+  totalVotes: Int!
+  totalBlocks: Int!
+  totalBlocksInPeriod: Int!
+  tokenSupply: String!
+  maxTokenSupply: String!
+  supplyUtilization: String!
+}
+
+type WeatherAnalytics {
+  timeframe: String!
+  stationId: String
+  totalDataPoints: Int!
+  avgTemperature: String!
+  avgHumidity: String!
+  avgPressure: String!
+  avgConfidence: String!
+  dailyData: [DailyWeatherData!]!
+}
+
+type DailyWeatherData {
+  date: String!
+  dataPoints: Int!
+  avgTemperature: Float!
+  avgHumidity: Float!
+  avgPressure: Float!
+}
+
+type CarbonAnalytics {
+  timeframe: String!
+  totalNftsCreated: Int!
+  totalComputationalNftsCreated: Int!
+  nftTypeBreakdown: [NFTTypeBreakdown!]!
+  computationalTypeBreakdown: [ComputationalTypeBreakdown!]!
+}
+
+type NFTTypeBreakdown {
+  nftType: String!
+  count: String!
+}
+
+type ComputationalTypeBreakdown {
+  computationType: String!
+  count: String!
+}
+
+# Health check type
+type HealthStatus {
+  status: String!
+  timestamp: DateTime!
+  version: String!
+}
+
+# Query root type
+type Query {
+  # Health check
+  _health: HealthStatus!
+
+  # Token information
+  wrfToken: WRFToken
+
+  # Weather data
+  weatherStation(id: ID!): WeatherStation
+  weatherStations(
+    first: Int = 10
+    skip: Int = 0
+    orderBy: String = "id"
+    orderDirection: String = "asc"
+    where: WeatherStationFilter
+  ): [WeatherStation!]!
+
+  weatherData(
+    stationId: String!
+    from: DateTime
+    to: DateTime
+    first: Int = 100
+  ): [WeatherData!]!
+
+  # Carbon credits
+  carbonCredit(id: ID!): CarbonCredit
+  carbonCredits(
+    first: Int = 10
+    skip: Int = 0
+    orderBy: String = "id"
+    orderDirection: String = "asc"
+    where: CarbonCreditFilter
+  ): [CarbonCredit!]!
+
+  # Computational NFTs
+  computationalNFT(id: ID!): ComputationalNFT
+  computationalNFTs(
+    first: Int = 10
+    skip: Int = 0
+    orderBy: String = "id"
+    orderDirection: String = "asc"
+    where: ComputationalNFTFilter
+  ): [ComputationalNFT!]!
+
+  # Governance
+  proposal(id: ID!): GovernanceProposal
+  proposals(
+    first: Int = 10
+    skip: Int = 0
+    orderBy: String = "id"
+    orderDirection: String = "asc"
+    where: ProposalFilter
+  ): [GovernanceProposal!]!
+
+  # AMM and trading
+  ammPool(id: ID!): CarbonCreditAMM
+  ammPools(first: Int = 10, skip: Int = 0): [CarbonCreditAMM!]!
+
+  # Users
+  me: User
+  user(address: Address!): User
+  users(first: Int = 10, skip: Int = 0): [User!]!
+
+  # Analytics
+  platformAnalytics(timeframe: String = "month"): PlatformAnalytics
+  zkStats: ZKStats!
+  weatherAnalytics(
+    timeframe: String = "month"
+    stationId: String
+  ): WeatherAnalytics
+  carbonAnalytics(timeframe: String = "month"): CarbonAnalytics
+  marketData(timestamp: DateTime): MarketData
+  marketDataHistory(
+    from: DateTime!
+    to: DateTime!
+    interval: String = "1h"
+  ): [MarketData!]!
+
+  # Search
+  search(query: String!, type: SearchType): [SearchResult!]!
+}
+
+# Mutation root type
+type Mutation {
+  # User management
+  updateProfile(input: UpdateProfileInput!): UpdateProfileResult!
+
+  # Weather data
+  submitWeatherData(input: WeatherDataInput!): WeatherDataSubmissionResult!
+
+  # Carbon tracking
+  trackCarbonActivity(input: CarbonActivityInput!): CarbonActivityResult!
+
+  # Voting
+  castVote(input: VoteInput!): VoteResult!
+
+  # Trading (via signed transactions)
+  prepareSwap(input: SwapInput!): TransactionPreparation!
+  prepareTransfer(input: TransferInput!): TransactionPreparation!
+  prepareStake(input: StakeInput!): TransactionPreparation!
+}
+
+type SystemStatusEvent {
+  nodeId: String!
+  status: String!
+  blockHeight: Int!
+  peerCount: Int!
+  syncProgress: Float!
+  uptime: Float!
+  timestamp: DateTime!
+}
+
+# Subscription root type
+type Subscription {
+  # Real-time updates
+  newBlock: Block!
+  bridgeLockDetected(bridge: Address): BridgeLock!
+  systemStatusUpdated: SystemStatusEvent!
+  weatherDataUpdated(stationId: String): WeatherData!
+  newCarbonCredit: CarbonCredit!
+  newComputeJob: ComputationalNFT!
+  newProposal: GovernanceProposal!
+  swapExecuted(pool: Address): Swap!
+
+  # Market updates
+  priceUpdated(token: Address): PriceUpdate!
+
+  # User-specific updates
+  userActivityUpdated(address: Address!): UserActivity!
+}
+
+# Input types
+input UpdateProfileInput {
+  displayName: String
+  bio: String
+  avatar: String
+  location: String
+  signature: String!
+}
+
+input WeatherDataInput {
+  stationId: String!
+  temperature: Float
+  temperature_c: Float
+  humidity: Float
+  humidity_percent: Float
+  pressure: Float
+  pressure_hpa: Float
+  windSpeed: Float
+  wind_speed_ms: Float
+  rainfall: Float
+  precipitation_mm: Float
+  confidence: Float!
+  signature: String!
+}
+
+input CarbonActivityInput {
+  userId: String!
+  activityType: CarbonActivityType!
+  category: String!
+  amount: Float!
+  unit: String!
+  source: String = "manual"
+  location: LocationInput
+}
+
+input LocationInput {
+  latitude: Float!
+  longitude: Float!
+}
+
+input VoteInput {
+  proposalId: BigInt!
+  support: VoteChoice!
+  reason: String
+  signature: String!
+}
+
+input SwapInput {
+  tokenIn: Address!
+  tokenOut: Address!
+  amountIn: String!
+  amountOutMin: String!
+  deadline: BigInt!
+  slippageTolerance: Float!
+}
+
+input TransferInput {
+  tokenId: BigInt!
+  to: Address!
+  amount: String!
+}
+
+input StakeInput {
+  amount: String!
+  lockDuration: BigInt!
+}
+
+# Filter input types
+input WeatherStationFilter {
+  isActive: Boolean
+  location_contains: String
+  qualityScore_gte: Float
+}
+
+input CarbonCreditFilter {
+  projectType: String
+  verificationStandard: String
+  isRetired: Boolean
+  forSale: Boolean
+  issuer: Address
+}
+
+input ComputationalNFTFilter {
+  modelType: ModelType
+  status: ComputeStatus
+  owner: Address
+  isVerified: Boolean
+}
+
+input ProposalFilter {
+  state: ProposalState
+  proposer: Address
+  votingType: VotingType
+  emergencyProposal: Boolean
+}
+
+# Result types
+type UpdateProfileResult {
+  success: Boolean!
+  user: User
+  error: String
+}
+
+type WeatherDataSubmissionResult {
+  success: Boolean!
+  weatherData: WeatherData
+  rewards: WeiAmount
+  error: String
+}
+
+type CarbonActivityResult {
+  success: Boolean!
+  activity: CarbonActivity
+  carbonEmission: Float!
+  recommendations: [CarbonRecommendation!]!
+  error: String
+}
+
+type VoteResult {
+  success: Boolean!
+  vote: Vote
+  transactionHash: String
+  error: String
+}
+
+type TransactionPreparation {
+  success: Boolean!
+  transactionData: String!
+  gasEstimate: String!
+  nonce: BigInt!
+  error: String
+}
+
+# Search types
+enum SearchType {
+  ALL
+  USERS
+  CARBON_CREDITS
+  PROPOSALS
+  WEATHER_STATIONS
+  COMPUTE_JOBS
+}
+
+union SearchResult =
+  | User
+  | CarbonCredit
+  | GovernanceProposal
+  | WeatherStation
+  | ComputationalNFT
+
+# Event types for subscriptions
+type PriceUpdate {
+  token: Address!
+  price: Float!
+  change24h: Float!
+  timestamp: DateTime!
+}
+
+type UserActivity {
+  user: Address!
+  type: String!
+  data: String!
+  timestamp: DateTime!
+}

@@ -1,0 +1,19 @@
+{
+  "authentication": {
+    "enabled": true,
+    "session_timeout": 3600,
+    "max_login_attempts": 5
+  },
+  "encryption": {
+    "algorithm": "AES-256-GCM",
+    "key_rotation_interval": 86400
+  },
+  "permissions": {
+    "default_role": "user",
+    "admin_endpoints": ["/api/admin/*"],
+    "rate_limiting": {
+      "enabled": true,
+      "requests_per_minute": 60
+    }
+  }
+}

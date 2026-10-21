@@ -1,0 +1,80 @@
+# WRFCoin microservices docker-compose override.
+# Resource limits added to address review on PR #514 (issue #315).
+# NOTE: docker-compose resource limits require Docker Swarm mode or
+# Docker Compose v2 with --compatibility flag. For standalone Compose,
+# use 'deploy' with docker stack deploy, or use the top-level 'mem_limit'
+# and 'cpus' fields if targeting Compose v1 compatibility.
+version: '3.8'
+
+services:
+  api-gateway:
+    build:
+      context: ./microservices/api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - '4000:4000'
+    environment:
+      - NODE_ENV=production
+      - API_KEY_ENCRYPTION_KEY=${API_KEY_ENCRYPTION_KEY:?API_KEY_ENCRYPTION_KEY must be set}
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:4000/health']
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+
+  nft-marketplace-service:
+    build:
+      context: ./microservices/nft-marketplace-service
+      dockerfile: Dockerfile
+    ports:
+      - '4002:4002'
+    environment:
+      - NODE_ENV=production
+      - API_KEY_ENCRYPTION_KEY=${API_KEY_ENCRYPTION_KEY:?API_KEY_ENCRYPTION_KEY must be set}
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:4002/health']
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+
+  user-management-service:
+    build:
+      context: ./microservices/user-management-service
+      dockerfile: Dockerfile
+    ports:
+      - '4003:4003'
+    environment:
+      - NODE_ENV=production
+      - API_KEY_ENCRYPTION_KEY=${API_KEY_ENCRYPTION_KEY:?API_KEY_ENCRYPTION_KEY must be set}
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:4003/health']
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3

@@ -1,0 +1,154 @@
+{
+  "openforis_rate_limits": {
+    "description": "Rate limiting configuration for OpenForis API endpoints",
+    "version": "1.0.0",
+    "limits": {
+      "general": {
+        "windowMs": 900000,
+        "maxRequests": 200,
+        "description": "General API access - 200 requests per 15 minutes"
+      },
+      "projects": {
+        "windowMs": 3600000,
+        "maxRequests": 50,
+        "description": "Project operations - 50 requests per hour"
+      },
+      "surveys": {
+        "windowMs": 3600000,
+        "maxRequests": 100,
+        "description": "Survey submissions - 100 requests per hour"
+      },
+      "analysis": {
+        "windowMs": 3600000,
+        "maxRequests": 20,
+        "description": "Analysis operations (computationally expensive) - 20 requests per hour"
+      },
+      "climate": {
+        "windowMs": 900000,
+        "maxRequests": 300,
+        "description": "Climate data queries - 300 requests per 15 minutes"
+      },
+      "blockchain": {
+        "windowMs": 3600000,
+        "maxRequests": 25,
+        "description": "Blockchain export operations - 25 requests per hour"
+      }
+    },
+    "tiers": {
+      "free": {
+        "multiplier": 1,
+        "description": "Standard rate limits for free users"
+      },
+      "premium": {
+        "multiplier": 2,
+        "description": "Double rate limits for premium users"
+      },
+      "enterprise": {
+        "multiplier": 5,
+        "description": "5x rate limits for enterprise users"
+      },
+      "admin": {
+        "multiplier": 10,
+        "description": "10x rate limits for admin users"
+      }
+    },
+    "permissions": {
+      "openforis:read": "Basic read access to OpenForis data",
+      "openforis:write": "Write access to OpenForis data",
+      "openforis:projects:read": "Read access to project data",
+      "openforis:projects:create": "Create new projects",
+      "openforis:projects:*": "Full project management access",
+      "openforis:surveys:read": "Read access to survey data",
+      "openforis:surveys:create": "Submit new surveys",
+      "openforis:surveys:*": "Full survey management access",
+      "openforis:climate:read": "Read access to climate data",
+      "openforis:climate:create": "Generate climate projections",
+      "openforis:climate:*": "Full climate data access",
+      "openforis:analysis:basic": "Basic analysis operations",
+      "openforis:analysis:advanced": "Advanced analysis operations",
+      "openforis:analysis:read": "Read analysis results",
+      "openforis:blockchain:export": "Export data to blockchain",
+      "openforis:bulk_operations": "Bulk data operations",
+      "openforis:admin": "Full administrative access",
+      "openforis:*": "All OpenForis permissions"
+    },
+    "endpoints": {
+      "/api/openforis/status": {
+        "auth": "optional",
+        "rate_limit": "general",
+        "permissions": []
+      },
+      "/api/openforis/projects": {
+        "GET": {
+          "auth": "required",
+          "rate_limit": "projects",
+          "permissions": ["openforis:projects:read"]
+        },
+        "POST": {
+          "auth": "required",
+          "rate_limit": "projects",
+          "permissions": ["openforis:projects:create"],
+          "tier": "premium"
+        }
+      },
+      "/api/openforis/projects/:id": {
+        "auth": "required",
+        "rate_limit": "general",
+        "permissions": ["openforis:projects:read"]
+      },
+      "/api/openforis/projects/:id/plots": {
+        "auth": "required",
+        "rate_limit": "general",
+        "permissions": ["openforis:surveys:read"]
+      },
+      "/api/openforis/plots": {
+        "POST": {
+          "auth": "required",
+          "rate_limit": "surveys",
+          "permissions": ["openforis:surveys:create"]
+        }
+      },
+      "/api/openforis/plots/:id/analysis": {
+        "POST": {
+          "auth": "required",
+          "rate_limit": "analysis",
+          "permissions": ["openforis:analysis:basic"],
+          "tier": "premium"
+        }
+      },
+      "/api/openforis/plots/:id/analysis/status": {
+        "auth": "required",
+        "rate_limit": "general",
+        "permissions": ["openforis:analysis:read"]
+      },
+      "/api/openforis/climate": {
+        "GET": {
+          "auth": "required",
+          "rate_limit": "climate",
+          "permissions": ["openforis:climate:read"]
+        }
+      },
+      "/api/openforis/climate/:region/:scenario": {
+        "auth": "required",
+        "rate_limit": "general",
+        "permissions": ["openforis:climate:read"]
+      },
+      "/api/openforis/climate/projections": {
+        "POST": {
+          "auth": "required",
+          "rate_limit": "climate",
+          "permissions": ["openforis:climate:create"],
+          "tier": "premium"
+        }
+      },
+      "/api/openforis/blockchain/export": {
+        "POST": {
+          "auth": "required",
+          "rate_limit": "blockchain",
+          "permissions": ["openforis:blockchain:export"],
+          "tier": "enterprise"
+        }
+      }
+    }
+  }
+}

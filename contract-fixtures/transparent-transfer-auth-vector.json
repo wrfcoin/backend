@@ -1,0 +1,16 @@
+{
+  "schema": "wrfcoin.transparent-transfer-auth-vector.v1",
+  "source": "shared-protocol/tests/fixtures/golden/signing_preimage_v2.json",
+  "amount_unit": "integer base units",
+  "case": {
+    "chain_id": "wrfcoin-testnet",
+    "network_id": "testnet",
+    "from": "wrf_faucet_gv",
+    "to": "wrf_recipient_gv",
+    "amount": 1000,
+    "nonce": 5,
+    "preimage_hex": "777266636f696e5f7472616e73706172656e745f7472616e736665725f617574685f76320f000000777266636f696e2d746573746e657407000000746573746e65740d0000007772665f6661756365745f6776100000007772665f726563697069656e745f6776e8030000000000000500000000000000",
+    "signer_public_key_hex": "d6634bf203e5bb43b08a8eb908e63405bac8045b07c59003004dec30f259f83b",
+    "signature_hex": "545a2cd8cbc1a5acea403dbb03ac0be4ebd980786c15bb222ddf3d493d2c8af81a15fc1165f8130258e5286bcafaf9d61c9298962a96c19e1d02aa5dab21e805"
+  }
+}

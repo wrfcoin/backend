@@ -1,0 +1,31 @@
+//! Differential harness: core4 65134a64 shared-protocol/src/weather/{reference,quality_tier}.rs
+//! (verbatim copies) driven by JSON cases on stdin, one per line:
+//! {"residuals":[{"source","variable","residual"}], "gross_guard":bool, "unverified":n}
+//! Prints the tier (good|degraded|outlier), one per line. `residual` may be null for NaN.
+mod weather;
+use std::io::BufRead;
+use weather::reference::{ReferenceBands, ReferenceComparison, ReferenceResidual};
+
+#[derive(serde::Deserialize)]
+struct Case { residuals: Vec<RawResidual>, gross_guard: bool, unverified: usize }
+#[derive(serde::Deserialize)]
+struct RawResidual { source: String, variable: String, residual: Option<f64>, nonfinite: Option<String> }
+
+fn main() {
+    let bands = ReferenceBands::builtin();
+    for line in std::io::stdin().lock().lines() {
+        let case: Case = serde_json::from_str(&line.unwrap()).unwrap();
+        let residuals = case.residuals.into_iter().map(|r| ReferenceResidual {
+            source: r.source, variable: r.variable,
+            residual: match (r.residual, r.nonfinite.as_deref()) {
+                (Some(v), _) => v,
+                (None, Some("inf")) => f64::INFINITY,
+                (None, Some("-inf")) => f64::NEG_INFINITY,
+                _ => f64::NAN,
+            },
+        }).collect();
+        let cmp = ReferenceComparison { residuals };
+        let tier = cmp.tier_under_with_unverified(&bands, case.gross_guard, case.unverified);
+        println!("{}", format!("{tier}").to_lowercase());
+    }
+}

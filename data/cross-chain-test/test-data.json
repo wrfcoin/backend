@@ -1,0 +1,368 @@
+{
+  "bridges": [
+    {
+      "id": "axelar",
+      "name": "Axelar Bridge",
+      "networks": [
+        "Ethereum",
+        "Cosmos",
+        "Avalanche",
+        "Polygon",
+        "Binance Smart Chain"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "layerzero",
+      "name": "LayerZero Bridge",
+      "networks": [
+        "Ethereum",
+        "Binance Smart Chain",
+        "Avalanche",
+        "Polygon",
+        "Arbitrum"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "wormhole",
+      "name": "Wormhole Bridge",
+      "networks": [
+        "Ethereum",
+        "Solana",
+        "Binance Smart Chain",
+        "Polygon",
+        "Avalanche"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "ibc",
+      "name": "IBC Protocol Bridge",
+      "networks": [
+        "Cosmos",
+        "Osmosis",
+        "Terra",
+        "Juno",
+        "Kava",
+        "Secret Network"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "ilpv4",
+      "name": "Interledger Protocol v4",
+      "networks": [
+        "WRF Network",
+        "XRP Ledger",
+        "Ethereum",
+        "Bitcoin",
+        "Stellar"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "xcmp",
+      "name": "XCMP (Polkadot Cross-Chain)",
+      "networks": [
+        "Polkadot",
+        "Kusama",
+        "Moonbeam",
+        "Acala",
+        "Astar",
+        "Parallel"
+      ],
+      "enabled": true
+    },
+    {
+      "id": "near",
+      "name": "Near Protocol Bridge",
+      "networks": ["Near", "Ethereum", "Aurora", "WRF Network", "Bitcoin"],
+      "enabled": true
+    },
+    {
+      "id": "optimism",
+      "name": "Optimism Bridge",
+      "networks": ["Ethereum", "Optimism", "Base", "WRF Network", "Arbitrum"],
+      "enabled": true
+    },
+    {
+      "id": "base",
+      "name": "Base Network Bridge",
+      "networks": ["Ethereum", "Base", "Optimism", "WRF Network", "Arbitrum"],
+      "enabled": true
+    },
+    {
+      "id": "cosmos-ibc",
+      "name": "Cosmos IBC Bridge",
+      "networks": [
+        "Cosmos",
+        "Osmosis",
+        "Juno",
+        "WRF Network",
+        "Akash",
+        "Evmos"
+      ],
+      "enabled": true
+    }
+  ],
+  "testWallets": {
+    "wrfcoin": "Wrf1TestWalletXyz12345678901234567890",
+    "ethereum": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+    "cosmos": "cosmos1abcdefghijklmnopqrstuvwxyz0123456789",
+    "solana": "So1ana1111111111111111111111111111111111111",
+    "avalanche": "X-avax1rlxm7ckv0ef4g9vf93vrpv9kw0u9jz9k7fverz",
+    "binance": "bnb1abcdefghijklmnopqrstuvwxyz0123456789",
+    "polygon": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+    "near": "wrfcoin.near",
+    "optimism": "0xA81D9413B3A14779794262D2319EB775EBd4ffEC",
+    "base": "0x8a2B2B89c6868A0CAcAAF2D821Fb8C5169Da74F1",
+    "aurora": "wrfcoin-aurora.near",
+    "juno": "juno1abcdefghijklmnopqrstuvwxyz0123456789",
+    "osmosis": "osmo1abcdefghijklmnopqrstuvwxyz0123456789",
+    "akash": "akash1abcdefghijklmnopqrstuvwxyz0123456789",
+    "evmos": "evmos1abcdefghijklmnopqrstuvwxyz0123456789"
+  },
+  "transactions": [
+    {
+      "id": "axelar-if924za5",
+      "bridge": "axelar",
+      "sourceNetwork": "Ethereum",
+      "destNetwork": "Cosmos",
+      "sourceWallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+      "destWallet": "cosmos1abcdefghijklmnopqrstuvwxyz0123456789",
+      "amount": 1.5,
+      "fee": 0.01,
+      "status": "success",
+      "timestamp": "2025-05-23T10:04:43.005Z"
+    },
+    {
+      "id": "axelar-speei0oz",
+      "bridge": "axelar",
+      "sourceNetwork": "Cosmos",
+      "destNetwork": "Ethereum",
+      "sourceWallet": "cosmos1abcdefghijklmnopqrstuvwxyz0123456789",
+      "destWallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+      "amount": 0.75,
+      "fee": 0.01,
+      "status": "success",
+      "timestamp": "2025-05-23T10:04:47.011Z"
+    },
+    {
+      "id": "lz-i5be4rgo",
+      "bridge": "layerzero",
+      "sourceNetwork": "Ethereum",
+      "destNetwork": "Binance Smart Chain",
+      "sourceWallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+      "destWallet": "Wrf1TestWalletXyz12345678901234567890",
+      "amount": 2,
+      "fee": 0.015,
+      "status": "success",
+      "timestamp": "2025-05-23T10:04:51.522Z"
+    },
+    {
+      "id": "lz-9ikq5wll",
+      "bridge": "layerzero",
+      "sourceNetwork": "Binance Smart Chain",
+      "destNetwork": "Ethereum",
+      "sourceWallet": "Wrf1TestWalletXyz12345678901234567890",
+      "destWallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+      "amount": 1.25,
+      "fee": 0.015,
+      "status": "success",
+      "timestamp": "2025-05-23T10:04:56.026Z"
+    },
+    {
+      "id": "wh-7pfhx2zy",
+      "bridge": "wormhole",
+      "sourceNetwork": "Solana",
+      "destNetwork": "Ethereum",
+      "sourceWallet": "So1ana1111111111111111111111111111111111111",
+      "destWallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+      "amount": 3,
+      "fee": 0.0125,
+      "status": "success",
+      "timestamp": "2025-05-23T10:05:00.334Z"
+    },
+    {
+      "id": "wh-aezi6e71",
+      "bridge": "wormhole",
+      "sourceNetwork": "Ethereum",
+      "destNetwork": "Solana",
+      "sourceWallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+      "destWallet": "So1ana1111111111111111111111111111111111111",
+      "amount": 1.75,
+      "fee": 0.0125,
+      "status": "success",
+      "timestamp": "2025-05-23T10:05:04.639Z"
+    },
+    {
+      "id": "ibc-ml1c0et6",
+      "bridge": "ibc",
+      "sourceNetwork": "Cosmos",
+      "destNetwork": "Osmosis",
+      "sourceWallet": "cosmos1abcdefghijklmnopqrstuvwxyz0123456789",
+      "destWallet": "osmo1abcdefghijklmnopqrstuvwxyz0123456789",
+      "amount": 8.5,
+      "fee": 0.005,
+      "status": "success",
+      "timestamp": "2025-05-23T10:05:08.844Z"
+    },
+    {
+      "id": "ibc-9rx157fc",
+      "bridge": "ibc",
+      "sourceNetwork": "Osmosis",
+      "destNetwork": "Terra",
+      "sourceWallet": "osmo1abcdefghijklmnopqrstuvwxyz0123456789",
+      "destWallet": "Wrf1TestWalletXyz12345678901234567890",
+      "amount": 12.75,
+      "fee": 0.005,
+      "status": "success",
+      "timestamp": "2025-05-23T10:05:13.049Z"
+    },
+    {
+      "id": "ilp-w53wza1a",
+      "bridge": "ilpv4",
+      "sourceNetwork": "WRF Network",
+      "destNetwork": "XRP Ledger",
+      "sourceWallet": "Wrf1TestWalletXyz12345678901234567890",
+      "destWallet": "Wrf1TestWalletXyz12345678901234567890",
+      "amount": 50,
+      "fee": 0.0035,
+      "status": "success",
+      "timestamp": "2025-05-23T10:05:16.755Z"
+    },
+    {
+      "id": "ilp-4terzc6c",
+      "bridge": "ilpv4",
+      "sourceNetwork": "XRP Ledger",
+      "destNetwork": "Stellar",
+      "sourceWallet": "Wrf1TestWalletXyz12345678901234567890",
+      "destWallet": "Wrf1TestWalletXyz12345678901234567890",
+      "amount": 25.5,
+      "fee": 0.0035,
+      "status": "success",
+      "timestamp": "2025-05-23T10:05:20.459Z"
+    },
+    {
+      "id": "xcmp-348gf4kj",
+      "bridge": "xcmp",
+      "sourceNetwork": "Polkadot",
+      "destNetwork": "Moonbeam",
+      "sourceWallet": "Wrf1TestWalletXyz12345678901234567890",
+      "destWallet": "Wrf1TestWalletXyz12345678901234567890",
+      "amount": 4.2,
+      "fee": 0.008,
+      "status": "success",
+      "timestamp": "2025-05-23T10:05:25.064Z"
+    },
+    {
+      "id": "xcmp-onx0exc1",
+      "bridge": "xcmp",
+      "sourceNetwork": "Acala",
+      "destNetwork": "Astar",
+      "sourceWallet": "Wrf1TestWalletXyz12345678901234567890",
+      "destWallet": "Wrf1TestWalletXyz12345678901234567890",
+      "amount": 7.8,
+      "fee": 0.008,
+      "status": "success",
+      "timestamp": "2025-05-23T10:05:29.671Z"
+    },
+    {
+      "id": "near-dmlwpfn7",
+      "bridge": "near",
+      "sourceNetwork": "Near",
+      "destNetwork": "Ethereum",
+      "sourceWallet": "wrfcoin.near",
+      "destWallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+      "amount": 5.5,
+      "fee": 0.0075,
+      "status": "success",
+      "timestamp": "2025-05-23T10:05:33.976Z"
+    },
+    {
+      "id": "near-nlnluiam",
+      "bridge": "near",
+      "sourceNetwork": "Ethereum",
+      "destNetwork": "Near",
+      "sourceWallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+      "destWallet": "wrfcoin.near",
+      "amount": 3.25,
+      "fee": 0.0075,
+      "status": "success",
+      "timestamp": "2025-05-23T10:05:38.280Z"
+    },
+    {
+      "id": "op-tmwsr1bh",
+      "bridge": "optimism",
+      "sourceNetwork": "Ethereum",
+      "destNetwork": "Optimism",
+      "sourceWallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+      "destWallet": "0xA81D9413B3A14779794262D2319EB775EBd4ffEC",
+      "amount": 12,
+      "fee": 0.0045,
+      "status": "success",
+      "timestamp": "2025-05-23T10:05:42.386Z"
+    },
+    {
+      "id": "op-yaa0a8kc",
+      "bridge": "optimism",
+      "sourceNetwork": "Optimism",
+      "destNetwork": "WRF Network",
+      "sourceWallet": "0xA81D9413B3A14779794262D2319EB775EBd4ffEC",
+      "destWallet": "Wrf1TestWalletXyz12345678901234567890",
+      "amount": 6.75,
+      "fee": 0.0045,
+      "status": "success",
+      "timestamp": "2025-05-23T10:05:46.496Z"
+    },
+    {
+      "id": "base-wrhf1j1e",
+      "bridge": "base",
+      "sourceNetwork": "Ethereum",
+      "destNetwork": "Base",
+      "sourceWallet": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
+      "destWallet": "0x8a2B2B89c6868A0CAcAAF2D821Fb8C5169Da74F1",
+      "amount": 9,
+      "fee": 0.0055,
+      "status": "success",
+      "timestamp": "2025-05-23T10:05:50.707Z"
+    },
+    {
+      "id": "base-ve6f60eh",
+      "bridge": "base",
+      "sourceNetwork": "Base",
+      "destNetwork": "Optimism",
+      "sourceWallet": "0x8a2B2B89c6868A0CAcAAF2D821Fb8C5169Da74F1",
+      "destWallet": "0xA81D9413B3A14779794262D2319EB775EBd4ffEC",
+      "amount": 4.5,
+      "fee": 0.0055,
+      "status": "success",
+      "timestamp": "2025-05-23T10:05:54.914Z"
+    },
+    {
+      "id": "cibc-ue7btdaz",
+      "bridge": "cosmos-ibc",
+      "sourceNetwork": "Cosmos",
+      "destNetwork": "Osmosis",
+      "sourceWallet": "cosmos1abcdefghijklmnopqrstuvwxyz0123456789",
+      "destWallet": "osmo1abcdefghijklmnopqrstuvwxyz0123456789",
+      "amount": 15.25,
+      "fee": 0.004,
+      "status": "success",
+      "timestamp": "2025-05-23T10:05:59.338Z"
+    },
+    {
+      "id": "cibc-gn3llyk5",
+      "bridge": "cosmos-ibc",
+      "sourceNetwork": "Osmosis",
+      "destNetwork": "WRF Network",
+      "sourceWallet": "osmo1abcdefghijklmnopqrstuvwxyz0123456789",
+      "destWallet": "Wrf1TestWalletXyz12345678901234567890",
+      "amount": 7.35,
+      "fee": 0.004,
+      "status": "success",
+      "timestamp": "2025-05-23T10:06:03.743Z"
+    }
+  ]
+}

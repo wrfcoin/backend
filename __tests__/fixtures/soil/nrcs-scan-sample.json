@@ -1,0 +1,28 @@
+{
+  "stations": [
+    {
+      "triplet": "2057:AL:SCAN",
+      "stationName": "Auburn SCAN",
+      "network": "SCAN",
+      "latitude": 32.6012,
+      "longitude": -85.4881,
+      "elevationMeters": 214.6,
+      "stateCode": "AL",
+      "countyName": "Lee",
+      "observations": [
+        {
+          "timestamp": "2026-03-05T12:00:00.000-06:00",
+          "duration": "HOURLY",
+          "values": {
+            "SMS:I-1": 21.8,
+            "SMS:I-2": 23.4,
+            "SMS:I-3": 26.1,
+            "SMS:I-4": 29.9,
+            "STO:I-1": 15.2,
+            "PREC": 1.3
+          }
+        }
+      ]
+    }
+  ]
+}

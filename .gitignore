@@ -1,0 +1,19 @@
+node_modules/
+dist/
+logs/
+*.log
+.env
+.env.*
+!.env.example
+
+# Sprint-agent worktrees live here; never commit as gitlinks (backend#713)
+.claude/worktrees/
+
+# Test-generated durable-store artifacts (backend#935). The suite writes into
+# backend/data/; idempotency-test-*.json are per-run scratch files and a
+# `git add -A` has already committed this churn once, pre-loading the store and
+# making the MAX_IDEMPOTENCY_ENTRIES eviction test time out in CI.
+backend/data/idempotency-test-*.json
+
+# Test-run route durable store (backend#1017) — see __tests__/setup/test-env-defaults.cjs
+backend/data/route-durable-store.test.json

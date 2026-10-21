@@ -1,0 +1,452 @@
+{
+  "governance": {
+    "proposals": {
+      "gov_proposal_e3b23f3d-21b7-4ef5-a85f-038bd4c62805": {
+        "id": "gov_proposal_e3b23f3d-21b7-4ef5-a85f-038bd4c62805",
+        "title": "Bridge slashing trigger for test-verify-slash-tx",
+        "description": "Auto-generated validator slashing request from bridge verify flow for transaction test-verify-slash-tx.",
+        "proposalType": "PARAMETER_CHANGE",
+        "parametersToChange": {
+          "version": "1.0",
+          "module": "native-chain.governance",
+          "action": "validator_slash",
+          "triggerId": "bridge_slash_trigger_0ff272c6-07c1-4962-b2ed-5fda1919a257",
+          "transactionId": "test-verify-slash-tx",
+          "dispatchPath": "verify",
+          "offenseCode": "CONS-001",
+          "severityTier": "critical",
+          "requestedBy": "bridge-quorum-watchdog",
+          "policyHashReference": "sha256:bridge-validator-slashing-v1",
+          "createdAt": "2026-03-12T04:19:52.021Z",
+          "evidence": {
+            "reasonCodes": [
+              "CONFLICTING_PUBLIC_KEY",
+              "CONFLICTING_SIGNATURE"
+            ],
+            "evidenceIds": [
+              "0xval1:1773289192015",
+              "0xval1:1773289192016"
+            ],
+            "evidenceFingerprint": "6a12c4f9d3e8da510457ca6d60174e82624432a29820709184368c3295bede47",
+            "quorum": {
+              "requiredSignatures": 1,
+              "collectedSignatures": 2,
+              "registeredValidators": 5,
+              "activeValidators": 5,
+              "quorumReached": true,
+              "quorumPercentage": 200,
+              "participationRate": 40
+            }
+          },
+          "targets": [
+            {
+              "validator": "0xval1",
+              "recommendedSlashBps": 2500
+            }
+          ]
+        },
+        "status": "PENDING",
+        "createdAt": "2026-03-12T04:19:52.021Z",
+        "updatedAt": "2026-03-12T04:19:52.021Z",
+        "voteSummary": {
+          "support": 0,
+          "oppose": 0
+        }
+      },
+      "gov_proposal_9c4a283d-9859-4a12-bdb6-1a3143f92c65": {
+        "id": "gov_proposal_9c4a283d-9859-4a12-bdb6-1a3143f92c65",
+        "title": "Bridge slashing trigger for test-finalize-slash",
+        "description": "Auto-generated validator slashing request from bridge finalize flow for transaction test-finalize-slash.",
+        "proposalType": "PARAMETER_CHANGE",
+        "parametersToChange": {
+          "version": "1.0",
+          "module": "native-chain.governance",
+          "action": "validator_slash",
+          "triggerId": "bridge_slash_trigger_123edc0e-3885-4676-977f-170b0f8bd0fd",
+          "transactionId": "test-finalize-slash",
+          "dispatchPath": "finalize",
+          "offenseCode": "CONS-001",
+          "severityTier": "critical",
+          "requestedBy": "bridge-quorum-watchdog",
+          "policyHashReference": "sha256:bridge-validator-slashing-v1",
+          "createdAt": "2026-03-12T04:19:52.045Z",
+          "evidence": {
+            "reasonCodes": [
+              "CONFLICTING_SIGNATURE"
+            ],
+            "evidenceIds": [
+              "0xval1:100",
+              "0xval1:101"
+            ],
+            "evidenceFingerprint": "ff0011",
+            "quorum": {
+              "requiredSignatures": 3,
+              "collectedSignatures": 2,
+              "registeredValidators": 5,
+              "activeValidators": 5,
+              "quorumReached": false,
+              "quorumPercentage": 67,
+              "participationRate": 40
+            }
+          },
+          "targets": [
+            {
+              "validator": "0xval1",
+              "recommendedSlashBps": 2500
+            }
+          ]
+        },
+        "status": "PENDING",
+        "createdAt": "2026-03-12T04:19:52.045Z",
+        "updatedAt": "2026-03-12T04:19:52.045Z",
+        "voteSummary": {
+          "support": 0,
+          "oppose": 0
+        }
+      }
+    },
+    "votes": {}
+  },
+  "weather": {
+    "records": {}
+  },
+  "bridges": {
+    "transactions": {
+      "test-verify-tx": {
+        "transactionId": "test-verify-tx",
+        "routeId": "ethereum->polygon",
+        "fromChain": "ethereum",
+        "toChain": "polygon",
+        "fromAddress": "0x123",
+        "toAddress": "0x456",
+        "amount": "1000",
+        "token": "WRF",
+        "status": "CONFIRMED",
+        "createdAt": "2026-03-25T05:24:41.355Z",
+        "updatedAt": "2026-03-25T05:24:41.377Z",
+        "challengeWindowEndsAt": "2026-03-25T05:24:51.355Z",
+        "verificationFailureCount": 0
+      },
+      "test-no-verif-tx": {
+        "transactionId": "test-no-verif-tx",
+        "routeId": "ethereum->polygon",
+        "fromChain": "ethereum",
+        "toChain": "polygon",
+        "fromAddress": "0x123",
+        "toAddress": "0x456",
+        "amount": "1000",
+        "token": "WRF",
+        "status": "CONFIRMED",
+        "createdAt": "2026-03-25T05:24:41.383Z",
+        "updatedAt": "2026-03-25T05:24:41.383Z",
+        "challengeWindowEndsAt": "2026-03-25T05:24:31.383Z",
+        "verificationFailureCount": 0
+      },
+      "test-no-quorum-tx": {
+        "transactionId": "test-no-quorum-tx",
+        "routeId": "ethereum->polygon",
+        "fromChain": "ethereum",
+        "toChain": "polygon",
+        "fromAddress": "0x123",
+        "toAddress": "0x456",
+        "amount": "1000",
+        "token": "WRF",
+        "status": "CONFIRMED",
+        "createdAt": "2026-03-25T05:24:41.393Z",
+        "updatedAt": "2026-03-25T05:24:41.393Z",
+        "challengeWindowEndsAt": "2026-03-25T05:24:31.393Z",
+        "verificationFailureCount": 0
+      },
+      "test-verify-slash-tx": {
+        "transactionId": "test-verify-slash-tx",
+        "routeId": "ethereum->polygon",
+        "fromChain": "ethereum",
+        "toChain": "polygon",
+        "fromAddress": "0x123",
+        "toAddress": "0x456",
+        "amount": "1000",
+        "token": "WRF",
+        "status": "CONFIRMED",
+        "createdAt": "2026-03-25T05:24:41.405Z",
+        "updatedAt": "2026-03-25T05:24:41.412Z",
+        "challengeWindowEndsAt": "2026-03-25T05:24:51.405Z",
+        "verificationFailureCount": 0
+      },
+      "test-no-slash-finalize": {
+        "transactionId": "test-no-slash-finalize",
+        "routeId": "ethereum->polygon",
+        "fromChain": "ethereum",
+        "toChain": "polygon",
+        "fromAddress": "0x123",
+        "toAddress": "0x456",
+        "amount": "1000",
+        "token": "WRF",
+        "status": "CONFIRMED",
+        "createdAt": "2026-03-25T05:24:41.419Z",
+        "updatedAt": "2026-03-25T05:24:41.419Z",
+        "challengeWindowEndsAt": "2026-03-25T05:24:31.419Z",
+        "verificationFailureCount": 0
+      },
+      "test-finalize-slash": {
+        "transactionId": "test-finalize-slash",
+        "routeId": "ethereum->polygon",
+        "fromChain": "ethereum",
+        "toChain": "polygon",
+        "fromAddress": "0x123",
+        "toAddress": "0x456",
+        "amount": "1000",
+        "token": "WRF",
+        "status": "CONFIRMED",
+        "createdAt": "2026-03-25T05:24:41.429Z",
+        "updatedAt": "2026-03-25T05:24:41.429Z",
+        "challengeWindowEndsAt": "2026-03-25T05:24:31.429Z",
+        "verificationFailureCount": 0
+      }
+    },
+    "verificationResults": {
+      "test-verify-tx": {
+        "verified": true,
+        "confidence": 1,
+        "errors": [],
+        "timestamp": "2026-03-25T05:24:41.377Z",
+        "validatorAttestation": {
+          "evidenceIds": [
+            "0xval1:1774416281355"
+          ],
+          "quorum": {
+            "requiredSignatures": 1,
+            "collectedSignatures": 1,
+            "registeredValidators": 5,
+            "activeValidators": 5,
+            "quorumReached": true,
+            "quorumPercentage": 100,
+            "participationRate": 20
+          },
+          "evidenceAvailable": {
+            "merkleProof": true,
+            "signatures": true,
+            "oracleAttestation": false,
+            "relayerAttestation": false
+          },
+          "misbehavior": {
+            "detected": false,
+            "reasonCodes": [],
+            "implicatedValidators": [],
+            "evidenceFingerprint": "c6dc748147e726f9ce298fe15c8a5f6b097dd5c71e4ce8f03b5be22604d9d97e",
+            "duplicateEntries": 0,
+            "conflictingEntries": 0
+          }
+        }
+      },
+      "test-no-quorum-tx": {
+        "verified": true,
+        "confidence": 1,
+        "errors": [],
+        "timestamp": "2026-03-25T05:24:41.393Z",
+        "validatorAttestation": {
+          "evidenceIds": [],
+          "quorum": {
+            "requiredSignatures": 3,
+            "collectedSignatures": 1,
+            "registeredValidators": 5,
+            "activeValidators": 5,
+            "quorumReached": false,
+            "quorumPercentage": 33,
+            "participationRate": 20
+          },
+          "evidenceAvailable": {
+            "merkleProof": true,
+            "signatures": true,
+            "oracleAttestation": false,
+            "relayerAttestation": false
+          }
+        }
+      },
+      "test-verify-slash-tx": {
+        "verified": true,
+        "confidence": 1,
+        "errors": [],
+        "timestamp": "2026-03-25T05:24:41.412Z",
+        "validatorAttestation": {
+          "evidenceIds": [
+            "0xval1:1774416281407",
+            "0xval1:1774416281408"
+          ],
+          "quorum": {
+            "requiredSignatures": 1,
+            "collectedSignatures": 2,
+            "registeredValidators": 5,
+            "activeValidators": 5,
+            "quorumReached": true,
+            "quorumPercentage": 200,
+            "participationRate": 40
+          },
+          "evidenceAvailable": {
+            "merkleProof": true,
+            "signatures": true,
+            "oracleAttestation": false,
+            "relayerAttestation": false
+          },
+          "misbehavior": {
+            "detected": true,
+            "reasonCodes": [
+              "CONFLICTING_PUBLIC_KEY",
+              "CONFLICTING_SIGNATURE"
+            ],
+            "implicatedValidators": [
+              "0xval1"
+            ],
+            "evidenceFingerprint": "6a12c4f9d3e8da510457ca6d60174e82624432a29820709184368c3295bede47",
+            "duplicateEntries": 0,
+            "conflictingEntries": 2
+          }
+        },
+        "slashingTrigger": {
+          "triggered": true,
+          "triggerId": "bridge_slash_trigger_0ff272c6-07c1-4962-b2ed-5fda1919a257",
+          "governanceProposalId": "gov_proposal_e3b23f3d-21b7-4ef5-a85f-038bd4c62805",
+          "dispatchPath": "verify",
+          "status": "pending",
+          "payloadHash": "4478ae273811b014e42ef73a477102950e486bb60735ccd6b55422991262d145",
+          "dispatchedAt": "2026-03-12T04:19:52.021Z",
+          "implicatedValidators": [
+            "0xval1"
+          ],
+          "reasonCodes": [
+            "CONFLICTING_PUBLIC_KEY",
+            "CONFLICTING_SIGNATURE"
+          ]
+        }
+      },
+      "test-no-slash-finalize": {
+        "verified": true,
+        "confidence": 1,
+        "errors": [],
+        "timestamp": "2026-03-25T05:24:41.419Z",
+        "validatorAttestation": {
+          "evidenceIds": [
+            "0xval2:100"
+          ],
+          "quorum": {
+            "requiredSignatures": 3,
+            "collectedSignatures": 1,
+            "registeredValidators": 5,
+            "activeValidators": 5,
+            "quorumReached": false,
+            "quorumPercentage": 33,
+            "participationRate": 20
+          },
+          "evidenceAvailable": {
+            "merkleProof": true,
+            "signatures": true,
+            "oracleAttestation": false,
+            "relayerAttestation": false
+          }
+        }
+      },
+      "test-finalize-slash": {
+        "verified": true,
+        "confidence": 1,
+        "errors": [],
+        "timestamp": "2026-03-25T05:24:41.429Z",
+        "validatorAttestation": {
+          "evidenceIds": [
+            "0xval1:100",
+            "0xval1:101"
+          ],
+          "quorum": {
+            "requiredSignatures": 3,
+            "collectedSignatures": 2,
+            "registeredValidators": 5,
+            "activeValidators": 5,
+            "quorumReached": false,
+            "quorumPercentage": 67,
+            "participationRate": 40
+          },
+          "evidenceAvailable": {
+            "merkleProof": true,
+            "signatures": true,
+            "oracleAttestation": false,
+            "relayerAttestation": false
+          },
+          "misbehavior": {
+            "detected": true,
+            "reasonCodes": [
+              "CONFLICTING_SIGNATURE"
+            ],
+            "implicatedValidators": [
+              "0xval1"
+            ],
+            "evidenceFingerprint": "ff0011",
+            "duplicateEntries": 0,
+            "conflictingEntries": 1
+          }
+        }
+      }
+    },
+    "safety": {
+      "halted": false,
+      "haltedAt": null,
+      "haltReason": null,
+      "globalExposure": "0",
+      "routeExposure": {},
+      "globalExposureCap": "1000000000000",
+      "routeExposureCap": "250000000000",
+      "anomalyWindowStartedAt": "2026-03-25T05:24:41.376Z",
+      "anomalyFailuresInWindow": 0,
+      "anomalyFailureThreshold": 5,
+      "challengeWindowSeconds": 1800
+    }
+  },
+  "idempotency": {
+    "entries": {
+      "bridges:slashing-trigger:tx_test-verify-slash-tx:fp_6a12c4f9d3e8da510457ca6d60174e82624432a29820709184368c3295bede47": {
+        "scope": "bridges:slashing-trigger",
+        "key": "tx_test-verify-slash-tx:fp_6a12c4f9d3e8da510457ca6d60174e82624432a29820709184368c3295bede47",
+        "status": 200,
+        "responseBody": {
+          "triggered": true,
+          "triggerId": "bridge_slash_trigger_0ff272c6-07c1-4962-b2ed-5fda1919a257",
+          "governanceProposalId": "gov_proposal_e3b23f3d-21b7-4ef5-a85f-038bd4c62805",
+          "dispatchPath": "verify",
+          "status": "pending",
+          "payloadHash": "4478ae273811b014e42ef73a477102950e486bb60735ccd6b55422991262d145",
+          "dispatchedAt": "2026-03-12T04:19:52.021Z",
+          "implicatedValidators": [
+            "0xval1"
+          ],
+          "reasonCodes": [
+            "CONFLICTING_PUBLIC_KEY",
+            "CONFLICTING_SIGNATURE"
+          ]
+        },
+        "createdAt": "2026-03-12T04:19:52.023Z"
+      },
+      "bridges:slashing-trigger:tx_test-finalize-slash:fp_ff0011": {
+        "scope": "bridges:slashing-trigger",
+        "key": "tx_test-finalize-slash:fp_ff0011",
+        "status": 200,
+        "responseBody": {
+          "triggered": true,
+          "triggerId": "bridge_slash_trigger_123edc0e-3885-4676-977f-170b0f8bd0fd",
+          "governanceProposalId": "gov_proposal_9c4a283d-9859-4a12-bdb6-1a3143f92c65",
+          "dispatchPath": "finalize",
+          "status": "pending",
+          "payloadHash": "6e0520b1c5b17e3c304e7314e55069515a321df422bcabcff799d2f2ba8fac16",
+          "dispatchedAt": "2026-03-12T04:19:52.045Z",
+          "implicatedValidators": [
+            "0xval1"
+          ],
+          "reasonCodes": [
+            "CONFLICTING_SIGNATURE"
+          ]
+        },
+        "createdAt": "2026-03-12T04:19:52.047Z"
+      }
+    },
+    "order": [
+      "bridges:slashing-trigger:tx_test-verify-slash-tx:fp_6a12c4f9d3e8da510457ca6d60174e82624432a29820709184368c3295bede47",
+      "bridges:slashing-trigger:tx_test-finalize-slash:fp_ff0011"
+    ]
+  }
+}

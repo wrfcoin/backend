@@ -1,0 +1,73 @@
+# Development Configuration Profile
+# This profile enables core modules plus development tools and testing components
+
+[meta]
+name = "development"
+description = "Development configuration with testing tools and debugging features"
+createdAt = "2025-05-22T02:22:00.000Z"
+
+# Core Components
+[core]
+enabled = true
+
+[consensus]
+enabled = true
+
+[network]
+enabled = true
+
+[storage]
+enabled = true
+
+[api_server]
+enabled = true
+
+[websocket_server]
+enabled = true
+
+[blockchain]
+enabled = true
+
+# Testing Components
+[test_blockchain]
+enabled = true
+
+[test_computational]
+enabled = true
+
+# Weather Data Components
+[weather]
+enabled = true
+
+[test_weather]
+enabled = true
+
+# Database Components
+[db_push]
+enabled = true
+
+[db_migrate]
+enabled = true
+
+[db_schema_gen]
+enabled = true
+
+# Privacy Components
+[privacy]
+enabled = true
+
+# Cross-chain Components
+[crosschain]
+enabled = true
+
+# Governance Components
+[governance]
+enabled = false
+
+# Storage Components
+[test_storage_keeper_node]
+enabled = false
+
+# Computational Components 
+[computational]
+enabled = true

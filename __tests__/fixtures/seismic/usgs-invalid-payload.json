@@ -1,0 +1,10 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "generated": 1772661123000,
+    "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson",
+    "title": "Invalid USGS payload for parser negative test",
+    "status": 200
+  },
+  "features": null
+}

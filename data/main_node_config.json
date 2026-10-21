@@ -1,0 +1,25 @@
+{
+  "chain_id": "wrfcoin-main",
+  "network": "mainnet",
+  "database_path": "data/wrfcoin",
+  "p2p_port": 6334,
+  "api_host": "0.0.0.0",
+  "api_port": 5000,
+  "mining_difficulty": 16,
+  "block_time_target_seconds": 600,
+  "initial_block_reward": 50000000000,
+  "reward_halving_interval": 210000,
+  "bootstrap_peers": [
+    "/ip4/bootstrap1.wrfcoin.example:6334",
+    "/ip4/bootstrap2.wrfcoin.example:6334"
+  ],
+  "genesis_address": "wrf7a6eb3c86f0e5c5cd1fed57ff64c6b8c9210032d",
+  "genesis_reward": 50000000000,
+  "max_block_size": 1000000,
+  "max_transaction_size": 100000,
+  "max_transactions_per_block": 5000,
+  "trusted_validators": ["wrf7a6eb3c86f0e5c5cd1fed57ff64c6b8c9210032d"],
+  "cross_chain_validators": ["wrf7a6eb3c86f0e5c5cd1fed57ff64c6b8c9210032d"],
+  "cross_chain_min_signatures": 1,
+  "enable_cross_chain": true
+}

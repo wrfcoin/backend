@@ -1,0 +1,11 @@
+{
+  "enabled": [],
+  "disabled": [],
+  "autoload": true,
+  "dependency_check": true,
+  "profiles": {
+    "minimal": ["core", "network"],
+    "development": ["core", "network", "debugging", "testing"],
+    "production": ["core", "network", "monitoring", "security"]
+  }
+}

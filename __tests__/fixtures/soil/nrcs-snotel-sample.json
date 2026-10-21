@@ -1,0 +1,26 @@
+{
+  "stations": [
+    {
+      "triplet": "304:CA:SNTL",
+      "stationName": "Mammoth Pass",
+      "network": "SNOTEL",
+      "latitude": 37.6294,
+      "longitude": -119.0326,
+      "elevationMeters": 2859,
+      "stateCode": "CA",
+      "countyName": "Madera",
+      "observations": [
+        {
+          "dateTime": "2026-03-05T00:00:00.000-08:00",
+          "duration": "DAILY",
+          "values": {
+            "WTEQ": 412,
+            "SNWD": 141,
+            "PRCP": 9.8,
+            "TAVG": -3.1
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+# ---------------------------------- WARNING ----------------------------------------
+# Data for the following stations are temporary and will be reviewed before publication.
+agency_cd	site_no	station_nm	site_tp_cd	dec_lat_va	dec_long_va	state_cd	county_cd
+5s	15s	50s	4s	16s	16s	4s	5s
+USGS	01646500	Potomac River at Point of Rocks, MD	ST	39.27455	-77.54360	24	031
+USGS	01638500	Potomac River near Washington, DC	ST	38.95000	-77.12000	11	001

@@ -1,0 +1,18 @@
+{
+  "seam": "backend-auth-websocket",
+  "jwt": {
+    "issuer": "wrfcoin-backend",
+    "audience": "wrfcoin-mobile",
+    "requiredClaims": ["sub", "address", "role", "type"]
+  },
+  "websocket": {
+    "path": "/ws",
+    "tokenTransport": ["query", "header"],
+    "publicChannels": ["blocks", "governance"],
+    "authenticatedChannelTemplate": "wallet:{address}",
+    "expectedConnectedAuthenticated": true,
+    "invalidTokenCloseCode": 1008,
+    "unauthorizedEvent": "subscription_denied",
+    "unauthorizedReason": "not authorized for channel"
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "./dist",
+    "rootDir": ".",
+    "baseUrl": "./",
+    "noImplicitReturns": false,
+    "downlevelIteration": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@/types": ["./types/*"],
+      "@/utils": ["./utils/*"],
+      "@/services": ["./services/*"],
+      "@wrfcoin/meteo-types": ["./shared/generated-types/index"],
+      "@wrfcoin/meteo-types/*": ["./shared/generated-types/*"]
+    }
+  },
+  "include": [
+    "server/**/*.ts",
+    "src/**/*.ts",
+    "middleware/**/*.ts",
+    "shared/**/*.ts",
+    "blockchain/**/*.ts",
+    "graphql/**/*.ts",
+    "routes/**/*.ts",
+    "api/**/*.ts",
+    "services/**/*.ts",
+    "types/**/*.d.ts",
+    "database/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

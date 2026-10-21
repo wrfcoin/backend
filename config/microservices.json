@@ -1,0 +1,130 @@
+{
+  "metadata": {
+    "name": "WRFCoin Microservices Architecture",
+    "version": "1.0.0",
+    "updated": "2026-04-11",
+    "description": "Configuration for WRFCoin's 15+ microservices ecosystem"
+  },
+  "testnet_mvp_scope": {
+    "decision_date": "2026-04-02",
+    "entrypoint": "main-api",
+    "notes": [
+      "Testnet MVP uses main-api (4001) as canonical backend entrypoint.",
+      "api-gateway and standalone nft/user microservices are deferred from the default infra testnet compose.",
+      "cross-chain, compute-networks, ai-ml, storage-networks, and node-discovery are available behind the optional full profile in infra testnet compose.",
+      "Frontend should gate deferred feature surfaces via flags until those services are added."
+    ],
+    "in_scope_services": [
+      "main-api",
+      "wallet",
+      "governance",
+      "iot-sensor",
+      "weather-earnings"
+    ],
+    "deferred_services": [
+      "api-gateway",
+      "nft-marketplace-service",
+      "user-management-service",
+      "compute-contribution",
+      "nas-storage"
+    ]
+  },
+  "services": {
+    "core": {
+      "main-api": {
+        "name": "Main API Server",
+        "port": 4001,
+        "path": "server/enhanced_unified_api_optimized.ts",
+        "description": "Primary application endpoints and GraphQL API",
+        "dependencies": ["database", "redis"],
+        "health_endpoint": "/health"
+      },
+      "api-gateway": {
+        "name": "API Gateway",
+        "port": 8080,
+        "path": "microservices/api-gateway",
+        "description": "Service discovery and routing",
+        "dependencies": ["main-api"]
+      }
+    },
+    "blockchain": {
+      "cross-chain": {
+        "name": "Cross-Chain Protocol",
+        "port": 3000,
+        "path": "server/cross_chain_protocol_server.js",
+        "description": "Multi-blockchain bridges and cross-chain operations",
+        "dependencies": ["blockchain-core"]
+      }
+    },
+    "compute": {
+      "compute-networks": {
+        "name": "Compute Networks",
+        "port": 6000,
+        "path": "server/compute_networks_server.ts",
+        "description": "Distributed computing and task coordination",
+        "dependencies": ["database"]
+      },
+      "ai-ml": {
+        "name": "AI/ML Networks",
+        "port": 6001,
+        "path": "server/ai_ml_networks_server.ts",
+        "description": "Machine learning model deployment and inference",
+        "dependencies": ["compute-networks"]
+      },
+      "compute-contribution": {
+        "name": "Compute Contribution",
+        "port": 6003,
+        "path": "server/compute_contribution_server.js",
+        "description": "Computational power contribution and rewards",
+        "dependencies": ["compute-networks"]
+      }
+    },
+    "data": {
+      "iot-sensor": {
+        "name": "IoT Sensor Networks",
+        "port": 3002,
+        "path": "server/iot_sensor_networks_server.js",
+        "description": "Environmental sensor management (20+ platforms)",
+        "dependencies": ["database"]
+      },
+      "weather-earnings": {
+        "name": "Weather Earnings",
+        "port": 8001,
+        "path": "server/enhanced_weather_rewards.ts",
+        "description": "Weather station reward distribution",
+        "dependencies": ["iot-sensor", "database"]
+      }
+    },
+    "governance": {
+      "governance": {
+        "name": "Governance Server",
+        "port": 8000,
+        "path": "server/governance_server.js",
+        "description": "DAO proposals, voting, and treasury management",
+        "dependencies": ["database", "main-api"]
+      }
+    },
+    "infrastructure": {
+      "node-discovery": {
+        "name": "Node Discovery",
+        "port": 9001,
+        "path": "server/easy_node_discovery.js",
+        "description": "P2P network coordination and peer discovery",
+        "dependencies": []
+      }
+    }
+  },
+  "database": {
+    "primary": {
+      "type": "PostgreSQL",
+      "port": 5432,
+      "schema_tables": 21,
+      "description": "Consolidated schema for all services"
+    },
+    "cache": {
+      "type": "Redis",
+      "port": 6379,
+      "description": "Performance optimization and session management"
+    }
+  }
+}

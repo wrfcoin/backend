@@ -1,0 +1,127 @@
+{
+  "governance": {
+    "proposals": {},
+    "votes": {}
+  },
+  "weather": {
+    "records": {}
+  },
+  "bridges": {
+    "transactions": {
+      "test-verify-tx": {
+        "transactionId": "test-verify-tx",
+        "routeId": "ethereum->polygon",
+        "fromChain": "ethereum",
+        "toChain": "polygon",
+        "fromAddress": "0x123",
+        "toAddress": "0x456",
+        "amount": "1000",
+        "token": "WRF",
+        "status": "CONFIRMED",
+        "createdAt": "2026-02-21T07:04:23.371Z",
+        "updatedAt": "2026-02-21T07:04:23.383Z",
+        "challengeWindowEndsAt": "2026-02-21T07:04:33.371Z",
+        "verificationFailureCount": 0
+      },
+      "test-no-verif-tx": {
+        "transactionId": "test-no-verif-tx",
+        "routeId": "ethereum->polygon",
+        "fromChain": "ethereum",
+        "toChain": "polygon",
+        "fromAddress": "0x123",
+        "toAddress": "0x456",
+        "amount": "1000",
+        "token": "WRF",
+        "status": "CONFIRMED",
+        "createdAt": "2026-02-21T07:04:23.385Z",
+        "updatedAt": "2026-02-21T07:04:23.385Z",
+        "challengeWindowEndsAt": "2026-02-21T07:04:13.385Z",
+        "verificationFailureCount": 0
+      },
+      "test-no-quorum-tx": {
+        "transactionId": "test-no-quorum-tx",
+        "routeId": "ethereum->polygon",
+        "fromChain": "ethereum",
+        "toChain": "polygon",
+        "fromAddress": "0x123",
+        "toAddress": "0x456",
+        "amount": "1000",
+        "token": "WRF",
+        "status": "CONFIRMED",
+        "createdAt": "2026-02-21T07:04:23.389Z",
+        "updatedAt": "2026-02-21T07:04:23.389Z",
+        "challengeWindowEndsAt": "2026-02-21T07:04:13.389Z",
+        "verificationFailureCount": 0
+      }
+    },
+    "verificationResults": {
+      "test-verify-tx": {
+        "verified": true,
+        "confidence": 1,
+        "errors": [],
+        "timestamp": "2026-02-21T07:04:23.383Z",
+        "validatorAttestation": {
+          "evidenceIds": [
+            "0xval1:1771657463371"
+          ],
+          "quorum": {
+            "requiredSignatures": 1,
+            "collectedSignatures": 1,
+            "registeredValidators": 5,
+            "activeValidators": 5,
+            "quorumReached": true,
+            "quorumPercentage": 100,
+            "participationRate": 20
+          },
+          "evidenceAvailable": {
+            "merkleProof": true,
+            "signatures": true,
+            "oracleAttestation": false,
+            "relayerAttestation": false
+          }
+        }
+      },
+      "test-no-quorum-tx": {
+        "verified": true,
+        "confidence": 1,
+        "errors": [],
+        "timestamp": "2026-02-21T07:04:23.389Z",
+        "validatorAttestation": {
+          "evidenceIds": [],
+          "quorum": {
+            "requiredSignatures": 3,
+            "collectedSignatures": 1,
+            "registeredValidators": 5,
+            "activeValidators": 5,
+            "quorumReached": false,
+            "quorumPercentage": 33,
+            "participationRate": 20
+          },
+          "evidenceAvailable": {
+            "merkleProof": true,
+            "signatures": true,
+            "oracleAttestation": false,
+            "relayerAttestation": false
+          }
+        }
+      }
+    },
+    "safety": {
+      "halted": false,
+      "haltedAt": null,
+      "haltReason": null,
+      "globalExposure": "0",
+      "routeExposure": {},
+      "globalExposureCap": "1000000000000",
+      "routeExposureCap": "250000000000",
+      "anomalyWindowStartedAt": "2026-02-21T06:42:55.925Z",
+      "anomalyFailuresInWindow": 0,
+      "anomalyFailureThreshold": 5,
+      "challengeWindowSeconds": 1800
+    }
+  },
+  "idempotency": {
+    "entries": {},
+    "order": []
+  }
+}

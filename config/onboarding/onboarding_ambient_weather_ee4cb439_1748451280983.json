@@ -1,0 +1,53 @@
+{
+  "stationInfo": {
+    "stationId": "ambient_weather_ee4cb439_1748451280983",
+    "ownerName": "Friend Gamma",
+    "stationType": "ambient_weather",
+    "registrationDate": "2025-05-28T16:54:40.984Z"
+  },
+  "walletInfo": {
+    "address": "wrft964671b5fa704a2998328de08d33d967fc79017f",
+    "privateKey": "[REMOVED_FOR_SECURITY]",
+    "network": "wrfcoin_testnet",
+    "initialBalance": 0,
+    "note": "Private key should be provided securely via environment variables"
+  },
+  "collectionSetup": {
+    "scriptFile": "collect_ambient_weather_friend_gamma.js",
+    "connectionMethod": "ambient_api",
+    "requiredCredentials": ["ambient_api_key", "ambient_app_key"],
+    "collectionInterval": 60
+  },
+  "rewardInfo": {
+    "baseReward": 0.1,
+    "possibleBonuses": [],
+    "estimatedDailyEarnings": 24,
+    "payoutSchedule": "immediate"
+  },
+  "blockchainInfo": {
+    "registrationTx": "tx_register_1748451280984_2f8aus",
+    "networkName": "Wrfcoin Testnet",
+    "explorerUrl": "https://testnet.wrfcoin.io/tx/tx_register_1748451280984_2f8aus",
+    "status": "registered"
+  },
+  "instructions": {
+    "setupSteps": [
+      "1. Download the custom collection script for your weather station",
+      "2. Configure your weather station credentials (if required)",
+      "3. Run the collection script to start earning WRF testnet tokens",
+      "4. Monitor your earnings in the provided wallet",
+      "5. Join the testnet community for support and updates"
+    ],
+    "troubleshooting": {
+      "commonIssues": [
+        "Connection timeout - Check network connectivity",
+        "Authentication failed - Verify credentials",
+        "No data received - Check station power and sensors",
+        "Reward not received - Allow up to 5 minutes for processing"
+      ],
+      "stationSpecific": "Visit docs.wrfcoin.io/troubleshooting/ambient_weather",
+      "communitySupport": "https://discord.gg/wrfcoin-testnet"
+    },
+    "supportContact": "testnet-support@wrfcoin.io"
+  }
+}

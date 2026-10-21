@@ -1,0 +1,62 @@
+{
+  "alerts": [
+    {
+      "id": "urn:oid:2.49.0.1.840.0.tornado-warning",
+      "areaDesc": "Cook County, IL",
+      "geocode": {
+        "UGC": ["ILZ014"]
+      },
+      "affectedZones": ["https://api.weather.gov/zones/forecast/ILZ014"],
+      "references": [],
+      "sent": "2026-03-05T12:00:00Z",
+      "effective": "2026-03-05T12:00:00Z",
+      "onset": "2026-03-05T12:03:00Z",
+      "expires": "2026-03-05T13:00:00Z",
+      "ends": null,
+      "status": "Actual",
+      "messageType": "Alert",
+      "category": "Met",
+      "severity": "Severe",
+      "certainty": "Likely",
+      "urgency": "Immediate",
+      "event": "Tornado Warning",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "senderName": "NWS Chicago IL",
+      "headline": "Tornado Warning issued March 5 at 12:00PM CST",
+      "description": "A severe thunderstorm capable of producing a tornado was located near Chicago.",
+      "instruction": "Take shelter in a basement or interior room.",
+      "response": "Execute",
+      "parameters": {}
+    },
+    {
+      "id": "urn:oid:2.49.0.1.840.0.hurricane-watch",
+      "areaDesc": "Coastal County, FL",
+      "geocode": {
+        "UGC": ["FLZ168"]
+      },
+      "affectedZones": ["https://api.weather.gov/zones/forecast/FLZ168"],
+      "references": [],
+      "sent": "2026-03-05T12:01:00Z",
+      "effective": "2026-03-05T12:01:00Z",
+      "onset": "2026-03-05T18:00:00Z",
+      "expires": "2026-03-06T03:00:00Z",
+      "ends": null,
+      "status": "Actual",
+      "messageType": "Alert",
+      "category": "Met",
+      "severity": "Moderate",
+      "certainty": "Possible",
+      "urgency": "Expected",
+      "event": "Hurricane Watch",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "senderName": "NWS Miami FL",
+      "headline": "Hurricane Watch remains in effect for coastal Florida",
+      "description": "Hurricane-force conditions are possible within 48 hours.",
+      "instruction": "Review evacuation plans and secure loose objects.",
+      "response": "Prepare",
+      "parameters": {}
+    }
+  ],
+  "count": 2,
+  "generated": "2026-03-05T12:01:00Z"
+}

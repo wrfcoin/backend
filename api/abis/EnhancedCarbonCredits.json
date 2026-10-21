@@ -1,0 +1,189 @@
+{
+  "contractName": "EnhancedCarbonCredits",
+  "abi": [
+    {
+      "inputs": [{"internalType": "uint256", "name": "tokenId", "type": "uint256"}],
+      "name": "getBatchInfo",
+      "outputs": [
+        {"internalType": "uint256", "name": "totalSupply", "type": "uint256"},
+        {"internalType": "uint256", "name": "immobilizedSupply", "type": "uint256"},
+        {"internalType": "uint256", "name": "retiredSupply", "type": "uint256"},
+        {"internalType": "string", "name": "projectId", "type": "string"},
+        {"internalType": "uint256", "name": "vintage", "type": "uint256"},
+        {"internalType": "string", "name": "methodology", "type": "string"},
+        {"internalType": "string", "name": "projectType", "type": "string"},
+        {"internalType": "string", "name": "registryStandard", "type": "string"},
+        {"internalType": "string", "name": "location", "type": "string"},
+        {"internalType": "address", "name": "issuer", "type": "address"},
+        {"internalType": "uint256", "name": "issuanceDate", "type": "uint256"},
+        {"internalType": "uint256", "name": "expiryDate", "type": "uint256"},
+        {"internalType": "bool", "name": "isActive", "type": "bool"}
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [{"internalType": "uint256", "name": "tokenId", "type": "uint256"}],
+      "name": "batches",
+      "outputs": [
+        {"internalType": "uint256", "name": "totalSupply", "type": "uint256"},
+        {"internalType": "uint256", "name": "immobilizedSupply", "type": "uint256"},
+        {"internalType": "uint256", "name": "retiredSupply", "type": "uint256"},
+        {"internalType": "string", "name": "projectId", "type": "string"},
+        {"internalType": "uint256", "name": "vintage", "type": "uint256"},
+        {"internalType": "string", "name": "methodology", "type": "string"},
+        {"internalType": "string", "name": "projectType", "type": "string"},
+        {"internalType": "string", "name": "registryStandard", "type": "string"},
+        {"internalType": "string", "name": "location", "type": "string"},
+        {"internalType": "address", "name": "issuer", "type": "address"},
+        {"internalType": "uint256", "name": "issuanceDate", "type": "uint256"},
+        {"internalType": "uint256", "name": "expiryDate", "type": "uint256"},
+        {"internalType": "string", "name": "certificationHash", "type": "string"},
+        {"internalType": "string", "name": "registryUrl", "type": "string"},
+        {"internalType": "bool", "name": "isActive", "type": "bool"}
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [{"internalType": "uint256", "name": "tokenId", "type": "uint256"}],
+      "name": "totalSupply",
+      "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [{"internalType": "uint256", "name": "tokenId", "type": "uint256"}],
+      "name": "uri",
+      "outputs": [{"internalType": "string", "name": "", "type": "string"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {"internalType": "address", "name": "from", "type": "address"},
+        {"internalType": "uint256", "name": "tokenId", "type": "uint256"},
+        {"internalType": "uint256", "name": "amount", "type": "uint256"},
+        {"internalType": "string", "name": "retirementMessage", "type": "string"},
+        {"internalType": "string", "name": "beneficiary", "type": "string"}
+      ],
+      "name": "retireFrom",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {"internalType": "address", "name": "from", "type": "address"},
+        {"internalType": "address", "name": "to", "type": "address"},
+        {"internalType": "uint256", "name": "id", "type": "uint256"},
+        {"internalType": "uint256", "name": "amount", "type": "uint256"},
+        {"internalType": "bytes", "name": "data", "type": "bytes"}
+      ],
+      "name": "safeTransferFrom",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {"internalType": "address", "name": "account", "type": "address"},
+        {"internalType": "uint256", "name": "id", "type": "uint256"}
+      ],
+      "name": "balanceOf",
+      "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "nextTokenId",
+      "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {"internalType": "uint256", "name": "tokenId", "type": "uint256"},
+        {"internalType": "uint256", "name": "amount", "type": "uint256"},
+        {"internalType": "uint256", "name": "pricePerUnit", "type": "uint256"},
+        {"internalType": "uint256", "name": "expiry", "type": "uint256"}
+      ],
+      "name": "listCreditsForSale",
+      "outputs": [{"internalType": "uint256", "name": "listingId", "type": "uint256"}],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {"internalType": "uint256", "name": "tokenId", "type": "uint256"},
+        {"internalType": "uint256", "name": "listingId", "type": "uint256"},
+        {"internalType": "uint256", "name": "amount", "type": "uint256"}
+      ],
+      "name": "purchaseCredits",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {"internalType": "uint256", "name": "tokenId", "type": "uint256"},
+        {"internalType": "uint256", "name": "listingId", "type": "uint256"}
+      ],
+      "name": "cancelListing",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {"internalType": "uint256", "name": "", "type": "uint256"},
+        {"internalType": "uint256", "name": "", "type": "uint256"}
+      ],
+      "name": "marketListings",
+      "outputs": [
+        {"internalType": "address", "name": "seller", "type": "address"},
+        {"internalType": "uint256", "name": "amount", "type": "uint256"},
+        {"internalType": "uint256", "name": "pricePerUnit", "type": "uint256"},
+        {"internalType": "uint256", "name": "expiry", "type": "uint256"},
+        {"internalType": "bool", "name": "isActive", "type": "bool"}
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [{"internalType": "address", "name": "user", "type": "address"}],
+      "name": "getUserRetirementStats",
+      "outputs": [
+        {"internalType": "uint256", "name": "totalRetired", "type": "uint256"},
+        {"internalType": "uint256", "name": "totalIssued", "type": "uint256"}
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {"indexed": true, "internalType": "uint256", "name": "tokenId", "type": "uint256"},
+        {"indexed": true, "internalType": "address", "name": "retiringEntity", "type": "address"},
+        {"indexed": false, "internalType": "uint256", "name": "amount", "type": "uint256"},
+        {"indexed": false, "internalType": "string", "name": "retirementMessage", "type": "string"},
+        {"indexed": false, "internalType": "uint256", "name": "fee", "type": "uint256"}
+      ],
+      "name": "CreditsRetired",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {"indexed": true, "internalType": "uint256", "name": "tokenId", "type": "uint256"},
+        {"indexed": true, "internalType": "address", "name": "issuer", "type": "address"},
+        {"indexed": false, "internalType": "string", "name": "projectId", "type": "string"},
+        {"indexed": false, "internalType": "uint256", "name": "totalSupply", "type": "uint256"},
+        {"indexed": false, "internalType": "uint256", "name": "vintage", "type": "uint256"}
+      ],
+      "name": "BatchCreated",
+      "type": "event"
+    }
+  ]
+}

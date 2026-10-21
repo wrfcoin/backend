@@ -1,0 +1,62 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "generated": 1772661123000,
+    "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson",
+    "title": "USGS All Earthquakes, Past Hour",
+    "status": 200
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "mag": 4.8,
+        "place": "120 km SSE of Sand Point, Alaska",
+        "time": 1772660220000,
+        "updated": 1772660820000,
+        "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000abcd",
+        "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/us7000abcd.geojson",
+        "felt": 12,
+        "mmi": 4.1,
+        "alert": "green",
+        "status": "reviewed",
+        "tsunami": 1,
+        "sig": 354,
+        "magType": "mb",
+        "type": "earthquake",
+        "title": "M 4.8 - 120 km SSE of Sand Point, Alaska"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-160.1234, 54.321, 35.6]
+      },
+      "id": "us7000abcd"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "mag": 2.9,
+        "place": "5 km NW of The Geysers, CA",
+        "time": 1772659620000,
+        "updated": 1772660520000,
+        "url": "https://earthquake.usgs.gov/earthquakes/eventpage/nc7000efgh",
+        "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/nc7000efgh.geojson",
+        "felt": null,
+        "mmi": null,
+        "alert": null,
+        "status": "automatic",
+        "tsunami": 0,
+        "sig": 129,
+        "magType": "md",
+        "type": "earthquake",
+        "title": "M 2.9 - 5 km NW of The Geysers, CA"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-122.8125, 38.8012, 2.1]
+      },
+      "id": "nc7000efgh"
+    }
+  ],
+  "bbox": [-160.1234, 38.8012, 2.1, -122.8125, 54.321, 35.6]
+}

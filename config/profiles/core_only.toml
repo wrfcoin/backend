@@ -1,0 +1,40 @@
+[meta]
+name = "Core Only"
+description = "Only essential core components enabled for focused development"
+createdAt = "2025-05-21T08:40:00.000Z"
+
+[core]
+enabled = true
+
+[consensus]
+enabled = true
+
+[storage]
+enabled = true
+
+[network]
+enabled = true
+
+[privacy]
+enabled = false
+
+[governance]
+enabled = false
+
+[crosschain]
+enabled = false
+
+[computational]
+enabled = false
+
+[weather]
+enabled = false
+
+[oracle]
+enabled = false
+
+[incentives]
+enabled = false
+
+[sidechain]
+enabled = false

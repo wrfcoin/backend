@@ -1,0 +1,315 @@
+name: CI
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 4 * * *"  # Daily 04:00 UTC
+  workflow_dispatch: {}
+
+# Data cap (infra#1113, owner ruling 2026-09-27): a new push to a PR cancels
+# that PR's superseded run. Every other event (push to main, schedule,
+# workflow_dispatch) gets a group unique to its run id, so it is never
+# cancelled and never evicted while pending (core4#2945, core4#3036).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Backend complete-diff scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.scope.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify fork runner boundary
+        run: python3 -m unittest discover -s scripts/tests -p test_fork_runner_boundary.py -v
+      - name: Complete merge-base to head classification
+        id: scope
+        run: python3 scripts/docs_ci_gate.py classify
+
+  build-and-test:
+    needs: changes
+    if: needs.changes.result == 'success' && needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Owner ruling 2026-09-27: a real PostgreSQL for the suites that must prove
+    # SQL semantics a test double cannot (backend#1251 review P1: COALESCE
+    # coordinate fill). Disposable, per job, trust auth (no credential in the
+    # workflow), published on a random loopback-reachable host port because the
+    # self-hosted job runs on the host, not in a job container. The URL is set
+    # per step (BACKFILL_TEST_PG_URL) because job-level env cannot read `job`.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: backend_ci
+        # Loopback ONLY (#1257 review): trust auth means an unauthenticated
+        # superuser, so the host port must never listen on 0.0.0.0 / [::].
+        ports:
+          - "127.0.0.1::5432"
+        options: >-
+          --health-cmd "pg_isready -U postgres -d backend_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      # Data cap (infra#1113): no GitHub npm cache on self-hosted runners.
+      # On the build runner ~/.npm (/opt/gh-runner/.npm) already persists between jobs,
+      # so the restore downloaded a 558 MB tarball per job over a metered line
+      # to overwrite a warm directory (1.1 GB per CI run). Hosted runners keep
+      # it (an empty `cache` disables setup-node caching). npm ci still
+      # installs exactly the lockfile and checks every tarball's integrity.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: ${{ runner.environment != 'self-hosted' && 'npm' || '' }}
+      - name: Install backend dependencies
+        # Data cap (infra#1113): on linux/x64, onnxruntime-node's postinstall
+        # downloads the ~238 MB Microsoft.ML.OnnxRuntime.Gpu.Linux NuGet package
+        # (CUDA/TensorRT providers) every time `npm ci` recreates node_modules.
+        # That was ~480 MB per CI run over a metered line. The runners have no
+        # GPU; the CPU runtime (libonnxruntime.so.1) ships inside the npm
+        # package and is unaffected.
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: npm ci --prefer-offline
+      # Prove the trust-auth service is reachable on loopback only.
+      - name: Postgres service binds 127.0.0.1 only
+        run: |
+          bindings="$(docker port "${{ job.services.postgres.id }}" 5432/tcp)"
+          echo "postgres service port bindings:"
+          echo "$bindings"
+          [ -n "$bindings" ] || { echo "::error::no port binding for the postgres service"; exit 1; }
+          if echo "$bindings" | grep -vqE '^127\.0\.0\.1:[0-9]+$'; then
+            echo "::error::postgres service is published beyond 127.0.0.1"
+            exit 1
+          fi
+      # Required, strict: a type error now fails the check instead of being
+      # swallowed by `| tail -20 || true` (#870). The pre-existing errors were
+      # burned down in the same PR so the gate can start clean.
+      - name: TypeScript type check
+        run: npx tsc --noEmit
+      # #937/#938: source/Jest resolution cannot expose emitted ESM -> CJS
+      # failures that safeMount swallows. Build the real production artifact and
+      # probe every safe-mounted router from the compiled entrypoint.
+      #
+      # #935 arrived at the same conclusion independently and added its own
+      # `Build` step; that duplicate is dropped here in favour of this one,
+      # which also runs the audit. Building before the tests additionally means
+      # __tests__/build/ finds a fresh dist/ rather than building one itself, so
+      # a broken build fails as a build instead of as a confusing test error.
+      - name: Build production artifact
+        run: npm run build
+      - name: Audit compiled safe-mounted routers
+        run: npm run audit:safe-mount-build
+      # Required: `npm test` is green-by-default after the #872 quarantine, so a
+      # real failure now fails the check (previously `--if-present` skipped it).
+      # The `job` context (service ports) is only available at step level.
+      - name: Run tests
+        env:
+          # Hosted V8 defaults exhausted ~2 GiB in the complete suite. Keep
+          # the existing two-worker cap and give this test process 4 GiB;
+          # detectOpenHandles already makes Jest execute suites serially.
+          NODE_OPTIONS: --max-old-space-size=4096
+          BACKFILL_TEST_PG_URL: postgresql://postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/backend_ci
+          ACHIEVEMENT_PAYOUT_REQUIRE_PG: "1"
+          # #1288 review P3-1: the mobile-station real-SQL cases (owner-guard
+          # upsert, address case, advisory lock, nonce prune) run against the
+          # same disposable service in a per-process schema; REQUIRE_PG makes a
+          # missing URL a failure instead of a silent skip.
+          MOBILE_STATION_PG_URL: postgresql://postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/backend_ci
+          MOBILE_STATION_REQUIRE_PG: "1"
+        run: npm test -- --maxWorkers=2
+      - name: Real-PostgreSQL achievement payout nonce and caps (must run)
+        env:
+          BACKFILL_TEST_PG_URL: postgresql://postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/backend_ci
+          ACHIEVEMENT_PAYOUT_REQUIRE_PG: "1"
+        run: npm test -- --runTestsByPath __tests__/achievement-payout-real-pg.test.ts --maxWorkers=2
+      - name: Real-PostgreSQL achievement payout migrations and chain rewards (must run, not skip)
+        env:
+          BACKFILL_TEST_PG_URL: postgresql://postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/backend_ci
+          ACHIEVEMENT_PAYOUT_REQUIRE_PG: "1"
+          CHAIN_REWARD_TEST_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          npm test -- --runTestsByPath __tests__/achievement-payout-migrations-real-pg.test.ts --maxWorkers=2
+          test -n "$CHAIN_REWARD_TEST_PORT"
+          set +e
+          npx jest --config __tests__/jest.standalone.cjs \
+            --runTestsByPath __tests__/chain-role-reward-index.test.ts \
+            --runInBand --json --outputFile="$RUNNER_TEMP/chain-rewards-pg.json"
+          status=$?
+          set -e
+          node -e '
+            const r = require(process.argv[1]);
+            const cases = r.testResults.flatMap((f) => f.assertionResults)
+              .filter((a) => a.ancestorTitles.includes("PostgreSQL migrations and persistent indexer"));
+            for (const c of cases) console.log(`${c.status.padEnd(8)} ${c.title}`);
+            const passed = cases.filter((c) => c.status === "passed").length;
+            console.log(`chain-reward real-PostgreSQL cases passed: ${passed}/${cases.length}`);
+            if (cases.length !== 4 || passed !== 4) {
+              console.log("::error::expected 4 chain-reward real-PostgreSQL cases to pass, none skipped");
+              process.exit(1);
+            }
+          ' "$RUNNER_TEMP/chain-rewards-pg.json"
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          set +e
+          npx jest --config __tests__/jest.standalone.cjs \
+            --runTestsByPath __tests__/chain-role-earnings-b2.test.ts \
+            --runInBand --json --outputFile="$RUNNER_TEMP/chain-earnings-b2-pg.json"
+          status=$?
+          set -e
+          node -e '
+            const r = require(process.argv[1]);
+            const cases = r.testResults.flatMap((f) => f.assertionResults)
+              .filter((a) => a.ancestorTitles.includes("B2 real-PostgreSQL earnings and profiles"));
+            for (const c of cases) console.log(`${c.status.padEnd(8)} ${c.title}`);
+            const passed = cases.filter((c) => c.status === "passed").length;
+            console.log(`B2 real-PostgreSQL cases passed: ${passed}/${cases.length}`);
+            if (cases.length !== 8 || passed !== 8) {
+              console.log("::error::expected 8 B2 real-PostgreSQL cases to pass, none skipped");
+              process.exit(1);
+            }
+          ' "$RUNNER_TEMP/chain-earnings-b2-pg.json"
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          set +e
+          CHAIN_REWARD_P3_REQUIRE_PG=1 npx jest --config __tests__/jest.standalone.cjs \
+            --runTestsByPath __tests__/chain-role-earnings-p3.test.ts \
+            --runInBand --json --outputFile="$RUNNER_TEMP/chain-earnings-p3-pg.json"
+          status=$?
+          set -e
+          node -e '
+            const r = require(process.argv[1]);
+            const cases = r.testResults.flatMap(f => f.assertionResults)
+              .filter(a => a.ancestorTitles.includes("P3 real-PostgreSQL indexed profile lookup"));
+            for (const c of cases) console.log(`${c.status.padEnd(8)} ${c.title}`);
+            const passed = cases.filter(c => c.status === "passed").length;
+            console.log(`P3 real-PostgreSQL cases passed: ${passed}/${cases.length}`);
+            if (cases.length !== 6 || passed !== 6) process.exit(1);
+          ' "$RUNNER_TEMP/chain-earnings-p3-pg.json"
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          set +e
+          CHAIN_REWARD_CATCHUP_REQUIRE_PG=1 npx jest --config __tests__/jest.standalone.cjs \
+            --runTestsByPath __tests__/chain-role-catchup.test.ts \
+            --runInBand --json --outputFile="$RUNNER_TEMP/chain-catchup-pg.json"
+          status=$?
+          set -e
+          node -e '
+            const r = require(process.argv[1]);
+            const cases = r.testResults.flatMap(f => f.assertionResults)
+              .filter(a => a.ancestorTitles.includes("catch-up real PostgreSQL scheduling"));
+            for (const c of cases) console.log(`${c.status.padEnd(8)} ${c.title}`);
+            const passed = cases.filter(c => c.status === "passed").length;
+            console.log(`Catch-up real-PostgreSQL cases passed: ${passed}/${cases.length}`);
+            if (cases.length !== 4 || passed !== 4) process.exit(1);
+          ' "$RUNNER_TEMP/chain-catchup-pg.json"
+          exit "$status"
+      # Named, verbose, fail-if-skipped proof that the real-PostgreSQL cases
+      # executed in CI (npm test above runs them too, but only as counts).
+      - name: Real-PostgreSQL backfill regressions (must run, not skip)
+        env:
+          BACKFILL_TEST_PG_URL: postgresql://postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/backend_ci
+          BACKFILL_REQUIRE_PG: "1"
+        run: |
+          set +e
+          npx jest --config __tests__/jest.standalone.cjs \
+            __tests__/chain-station-backfill-1251-review.test.ts \
+            --runInBand --json --outputFile="$RUNNER_TEMP/real-pg.json"
+          status=$?
+          set -e
+          # List every real-PostgreSQL case with its status, then require all
+          # of them to have PASSED (a skip or a missing case fails the step).
+          node -e '
+            const r = require(process.argv[1]);
+            const cases = r.testResults.flatMap((f) => f.assertionResults)
+              .filter((a) => a.ancestorTitles.some((t) => t.includes("against real PostgreSQL")));
+            for (const c of cases) console.log(`${c.status.padEnd(8)} ${c.title}`);
+            const passed = cases.filter((c) => c.status === "passed").length;
+            console.log(`real-PostgreSQL cases passed: ${passed}/${cases.length}`);
+            if (cases.length !== 5 || passed !== 5) {
+              console.log("::error::expected 5 real-PostgreSQL cases to pass");
+              process.exit(1);
+            }
+          ' "$RUNNER_TEMP/real-pg.json"
+          exit "$status"
+      # backend#1274: the one-MAC-one-active-station race suite skips silently
+      # without BACKFILL_TEST_PG_URL. A skip, a missing URL, or a wrong case count
+      # fails this step, so a lost variable cannot drop the race evidence.
+      - name: Real-PostgreSQL MAC uniqueness races (must run, not skip)
+        env:
+          BACKFILL_TEST_PG_URL: postgresql://postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/backend_ci
+          BACKFILL_REQUIRE_PG: "1"
+        run: |
+          set +e
+          npx jest --config __tests__/jest.standalone.cjs \
+            __tests__/station-registration-mac-real-pg.test.ts \
+            --runInBand --json --outputFile="$RUNNER_TEMP/mac-pg.json"
+          status=$?
+          set -e
+          node -e '
+            const r = require(process.argv[1]);
+            const cases = r.testResults.flatMap((f) => f.assertionResults)
+              .filter((a) => a.ancestorTitles.some((t) => t.includes("one MAC = one active station on real PostgreSQL")));
+            for (const c of cases) console.log(`${c.status.padEnd(8)} ${c.title}`);
+            const passed = cases.filter((c) => c.status === "passed").length;
+            console.log(`real-PostgreSQL MAC cases passed: ${passed}/${cases.length}`);
+            if (cases.length !== 12 || passed !== 12) {
+              console.log("::error::expected 12 real-PostgreSQL MAC cases to pass");
+              process.exit(1);
+            }
+          ' "$RUNNER_TEMP/mac-pg.json"
+          exit "$status"
+      # backend#1334: the app's own database/db.ts pool shim (not an injected
+      # pg.Pool) against the real service. A skip, a missing URL, or a wrong
+      # case count fails the step.
+      - name: Real-PostgreSQL db.ts pool shim (must run, not skip)
+        env:
+          MOBILE_STATION_PG_URL: postgresql://postgres@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/backend_ci
+          MOBILE_STATION_REQUIRE_PG: "1"
+        run: |
+          set +e
+          npx jest --config __tests__/jest.standalone.cjs \
+            __tests__/db-pool-shim-real-pg.integration.test.ts \
+            --runInBand --json --outputFile="$RUNNER_TEMP/shim-pg.json"
+          status=$?
+          set -e
+          node -e '
+            const r = require(process.argv[1]);
+            const cases = r.testResults.flatMap((f) => f.assertionResults)
+              .filter((a) => a.ancestorTitles.some((t) => t.includes("pool shim against real Postgres")));
+            for (const c of cases) console.log(`${c.status.padEnd(8)} ${c.title}`);
+            const passed = cases.filter((c) => c.status === "passed").length;
+            console.log(`pool-shim real-PostgreSQL cases passed: ${passed}/${cases.length}`);
+            if (cases.length !== 14 || passed !== 14) {
+              console.log("::error::expected 14 pool-shim real-PostgreSQL cases to pass");
+              process.exit(1);
+            }
+          ' "$RUNNER_TEMP/shim-pg.json"
+          exit "$status"
+
+  ci-scope-result:
+    name: CI scope and result
+    if: always()
+    needs: [changes, build-and-test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Independently verify scope and all results
+        env:
+          CI_NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 scripts/docs_ci_gate.py terminal

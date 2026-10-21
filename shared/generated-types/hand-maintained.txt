@@ -1,0 +1,11 @@
+# Bindings that core4's meteo-types and forecast-score crates do not export
+# (backend#1174 review). scripts/generate-rust-types.sh leaves these files
+# untouched and never claims them as generated; they are listed separately in
+# README.md "Hand-maintained bindings (not generated from core4)".
+# Remove an entry here and in the README once core4 exports that type.
+AccuracyWindow.ts
+ForecastAccuracyMetrics.ts
+Pair.ts
+SensorAccuracyBand.ts
+SensorAccuracyMetrics.ts
+SensorReferencePair.ts

@@ -1,0 +1,3 @@
+# Compiled output is produced at pack/publish time (prepack/prepublishOnly), not committed.
+dist/
+*.tgz

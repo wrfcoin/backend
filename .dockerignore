@@ -1,0 +1,9 @@
+node_modules
+dist
+.git
+.claude
+npm-debug.log
+coverage
+.env
+microservices/api-gateway/node_modules
+microservices/api-gateway/dist

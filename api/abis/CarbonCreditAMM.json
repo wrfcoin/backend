@@ -1,0 +1,180 @@
+{
+  "contractName": "CarbonCreditAMM",
+  "abi": [
+    {
+      "inputs": [],
+      "name": "token0",
+      "outputs": [{"internalType": "contract IERC20", "name": "", "type": "address"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "token1",
+      "outputs": [{"internalType": "contract IERC20", "name": "", "type": "address"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getReserves",
+      "outputs": [
+        {"internalType": "uint112", "name": "_reserve0", "type": "uint112"},
+        {"internalType": "uint112", "name": "_reserve1", "type": "uint112"},
+        {"internalType": "uint32", "name": "_blockTimestampLast", "type": "uint32"}
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "feeBasisPoints",
+      "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getSpotPrice",
+      "outputs": [{"internalType": "uint256", "name": "price", "type": "uint256"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getCurrentK",
+      "outputs": [{"internalType": "uint256", "name": "k", "type": "uint256"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [{"internalType": "address", "name": "to", "type": "address"}],
+      "name": "mint",
+      "outputs": [{"internalType": "uint256", "name": "liquidity", "type": "uint256"}],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [{"internalType": "address", "name": "to", "type": "address"}],
+      "name": "burn",
+      "outputs": [
+        {"internalType": "uint256", "name": "amount0", "type": "uint256"},
+        {"internalType": "uint256", "name": "amount1", "type": "uint256"}
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {"internalType": "uint256", "name": "amount0Out", "type": "uint256"},
+        {"internalType": "uint256", "name": "amount1Out", "type": "uint256"},
+        {"internalType": "address", "name": "to", "type": "address"},
+        {"internalType": "bytes", "name": "data", "type": "bytes"}
+      ],
+      "name": "swap",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+        {"internalType": "bool", "name": "zeroForOne", "type": "bool"}
+      ],
+      "name": "getAmountOut",
+      "outputs": [{"internalType": "uint256", "name": "amountOut", "type": "uint256"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [{"internalType": "address", "name": "to", "type": "address"}],
+      "name": "skim",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "sync",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "factory",
+      "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "reserve0",
+      "outputs": [{"internalType": "uint112", "name": "", "type": "uint112"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "reserve1",
+      "outputs": [{"internalType": "uint112", "name": "", "type": "uint112"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "kLast",
+      "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "price0CumulativeLast",
+      "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "price1CumulativeLast",
+      "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {"indexed": true, "internalType": "address", "name": "sender", "type": "address"},
+        {"indexed": false, "internalType": "uint256", "name": "amount0In", "type": "uint256"},
+        {"indexed": false, "internalType": "uint256", "name": "amount1In", "type": "uint256"},
+        {"indexed": false, "internalType": "uint256", "name": "amount0Out", "type": "uint256"},
+        {"indexed": false, "internalType": "uint256", "name": "amount1Out", "type": "uint256"},
+        {"indexed": true, "internalType": "address", "name": "to", "type": "address"}
+      ],
+      "name": "Swap",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {"indexed": true, "internalType": "address", "name": "sender", "type": "address"},
+        {"indexed": false, "internalType": "uint256", "name": "amount0", "type": "uint256"},
+        {"indexed": false, "internalType": "uint256", "name": "amount1", "type": "uint256"}
+      ],
+      "name": "Mint",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {"indexed": true, "internalType": "address", "name": "sender", "type": "address"},
+        {"indexed": false, "internalType": "uint256", "name": "amount0", "type": "uint256"},
+        {"indexed": false, "internalType": "uint256", "name": "amount1", "type": "uint256"},
+        {"indexed": true, "internalType": "address", "name": "to", "type": "address"}
+      ],
+      "name": "Burn",
+      "type": "event"
+    }
+  ]
+}

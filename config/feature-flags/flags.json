@@ -1,0 +1,223 @@
+{
+  "$schema": "./flags-schema.json",
+  "version": "1.0.0",
+  "lastUpdated": "2026-01-21",
+  "flags": {
+    "experimental_bridges": {
+      "description": "Enable experimental cross-chain bridge protocols",
+      "default": false,
+      "environments": {
+        "development": true,
+        "staging": true,
+        "production": false
+      },
+      "since": "1.0.0",
+      "owner": "cross-chain-team",
+      "tags": ["experimental", "blockchain"]
+    },
+    "defi_flash_loans": {
+      "description": "Enable DeFi flash loan functionality",
+      "default": false,
+      "environments": {
+        "development": true,
+        "staging": true,
+        "production": false
+      },
+      "since": "1.0.0",
+      "owner": "defi-team",
+      "tags": ["defi", "security"]
+    },
+    "beta_ai_models": {
+      "description": "Enable beta AI/ML models for weather forecasting",
+      "default": false,
+      "environments": {
+        "development": true,
+        "staging": true,
+        "production": false
+      },
+      "since": "1.0.0",
+      "owner": "ai-ml-team",
+      "tags": ["beta", "ai-ml"]
+    },
+    "new_carbon_calculation": {
+      "description": "Use updated carbon credit calculation algorithm",
+      "default": true,
+      "environments": {
+        "development": true,
+        "staging": true,
+        "production": true
+      },
+      "since": "1.0.0",
+      "owner": "climate-team",
+      "tags": ["performance"]
+    },
+    "physics_validation_profile": {
+      "description": "Physics validation profile for sensor data",
+      "default": "operational",
+      "environments": {
+        "development": "realtime",
+        "staging": "operational",
+        "production": "climate"
+      },
+      "since": "1.0.0",
+      "owner": "iot-team",
+      "tags": ["iot"]
+    },
+    "hsm_hardware_signing": {
+      "description": "Require HSM for transaction signing",
+      "default": false,
+      "environments": {
+        "development": false,
+        "staging": false,
+        "production": true
+      },
+      "since": "1.0.0",
+      "owner": "security-team",
+      "tags": ["security"]
+    },
+    "multi_factor_auth": {
+      "description": "Enable multi-factor authentication for sensitive operations",
+      "default": false,
+      "environments": {
+        "development": false,
+        "staging": true,
+        "production": true
+      },
+      "since": "1.0.0",
+      "owner": "security-team",
+      "tags": ["security"]
+    },
+    "iotex_integration": {
+      "description": "Enable IoTeX blockchain sensor integration",
+      "default": true,
+      "environments": {
+        "development": true,
+        "staging": true,
+        "production": true
+      },
+      "since": "1.0.0",
+      "owner": "iot-team",
+      "tags": ["iot", "blockchain"]
+    },
+    "helium_network": {
+      "description": "Enable Helium network for IoT connectivity",
+      "default": true,
+      "environments": {
+        "development": true,
+        "staging": true,
+        "production": true
+      },
+      "since": "1.0.0",
+      "owner": "iot-team",
+      "tags": ["iot"]
+    },
+    "governance_weighted_voting": {
+      "description": "Enable weighted voting based on stake and reputation",
+      "default": true,
+      "environments": {
+        "development": true,
+        "staging": true,
+        "production": true
+      },
+      "since": "1.0.0",
+      "owner": "governance-team",
+      "tags": ["defi"]
+    },
+    "distributed_training": {
+      "description": "Enable distributed ML model training across compute nodes",
+      "default": false,
+      "environments": {
+        "development": true,
+        "staging": true,
+        "production": false
+      },
+      "since": "1.0.0",
+      "owner": "ai-ml-team",
+      "tags": ["ai-ml", "experimental"]
+    },
+    "cosmos_ibc_bridge": {
+      "description": "Enable Cosmos IBC cross-chain bridge",
+      "default": true,
+      "environments": {
+        "development": true,
+        "staging": true,
+        "production": true
+      },
+      "since": "1.0.0",
+      "owner": "cross-chain-team",
+      "tags": ["blockchain"]
+    },
+    "polkadot_xcmp_bridge": {
+      "description": "Enable Polkadot XCMP cross-chain messaging",
+      "default": true,
+      "environments": {
+        "development": true,
+        "staging": true,
+        "production": true
+      },
+      "since": "1.0.0",
+      "owner": "cross-chain-team",
+      "tags": ["blockchain"]
+    },
+    "quantum_resistant_crypto": {
+      "description": "Enable post-quantum cryptographic algorithms",
+      "default": false,
+      "environments": {
+        "development": true,
+        "staging": false,
+        "production": false
+      },
+      "since": "1.0.0",
+      "owner": "security-team",
+      "tags": ["security", "experimental"]
+    },
+    "weather_station_rewards": {
+      "description": "Enable weather station data quality rewards",
+      "default": true,
+      "environments": {
+        "development": true,
+        "staging": true,
+        "production": true
+      },
+      "since": "1.0.0",
+      "owner": "rewards-team",
+      "tags": ["iot", "defi"]
+    },
+    "nft_computational": {
+      "description": "Enable computational NFT minting",
+      "default": true,
+      "environments": {
+        "development": true,
+        "staging": true,
+        "production": true
+      },
+      "since": "1.0.0",
+      "owner": "nft-team",
+      "tags": ["blockchain"]
+    },
+    "graphql_complexity_limit": {
+      "description": "Maximum GraphQL query complexity allowed",
+      "default": 1000,
+      "environments": {
+        "development": 5000,
+        "staging": 2000,
+        "production": 1000
+      },
+      "since": "1.0.0",
+      "owner": "api-team",
+      "tags": ["performance", "security"]
+    },
+    "rate_limit_multiplier": {
+      "description": "Rate limit multiplier for API endpoints",
+      "default": 1.0,
+      "environments": {
+        "development": 10.0,
+        "staging": 2.0,
+        "production": 1.0
+      },
+      "since": "1.0.0",
+      "owner": "api-team",
+      "tags": ["performance", "security"]
+    }
+  }
+}

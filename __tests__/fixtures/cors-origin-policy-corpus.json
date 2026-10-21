@@ -1,0 +1,337 @@
+{
+ "source": "wrfcoin/infra PR#1060 testnet/scripts/cors_origin_policy.py @ e7a2b38 entry_problem()",
+ "cases": [
+  {
+   "entry": "https://wrfcoin-testnet.taila1c049.ts.net",
+   "problem": null
+  },
+  {
+   "entry": "https://wrfcoin.app",
+   "problem": null
+  },
+  {
+   "entry": "https://a.example:8443",
+   "problem": null
+  },
+  {
+   "entry": "https://localhost.example.org",
+   "problem": null
+  },
+  {
+   "entry": "https://sub.localhost.example.com",
+   "problem": null
+  },
+  {
+   "entry": "https://LOCALHOST.example.org",
+   "problem": null
+  },
+  {
+   "entry": "https://xn--bcher-kva.example",
+   "problem": null
+  },
+  {
+   "entry": "http://wrfcoin.app",
+   "problem": "scheme"
+  },
+  {
+   "entry": "http://localhost:5000",
+   "problem": "loopback"
+  },
+  {
+   "entry": "http://localhost.:5000",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://localhost",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://LOCALHOST",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://foo.localhost",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://foo.localhost.",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://FOO.LocalHost",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://a.b.localhost:3000",
+   "problem": "loopback"
+  },
+  {
+   "entry": "http://127.0.0.1:5000",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://127.0.0.1",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://127.1",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://127.0.1",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://0x7f.0.0.1",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://0x7F000001",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://2130706433",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://0177.0.0.1",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://127.255.255.255",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://127.0.0.1.",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://0.0.0.0",
+   "problem": "unspecified"
+  },
+  {
+   "entry": "https://0",
+   "problem": "unspecified"
+  },
+  {
+   "entry": "https://0.1.2.3",
+   "problem": "unspecified"
+  },
+  {
+   "entry": "https://00",
+   "problem": "unspecified"
+  },
+  {
+   "entry": "https://0x0",
+   "problem": "unspecified"
+  },
+  {
+   "entry": "http://0.0.0.0:5000",
+   "problem": "unspecified"
+  },
+  {
+   "entry": "https://[::1]",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://[0:0:0:0:0:0:0:1]",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://[::ffff:127.0.0.1]",
+   "problem": "loopback"
+  },
+  {
+   "entry": "http://[::ffff:7f00:1]:5000",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://[::ffff:7f00:0001]",
+   "problem": "loopback"
+  },
+  {
+   "entry": "https://[::]",
+   "problem": "unspecified"
+  },
+  {
+   "entry": "https://[0::0]",
+   "problem": "unspecified"
+  },
+  {
+   "entry": "https://[::ffff:0.0.0.0]",
+   "problem": "unspecified"
+  },
+  {
+   "entry": "https://[::ffff:8.8.8.8]",
+   "problem": null
+  },
+  {
+   "entry": "https://[2001:db8::1]",
+   "problem": null
+  },
+  {
+   "entry": "https://[::ffff:10.1.2.3]",
+   "problem": null
+  },
+  {
+   "entry": "https://[::1:2:3:4:5:6:7:8]",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://[1::2::3]",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://[::ffff:127.0.0.256]",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://[fe80::1]",
+   "problem": null
+  },
+  {
+   "entry": "https://1.2.3.4",
+   "problem": null
+  },
+  {
+   "entry": "https://10.0.0.1",
+   "problem": null
+  },
+  {
+   "entry": "https://192.0.2.10:443",
+   "problem": null
+  },
+  {
+   "entry": "https://8.8.8.8",
+   "problem": null
+  },
+  {
+   "entry": "https://256.1.1.1",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://1.2.3.4.5",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://1.2.3.08",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://4294967296",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://4294967295",
+   "problem": null
+  },
+  {
+   "entry": "https://0xffffffff",
+   "problem": null
+  },
+  {
+   "entry": "https://1.2.3.x",
+   "problem": null
+  },
+  {
+   "entry": "https://example..com",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://.example.com",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://example.com.",
+   "problem": null
+  },
+  {
+   "entry": "https://example.com..",
+   "problem": null
+  },
+  {
+   "entry": "*",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://*.example.org",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://*",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://ex*ample.org",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://example.org/",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://example.org/path",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://user@example.org",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://example.org?x=1",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://example.org#f",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://example.org:0",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://example.org:65535",
+   "problem": null
+  },
+  {
+   "entry": "https://example.org:65536",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://example.org:99999",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://example.org:",
+   "problem": "syntax"
+  },
+  {
+   "entry": "example.org",
+   "problem": "syntax"
+  },
+  {
+   "entry": "//example.org",
+   "problem": "syntax"
+  },
+  {
+   "entry": "https://",
+   "problem": "syntax"
+  },
+  {
+   "entry": "ftp://example.org",
+   "problem": "scheme"
+  },
+  {
+   "entry": "HTTPS://Example.ORG",
+   "problem": null
+  },
+  {
+   "entry": "https://exa_mple.org",
+   "problem": null
+  },
+  {
+   "entry": "https://-example.org",
+   "problem": null
+  }
+ ]
+}

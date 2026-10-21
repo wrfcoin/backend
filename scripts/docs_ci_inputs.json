@@ -1,0 +1,10 @@
+{
+  "workers": [
+    "build-and-test"
+  ],
+  "inputs": [
+    "docs/storage-ipfs-development.md"
+  ],
+  "audit": "backend: indexed runtime docs and storage-mock-retirement test; infra: root README banner test, infra README/legacy Compose tests, all testnet markdown via public-endpoints recursive scan, ws INSTALL via receive-snapshots. Non-doc source/config paths never match prose allowlist.",
+  "asset_index": "server/data/documentation-index.json"
+}

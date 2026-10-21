@@ -1,0 +1,44 @@
+{
+  "schemaVersion": "wrf-calibration-attestation/v1",
+  "artifactId": "artifact-shared-001",
+  "subject": {
+    "stationId": "station-a"
+  },
+  "issuer": {
+    "issuerId": "WRF Calibration Issuer A",
+    "certificateChain": [
+      {
+        "certId": "leaf-cert-a",
+        "subject": "WRF Calibration Issuer A",
+        "issuer": "WRF Intermediate CA",
+        "notBefore": "2025-01-01T00:00:00.000Z",
+        "notAfter": "2027-01-01T00:00:00.000Z",
+        "fingerprintSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "certId": "intermediate-cert-a",
+        "subject": "WRF Intermediate CA",
+        "issuer": "WRF Root CA",
+        "notBefore": "2024-01-01T00:00:00.000Z",
+        "notAfter": "2029-01-01T00:00:00.000Z",
+        "fingerprintSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      {
+        "certId": "root-cert-a",
+        "subject": "WRF Root CA",
+        "issuer": "WRF Root CA",
+        "notBefore": "2020-01-01T00:00:00.000Z",
+        "notAfter": "2035-01-01T00:00:00.000Z",
+        "fingerprintSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "attestation": {
+    "issuedAt": "2026-01-01T00:00:00.000Z",
+    "expiresAt": "2026-12-31T00:00:00.000Z"
+  },
+  "signature": {
+    "algorithm": "ECDSA_P256_SHA256",
+    "value": "0xabc123"
+  }
+}

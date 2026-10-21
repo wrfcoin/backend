@@ -1,0 +1,19 @@
+{
+  "monitoring": {
+    "enabled": true,
+    "metrics_port": 9090,
+    "health_check_interval": 30
+  },
+  "logging": {
+    "level": "info",
+    "file_rotation": true,
+    "max_file_size": "100MB",
+    "max_files": 10
+  },
+  "backup": {
+    "enabled": false,
+    "interval": "daily",
+    "retention_days": 30,
+    "storage_path": "./backups"
+  }
+}

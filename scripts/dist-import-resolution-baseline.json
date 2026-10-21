@@ -1,0 +1,278 @@
+[
+  {
+    "file": "api/carbon-credit-api.js",
+    "spec": "./abis/CarbonCreditAMM.json"
+  },
+  {
+    "file": "api/carbon-credit-api.js",
+    "spec": "./abis/CarbonCredits.json"
+  },
+  {
+    "file": "api/carbon-credit-api.js",
+    "spec": "./abis/EnhancedCarbonCredits.json"
+  },
+  {
+    "file": "middleware/vault-middleware.cjs",
+    "spec": "../security/vault-config"
+  },
+  {
+    "file": "middleware/vault-middleware.js",
+    "spec": "../security/vault-config"
+  },
+  {
+    "file": "server/blockchain-server-simple.js",
+    "spec": "./backend/shared/middleware/cors-config.js"
+  },
+  {
+    "file": "server/blockchain-server-simple.js",
+    "spec": "./backend/shared/middleware/security-headers.js"
+  },
+  {
+    "file": "server/compiled/blockchain/enhanced-blockchain-service.cjs",
+    "spec": "./simple-blockchain"
+  },
+  {
+    "file": "server/compiled/blockchain/enhanced-blockchain-service.js",
+    "spec": "./simple-blockchain"
+  },
+  {
+    "file": "server/compiled/server/main_api_server.cjs",
+    "spec": "../blockchain/simple-blockchain"
+  },
+  {
+    "file": "server/compiled/server/main_api_server.cjs",
+    "spec": "../middleware/input-validation"
+  },
+  {
+    "file": "server/compiled/server/main_api_server.cjs",
+    "spec": "../middleware/production-cors-cleanup"
+  },
+  {
+    "file": "server/compiled/server/main_api_server.cjs",
+    "spec": "../middleware/security-standardization"
+  },
+  {
+    "file": "server/compiled/server/main_api_server.js",
+    "spec": "../blockchain/simple-blockchain"
+  },
+  {
+    "file": "server/compiled/server/main_api_server.js",
+    "spec": "../middleware/input-validation"
+  },
+  {
+    "file": "server/compiled/server/main_api_server.js",
+    "spec": "../middleware/production-cors-cleanup"
+  },
+  {
+    "file": "server/compiled/server/main_api_server.js",
+    "spec": "../middleware/security-standardization"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.cjs",
+    "spec": "../api/data-aware-endpoints"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.cjs",
+    "spec": "../middleware/input-validation"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.cjs",
+    "spec": "../middleware/performance-boost"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.cjs",
+    "spec": "../middleware/production-cors-cleanup"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.cjs",
+    "spec": "../middleware/security-logging"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.cjs",
+    "spec": "../utils/logger.js"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.cjs",
+    "spec": "./routes/aiml-routes"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.cjs",
+    "spec": "./routes/compute-routes"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.cjs",
+    "spec": "./routes/performance-routes"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.js",
+    "spec": "../api/data-aware-endpoints"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.js",
+    "spec": "../middleware/input-validation"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.js",
+    "spec": "../middleware/performance-boost"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.js",
+    "spec": "../middleware/production-cors-cleanup"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.js",
+    "spec": "../middleware/security-logging"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.js",
+    "spec": "../utils/logger.js"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.js",
+    "spec": "./routes/aiml-routes"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.js",
+    "spec": "./routes/compute-routes"
+  },
+  {
+    "file": "server/compiled/server/unified_api_server.js",
+    "spec": "./routes/performance-routes"
+  },
+  {
+    "file": "server/controllers/data-ingestion-controller.cjs",
+    "spec": "../utils/testing/weather-data-validation"
+  },
+  {
+    "file": "server/controllers/data-ingestion-controller.js",
+    "spec": "../utils/testing/weather-data-validation"
+  },
+  {
+    "file": "server/middleware/metricsMiddleware.cjs",
+    "spec": "../../performance/dashboard-metrics.js"
+  },
+  {
+    "file": "server/middleware/metricsMiddleware.js",
+    "spec": "../../performance/dashboard-metrics.js"
+  },
+  {
+    "file": "server/openforis-integration-test.cjs",
+    "spec": "./config/openforis-rate-limits.json"
+  },
+  {
+    "file": "server/openforis-integration-test.js",
+    "spec": "./config/openforis-rate-limits.json"
+  },
+  {
+    "file": "server/plugins/modelContextPlugin.cjs",
+    "spec": "../../sdk/wrf-sdk-rs/bindings/blockchain_rpc"
+  },
+  {
+    "file": "server/plugins/modelContextPlugin.js",
+    "spec": "../../sdk/wrf-sdk-rs/bindings/blockchain_rpc"
+  },
+  {
+    "file": "server/services/data-archival-service.cjs",
+    "spec": "./storage-backends/azure-backend"
+  },
+  {
+    "file": "server/services/data-archival-service.cjs",
+    "spec": "./storage-backends/gcs-backend"
+  },
+  {
+    "file": "server/services/data-archival-service.cjs",
+    "spec": "./storage-backends/s3-backend"
+  },
+  {
+    "file": "server/services/data-archival-service.js",
+    "spec": "./storage-backends/azure-backend"
+  },
+  {
+    "file": "server/services/data-archival-service.js",
+    "spec": "./storage-backends/gcs-backend"
+  },
+  {
+    "file": "server/services/data-archival-service.js",
+    "spec": "./storage-backends/s3-backend"
+  },
+  {
+    "file": "server/services/data-ingestion-pipeline.cjs",
+    "spec": "../utils/testing/weather-data-validation"
+  },
+  {
+    "file": "server/services/data-ingestion-pipeline.js",
+    "spec": "../utils/testing/weather-data-validation"
+  },
+  {
+    "file": "server/services/quality-reporting-service.cjs",
+    "spec": "../../db"
+  },
+  {
+    "file": "server/services/quality-reporting-service.js",
+    "spec": "../../db"
+  },
+  {
+    "file": "server/services/realtime-stream-processor.cjs",
+    "spec": "../utils/testing/weather-data-validation"
+  },
+  {
+    "file": "server/services/realtime-stream-processor.js",
+    "spec": "../utils/testing/weather-data-validation"
+  },
+  {
+    "file": "server/storage-adapter.cjs",
+    "spec": "./db-fixed"
+  },
+  {
+    "file": "server/storage-adapter.js",
+    "spec": "./db-fixed"
+  },
+  {
+    "file": "services/weather/weather-data-ingestion-orchestrator.cjs",
+    "spec": "./noaa-data-service"
+  },
+  {
+    "file": "services/weather/weather-data-ingestion-orchestrator.cjs",
+    "spec": "./noaa-nws-api-service"
+  },
+  {
+    "file": "services/weather/weather-data-ingestion-orchestrator.cjs",
+    "spec": "./weather-data-cleaner"
+  },
+  {
+    "file": "services/weather/weather-data-ingestion-orchestrator.cjs",
+    "spec": "./weather-data-transformer"
+  },
+  {
+    "file": "services/weather/weather-data-ingestion-orchestrator.cjs",
+    "spec": "./weather-ingestion-validator"
+  },
+  {
+    "file": "services/weather/weather-data-ingestion-orchestrator.js",
+    "spec": "./noaa-data-service"
+  },
+  {
+    "file": "services/weather/weather-data-ingestion-orchestrator.js",
+    "spec": "./noaa-nws-api-service"
+  },
+  {
+    "file": "services/weather/weather-data-ingestion-orchestrator.js",
+    "spec": "./weather-data-cleaner"
+  },
+  {
+    "file": "services/weather/weather-data-ingestion-orchestrator.js",
+    "spec": "./weather-data-transformer"
+  },
+  {
+    "file": "services/weather/weather-data-ingestion-orchestrator.js",
+    "spec": "./weather-ingestion-validator"
+  },
+  {
+    "file": "utils/testing/smart-contract-testing.cjs",
+    "spec": "../../src/blockchain/smart_contract/security"
+  },
+  {
+    "file": "utils/testing/smart-contract-testing.js",
+    "spec": "../../src/blockchain/smart_contract/security"
+  }
+]

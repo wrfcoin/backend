@@ -1,0 +1,24 @@
+{
+  "stations": [
+    {
+      "triplet": "2057:AL:SCAN",
+      "stationName": "Auburn SCAN",
+      "network": "SCAN",
+      "latitude": 32.6012,
+      "longitude": -85.4881,
+      "elevationMeters": 214.6,
+      "stateCode": "AL",
+      "countyName": "Lee"
+    },
+    {
+      "triplet": "304:CA:SNTL",
+      "stationName": "Mammoth Pass",
+      "network": "SNOTEL",
+      "latitude": 37.6294,
+      "longitude": -119.0326,
+      "elevationMeters": 2859,
+      "stateCode": "CA",
+      "countyName": "Madera"
+    }
+  ]
+}

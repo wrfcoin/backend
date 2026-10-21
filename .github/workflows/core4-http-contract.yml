@@ -1,0 +1,161 @@
+name: Core4 HTTP contract (main and manual)
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.run_id }}
+  cancel-in-progress: false
+jobs:
+  core4-http-contract:
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # the build runner self-hosted: hosted runners are billing-void for this org and the
+    # zero-budget policy makes that permanent — the build runner is the evidence path.
+    runs-on: [self-hosted, ct102-backend]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      # Data cap (infra#1113): core4 main lives in a persistent per-runner
+      # clone OUTSIDE the backend workspace (<_work>/core4-contract). The old
+      # actions/checkout into the workspace re-cloned it from scratch on every
+      # run, because the backend checkout's `git clean -ffdx` deletes the
+      # untracked directory: 28.4 MB over the wire per run (ss, 2026-09-27).
+      # Now each run does an incremental depth=1 fetch of main, then a forced
+      # checkout plus `git clean -ffdx`. The tree is the same clean core4 main
+      # tip, and target/ is still wiped, so the build stays cold as before.
+      # Read-only deploy key on wrfcoin/core4: the repo-scoped GITHUB_TOKEN
+      # cannot read a sibling private repo. github.com's published ed25519
+      # host key is pinned (StrictHostKeyChecking=yes).
+      - name: Check out core4 main (persistent per-runner clone)
+        env:
+          CORE4_SSH_KEY: ${{ secrets.CORE4_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          core4_dir="$(dirname "$RUNNER_WORKSPACE")/core4-contract"
+          key="$RUNNER_TEMP/core4-deploy-key"
+          known_hosts="$RUNNER_TEMP/github-known-hosts"
+          trap 'rm -f "$key"' EXIT
+          ( umask 077; printf '%s\n' "$CORE4_SSH_KEY" > "$key" )
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o UserKnownHostsFile=$known_hosts -o StrictHostKeyChecking=yes"
+          # Self-healing sync: re-clones once if a stale lock or a damaged clone
+          # makes the fetch or checkout fail (#1277 review P2).
+          bash scripts/ci-sync-core4-contract.sh "$core4_dir"
+          echo "CORE4_DIR=$core4_dir" >> "$GITHUB_ENV"
+      # Data cap (infra#1113): no GitHub npm cache on self-hosted runners.
+      # On the build runner ~/.npm (/opt/gh-runner/.npm) already persists between jobs,
+      # so the restore downloaded a 558 MB tarball per job over a metered line
+      # to overwrite a warm directory (1.1 GB per CI run). Hosted runners keep
+      # it (an empty `cache` disables setup-node caching). npm ci still
+      # installs exactly the lockfile and checks every tarball's integrity.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: ${{ runner.environment != 'self-hosted' && 'npm' || '' }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install backend dependencies
+        # Data cap (infra#1113): on linux/x64, onnxruntime-node's postinstall
+        # downloads the ~238 MB Microsoft.ML.OnnxRuntime.Gpu.Linux NuGet package
+        # (CUDA/TensorRT providers) every time `npm ci` recreates node_modules.
+        # That was ~480 MB per CI run over a metered line. The runners have no
+        # GPU; the CPU runtime (libonnxruntime.so.1) ships inside the npm
+        # package and is unaffected.
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: npm ci --prefer-offline
+      # backend#1215: compile core4 in its own step, bounded only by the job's
+      # timeout-minutes. The health wait below then measures STARTUP only; it
+      # used to include this cold compile (`git clean -ffdx` wipes target/
+      # every run), which flaked the job whenever the build ran past
+      # the 90 s window.
+      - name: Build isolated core4 launch API
+        working-directory: ${{ env.CORE4_DIR }}
+        run: |
+          build_started=$(date +%s)
+          cargo build -p wrfcoin-native-chain --bin launch_api
+          target_dir="$(cargo metadata --format-version 1 --no-deps \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).target_directory))')"
+          launch_api_bin="$target_dir/debug/launch_api"
+          test -x "$launch_api_bin"
+          echo "LAUNCH_API_BIN=$launch_api_bin" >> "$GITHUB_ENV"
+          echo "core4 launch_api build took $(( $(date +%s) - build_started ))s"
+      - name: Start isolated core4 launch API
+        run: |
+          contract_data_dir="$RUNNER_TEMP/core4-contract-data"
+          mkdir -p "$contract_data_dir"
+          # Ephemeral debug producer key (#2290): the fresh chain seeds a
+          # producer set at genesis and refuses to start without a usable
+          # signer. Never a real key - generated per run, discarded with it.
+          producer_key="$(openssl rand -hex 32)"
+          producer_public_key="$(WRFCOIN_EPHEMERAL_SK="$producer_key" node -e '
+            const { createPrivateKey, createPublicKey } = require("node:crypto");
+            const seed = Buffer.from(process.env.WRFCOIN_EPHEMERAL_SK, "hex");
+            const pkcs8 = Buffer.concat([
+              Buffer.from("302e020100300506032b657004220420", "hex"),
+              seed,
+            ]);
+            const privateKey = createPrivateKey({ key: pkcs8, format: "der", type: "pkcs8" });
+            const spki = createPublicKey(privateKey).export({ format: "der", type: "spki" });
+            process.stdout.write(spki.subarray(-32).toString("hex"));
+          ')"
+          producer_payout="0x${producer_public_key:0:40}"
+          genesis_producer_set="$(printf '{"version":1,"members":[{"producer_id":"backend-contract","payout_address":"%s","public_key":"%s"}]}' \
+            "$producer_payout" "$producer_public_key")"
+          (
+            cd "$CORE4_DIR"
+            WRFCOIN_GENESIS_PRODUCER_SET="$genesis_producer_set" \
+            WRFCOIN_PRODUCER_SIGNER_PRIVATE_KEY="$producer_key" \
+            WRFCOIN_PRODUCER_PAYOUT_ADDRESS="$producer_payout" \
+            WRFCOIN_API_HOST=127.0.0.1 \
+            WRFCOIN_API_PORT=18556 \
+            WRFCOIN_DATA_DIR="$contract_data_dir" \
+            WRFCOIN_OPERATOR_TOKEN=core4-contract-test-token \
+            WRFCOIN_READER_TOKEN=core4-contract-reader-test-token \
+            WRFCOIN_CHAIN_ID=777 \
+            WRFCOIN_NETWORK_ID=testnet \
+            ALLOW_UNENCRYPTED_STORAGE=true \
+            RUST_LOG=warn \
+            "$LAUNCH_API_BIN" \
+              > "$RUNNER_TEMP/core4-contract.log" 2>&1 &
+            echo $! > "$RUNNER_TEMP/core4-contract.pid"
+          )
+          # Startup only: the binary is already built (previous step).
+          start_started=$(date +%s)
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent --show-error \
+              -H 'Authorization: Bearer core4-contract-test-token' \
+              http://127.0.0.1:18556/health; then
+              echo
+              echo "core4 launch_api healthy after $(( $(date +%s) - start_started ))s (attempt $attempt; no compile in this window)"
+              exit 0
+            fi
+            if ! kill -0 "$(cat "$RUNNER_TEMP/core4-contract.pid")" 2>/dev/null; then
+              echo "core4 launch_api exited before becoming healthy"
+              break
+            fi
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/core4-contract.log"
+          exit 1
+      - name: Run real backend to core4 HTTP contract
+        env:
+          WRFCOIN_CORE4_URL: http://127.0.0.1:18556
+          WRFCOIN_OPERATOR_TOKEN: core4-contract-test-token
+          WRFCOIN_READER_TOKEN: core4-contract-reader-test-token
+          # Fail hard here if the env is ever lost — a skip in THIS job would
+          # be vacuous green (the plain suite skips by design instead).
+          WRFCOIN_REQUIRE_LIVE_CORE4: "1"
+        # The canonical config (as `npm test`): it transforms ESM deps such as
+        # drizzle-orm, which the backend routes exercised here import (#1242).
+        run: npx jest --config __tests__/jest.standalone.cjs __tests__/integration/core4-live-http-contract.test.ts --runInBand
+      - name: Stop isolated core4 launch API
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/core4-contract.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/core4-contract.pid")" || true
+          fi
+          if [ -f "$RUNNER_TEMP/core4-contract.log" ]; then
+            cat "$RUNNER_TEMP/core4-contract.log"
+          fi

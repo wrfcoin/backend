@@ -1,0 +1,165 @@
+{
+  "description": "Station-name public rule vectors (backend#1397 / frontend#436). Byte-identical in both repos; sha256-pinned in both test suites.",
+  "rows": [
+    {
+      "input": "Hilltop station",
+      "public": "Hilltop station"
+    },
+    {
+      "input": "Station 42",
+      "public": "Station 42"
+    },
+    {
+      "input": "v2",
+      "public": "v2"
+    },
+    {
+      "input": "Unit 3",
+      "public": "Unit 3"
+    },
+    {
+      "input": "10.1,-21.0",
+      "public": "10.1,-21.0"
+    },
+    {
+      "input": "10.1,-21",
+      "public": "10.1,-21"
+    },
+    {
+      "input": "1.",
+      "public": "1."
+    },
+    {
+      "input": "Site 1.",
+      "public": "Site 1."
+    },
+    {
+      "input": "Hilltop 10.123456,-21",
+      "public": "Hilltop 10.1,-21"
+    },
+    {
+      "input": "+10.123456,-21",
+      "public": "10.1,-21"
+    },
+    {
+      "input": "10.1,-20.987654",
+      "public": "10.1,-21"
+    },
+    {
+      "input": "1.0123456e1,-2.0987654e1",
+      "public": "10.1,-21"
+    },
+    {
+      "input": "At 1.0123456e1, +20.654321",
+      "public": "At 10.1, 20.7"
+    },
+    {
+      "input": "H11 Station .10123456,-.20987654",
+      "public": "H11 Station 0.1,-0.2"
+    },
+    {
+      "input": "Ridge +.10123456e2",
+      "public": "Ridge 10.1"
+    },
+    {
+      "input": "1.e-3",
+      "public": "0"
+    },
+    {
+      "input": "Site 1.e-3",
+      "public": "Site 0"
+    },
+    {
+      "input": "Peak 1.0123456E+1/2.0987654E+1",
+      "public": "Peak 10.1/21"
+    },
+    {
+      "input": "-.5e-1",
+      "public": "0"
+    },
+    {
+      "input": "+.5e1",
+      "public": "+.5e1"
+    },
+    {
+      "input": "Unit .5",
+      "public": "Unit .5"
+    },
+    {
+      "input": "id .10123456x",
+      "public": "id 0.1x"
+    },
+    {
+      "input": "Lat:10.123456Lon:-20.987654",
+      "public": "Lat:10.1Lon:-21"
+    },
+    {
+      "input": "10.123456-20.987654",
+      "public": "10.1-21"
+    },
+    {
+      "input": "(10.123456, 20.654321)",
+      "public": "(10.1, 20.7)"
+    },
+    {
+      "input": "v2.15 build 1.2.3",
+      "public": "v2.2 build 1.2.3"
+    },
+    {
+      "input": "Unit 12.345",
+      "public": "Unit 12.3"
+    },
+    {
+      "input": "Elev 1234.567 m",
+      "public": "Elev 1234.567 m"
+    },
+    {
+      "input": "180.04",
+      "public": "180.04"
+    },
+    {
+      "input": "179.96",
+      "public": "180"
+    },
+    {
+      "input": "-0.04",
+      "public": "0"
+    },
+    {
+      "input": "0.25",
+      "public": "0.3"
+    },
+    {
+      "input": "1e400",
+      "public": "1e400"
+    },
+    {
+      "input": "1e-7",
+      "public": "0"
+    },
+    {
+      "input": "Built 2026-10-01",
+      "public": "Built 2026-10-01"
+    },
+    {
+      "input": "N10.123456 W20.987654",
+      "public": "N10.1 W21"
+    },
+    {
+      "input": "10.123456°N 20.987654°W",
+      "public": "10.1°N 21°W"
+    },
+    {
+      "input": "10.123456,",
+      "public": "10.1,"
+    },
+    {
+      "input": "pos=10.15;20.65",
+      "public": "pos=10.2;20.7"
+    },
+    {
+      "input": "00010.123456",
+      "public": "10.1"
+    }
+  ]
+}

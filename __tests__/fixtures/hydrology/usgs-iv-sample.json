@@ -1,0 +1,49 @@
+{
+  "name": "ns1:timeSeriesResponseType",
+  "value": {
+    "timeSeries": [
+      {
+        "sourceInfo": {
+          "siteName": "Potomac River at Point of Rocks, MD",
+          "siteCode": [{ "value": "01646500" }],
+          "geoLocation": {
+            "geogLocation": { "latitude": 39.27455, "longitude": -77.5436 }
+          }
+        },
+        "variable": { "variableCode": [{ "value": "00060" }] },
+        "values": [
+          {
+            "value": [
+              {
+                "value": "12300",
+                "dateTime": "2026-03-05T12:00:00.000-05:00",
+                "qualifiers": ["A"]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "sourceInfo": {
+          "siteName": "Potomac River at Point of Rocks, MD",
+          "siteCode": [{ "value": "01646500" }],
+          "geoLocation": {
+            "geogLocation": { "latitude": 39.27455, "longitude": -77.5436 }
+          }
+        },
+        "variable": { "variableCode": [{ "value": "00010" }] },
+        "values": [
+          {
+            "value": [
+              {
+                "value": "7.5",
+                "dateTime": "2026-03-05T12:00:00.000-05:00",
+                "qualifiers": ["A"]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

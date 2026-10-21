@@ -1,0 +1,89 @@
+# Wrfcoin Module Configuration for Production
+# This file controls which modules are enabled in production
+# All modules should typically be enabled in production
+
+[modules]
+# Core Blockchain Components
+blockchain = true
+mining = true
+wallet = true
+consensus = true
+mempool = true
+
+# Layer 2 and Cross-Chain Components
+layer2 = true
+cross_chain = true
+sidechain = true
+
+# Weather and Data Components
+weather = true
+oracle = true
+computational = true
+data_aware = true
+
+# Governance and Security
+governance = true
+privacy = true
+security = true
+
+# Infrastructure Components
+api_server = true
+websocket_server = true
+database = true
+
+# Workflow Categories - All should be enabled in production
+core_workflows = true
+cross_chain_workflows = true
+layer2_workflows = true
+governance_workflows = true
+testing_workflows = false  # Tests should be disabled in production
+seeding_workflows = true
+weather_workflows = true
+computational_workflows = true
+oracle_workflows = true
+privacy_workflows = true
+security_workflows = true
+
+# Specific Test Workflows - All should be disabled in production
+test_blockchain = false
+test_cross_chain = false
+test_governance = false
+test_privacy = false
+test_sidechain = false
+test_computational = false
+test_layer2 = false
+test_oracle = false
+test_weather = false
+test_security = false
+test_akash = false
+test_arweave = false
+test_axelar = false
+test_bacalhau = false
+test_bigchaindb = false
+test_bittensor = false
+test_foam = false
+test_golem = false
+test_layerzero = false
+test_luftdaten = false
+test_near = false
+test_ogc = false
+test_sensor_community = false
+test_sonm = false
+test_storj = false
+test_streamr = false
+test_tataucloud = false
+test_ttn = false
+test_validator = false
+test_wormhole = false
+
+# Seed Data Generation - Only initial seeding in production
+seed_data = true
+seed_governance = true
+seed_achievements = true
+seed_rewards = true
+seed_validators = true
+
+# Database Operations - Should be controlled in production
+db_migrate = true
+db_push = false  # Disable direct schema pushing in production
+db_schema_gen = false  # Schema generation only needed in development

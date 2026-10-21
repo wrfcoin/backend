@@ -1,0 +1,90 @@
+{
+  "alerts": [
+    {
+      "id": "urn:oid:2.49.0.1.840.0.tornado-warning",
+      "areaDesc": "Cook County, IL",
+      "geocode": {
+        "UGC": ["ILZ014"]
+      },
+      "affectedZones": ["https://api.weather.gov/zones/forecast/ILZ014"],
+      "references": [],
+      "sent": "2026-03-05T12:20:00Z",
+      "effective": "2026-03-05T12:20:00Z",
+      "onset": "2026-03-05T12:22:00Z",
+      "expires": "2026-03-05T13:20:00Z",
+      "ends": null,
+      "status": "Actual",
+      "messageType": "Update",
+      "category": "Met",
+      "severity": "Severe",
+      "certainty": "Observed",
+      "urgency": "Immediate",
+      "event": "Tornado Warning",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "senderName": "NWS Chicago IL",
+      "headline": "Updated Tornado Warning issued March 5 at 12:20PM CST",
+      "description": "A confirmed tornado was located over downtown Chicago moving northeast.",
+      "instruction": "Move to shelter immediately and avoid windows.",
+      "response": "Execute",
+      "parameters": {}
+    },
+    {
+      "id": "urn:oid:2.49.0.1.840.0.hurricane-watch",
+      "areaDesc": "Coastal County, FL",
+      "geocode": {
+        "UGC": ["FLZ168"]
+      },
+      "affectedZones": ["https://api.weather.gov/zones/forecast/FLZ168"],
+      "references": [],
+      "sent": "2026-03-05T12:21:00Z",
+      "effective": "2026-03-05T12:21:00Z",
+      "onset": "2026-03-05T18:00:00Z",
+      "expires": "2026-03-06T03:00:00Z",
+      "ends": null,
+      "status": "Actual",
+      "messageType": "Alert",
+      "category": "Met",
+      "severity": "Moderate",
+      "certainty": "Possible",
+      "urgency": "Expected",
+      "event": "Hurricane Watch",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "senderName": "NWS Miami FL",
+      "headline": "Hurricane Watch remains in effect for coastal Florida",
+      "description": "Hurricane-force conditions are possible within 48 hours.",
+      "instruction": "Review evacuation plans and secure loose objects.",
+      "response": "Prepare",
+      "parameters": {}
+    },
+    {
+      "id": "urn:oid:2.49.0.1.840.0.flood-warning",
+      "areaDesc": "River County, MO",
+      "geocode": {
+        "UGC": ["MOZ065"]
+      },
+      "affectedZones": ["https://api.weather.gov/zones/forecast/MOZ065"],
+      "references": [],
+      "sent": "2026-03-05T12:22:00Z",
+      "effective": "2026-03-05T12:22:00Z",
+      "onset": "2026-03-05T12:30:00Z",
+      "expires": "2026-03-05T18:00:00Z",
+      "ends": null,
+      "status": "Actual",
+      "messageType": "Alert",
+      "category": "Met",
+      "severity": "Severe",
+      "certainty": "Likely",
+      "urgency": "Expected",
+      "event": "Flood Warning",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "senderName": "NWS St Louis MO",
+      "headline": "Flood Warning for the Mississippi tributaries",
+      "description": "Heavy rain has caused significant rises in creeks and streams.",
+      "instruction": "Move to higher ground and avoid flooded roads.",
+      "response": "Execute",
+      "parameters": {}
+    }
+  ],
+  "count": 3,
+  "generated": "2026-03-05T12:22:00Z"
+}

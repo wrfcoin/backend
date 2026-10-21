@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <Name>noaa-goes16</Name>
+  <Prefix>ABI-L2-CMIPF/2026/064/12/</Prefix>
+  <KeyCount>2</KeyCount>
+  <MaxKeys>2</MaxKeys>
+  <IsTruncated>false</IsTruncated>
+  <Contents>
+    <Key>ABI-L2-CMIPF/2026/064/12/OR_ABI-L2-CMIPF-M6C13_G16_s20260641200200_e20260641209508_c20260641209583.nc</Key>
+    <LastModified>2026-03-05T12:09:59.000Z</LastModified>
+    <ETag>"etag-1"</ETag>
+    <Size>14567231</Size>
+    <StorageClass>STANDARD</StorageClass>
+  </Contents>
+  <Contents>
+    <Key>ABI-L2-CMIPF/2026/064/12/OR_ABI-L2-CMIPF-M6C13_G16_s20260641210200_e20260641219508_c20260641219583.nc</Key>
+    <LastModified>2026-03-05T12:19:59.000Z</LastModified>
+    <ETag>"etag-2"</ETag>
+    <Size>14568999</Size>
+    <StorageClass>STANDARD</StorageClass>
+  </Contents>
+</ListBucketResult>

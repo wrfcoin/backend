@@ -1,0 +1,57 @@
+{
+  "metadata": {
+    "source": "fixture-wrf",
+    "model": "WRF-ARW"
+  },
+  "variables": {
+    "temperature": {
+      "units": "K",
+      "projection": "lambert_conformal",
+      "values": [
+        [287.1, 287.4],
+        [286.8, 287.0]
+      ]
+    },
+    "wind_u": {
+      "units": "m/s",
+      "projection": "lambert_conformal",
+      "values": [
+        [2.3, 2.6],
+        [2.1, 2.4]
+      ]
+    },
+    "wind_v": {
+      "units": "m/s",
+      "projection": "lambert_conformal",
+      "values": [
+        [0.8, 1.0],
+        [0.7, 0.9]
+      ]
+    },
+    "pressure": {
+      "units": "Pa",
+      "projection": "lambert_conformal",
+      "values": [
+        [90000, 89920],
+        [90080, 90010]
+      ]
+    },
+    "relative_humidity": {
+      "units": "%",
+      "projection": "lambert_conformal",
+      "values": [
+        [62, 64],
+        [66, 67]
+      ]
+    },
+    "precipitation": {
+      "units": "mm",
+      "projection": "lambert_conformal",
+      "values": [
+        [0.4, 0.9],
+        [0.1, 0.3]
+      ]
+    }
+  }
+}
+

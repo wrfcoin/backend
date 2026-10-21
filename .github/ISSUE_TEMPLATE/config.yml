@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Private security report
+    url: https://github.com/wrfcoin/backend/blob/main/SECURITY.md
+    about: Email security@wrfcoin.com privately; never post vulnerabilities in public issues.
+  - name: Public testnet support
+    url: https://github.com/wrfcoin/testnet-support/issues
+    about: Get help using the public testnet; omit private information.

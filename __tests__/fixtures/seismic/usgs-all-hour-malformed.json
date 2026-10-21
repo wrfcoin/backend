@@ -1,0 +1,56 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "generated": 1772661123000,
+    "url": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson",
+    "title": "USGS All Earthquakes, Past Hour",
+    "status": 200
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "mag": null,
+        "place": "Malformed event with missing magnitude",
+        "time": 1772660200000,
+        "updated": 1772660800000,
+        "felt": 4,
+        "mmi": 2.3,
+        "status": "reviewed",
+        "tsunami": 0,
+        "magType": "ml",
+        "type": "earthquake"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-118.001, 34.001, 12.4]
+      },
+      "id": "ci7000bad1"
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "mag": 3.4,
+        "place": "20 km E of Ridgecrest, CA",
+        "time": 1772660000000,
+        "updated": 1772660600000,
+        "url": "https://earthquake.usgs.gov/earthquakes/eventpage/ci7000good",
+        "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/ci7000good.geojson",
+        "felt": 2,
+        "mmi": 3.0,
+        "alert": "yellow",
+        "status": "reviewed",
+        "tsunami": 0,
+        "sig": 178,
+        "magType": "ml",
+        "type": "earthquake",
+        "title": "M 3.4 - 20 km E of Ridgecrest, CA"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-117.602, 35.653, 8.3]
+      },
+      "id": "ci7000good"
+    }
+  ]
+}

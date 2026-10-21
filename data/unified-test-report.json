@@ -1,0 +1,171 @@
+{
+  "timestamp": "2025-06-25T05:56:22.908Z",
+  "summary": {
+    "total": 13,
+    "passed": 9,
+    "failed": 1,
+    "skipped": 3,
+    "successRate": "69.23"
+  },
+  "testResults": [
+    {
+      "id": 1,
+      "name": "AI/ML Networks Integration",
+      "category": "integration/ai_ml",
+      "status": "passed",
+      "message": "Integration endpoint available: http://localhost:3004",
+      "timestamp": "2025-06-25T05:56:22.930Z",
+      "duration": 0
+    },
+    {
+      "id": 2,
+      "name": "IoT Networks Integration",
+      "category": "integration/iot",
+      "status": "passed",
+      "message": "Integration endpoint available: http://localhost:3002",
+      "timestamp": "2025-06-25T05:56:22.931Z",
+      "duration": 0
+    },
+    {
+      "id": 3,
+      "name": "Storage Networks Integration",
+      "category": "integration/storage",
+      "status": "passed",
+      "message": "Integration endpoint available: http://localhost:3003",
+      "timestamp": "2025-06-25T05:56:22.931Z",
+      "duration": 0
+    },
+    {
+      "id": 4,
+      "name": "Compute Networks Integration",
+      "category": "integration/compute",
+      "status": "passed",
+      "message": "Integration endpoint available: http://localhost:3001",
+      "timestamp": "2025-06-25T05:56:22.931Z",
+      "duration": 0
+    },
+    {
+      "id": 5,
+      "name": "Cross-Chain Protocol Integration",
+      "category": "integration/cross_chain",
+      "status": "passed",
+      "message": "Integration endpoint available: http://localhost:3005",
+      "timestamp": "2025-06-25T05:56:22.931Z",
+      "duration": 1
+    },
+    {
+      "id": 6,
+      "name": "WebSocket Server Integration",
+      "category": "integration/websocket",
+      "status": "passed",
+      "message": "Integration endpoint available: ws://localhost:8080",
+      "timestamp": "2025-06-25T05:56:22.932Z",
+      "duration": 0
+    },
+    {
+      "id": 7,
+      "name": "Server: computeNetworks",
+      "category": "servers",
+      "status": "passed",
+      "message": "connected on http://localhost:3001",
+      "timestamp": "2025-06-25T05:56:22.932Z",
+      "duration": 0
+    },
+    {
+      "id": 8,
+      "name": "Server: iotNetworks",
+      "category": "servers",
+      "status": "passed",
+      "message": "connected on http://localhost:3002",
+      "timestamp": "2025-06-25T05:56:22.932Z",
+      "duration": 0
+    },
+    {
+      "id": 9,
+      "name": "Server: storageNetworks",
+      "category": "servers",
+      "status": "passed",
+      "message": "connected on http://localhost:3003",
+      "timestamp": "2025-06-25T05:56:22.932Z",
+      "duration": 0
+    },
+    {
+      "id": 10,
+      "name": "Server: aiMlNetworks",
+      "category": "servers",
+      "status": "failed",
+      "message": "failed on http://localhost:3004",
+      "timestamp": "2025-06-25T05:56:22.932Z",
+      "duration": 0
+    },
+    {
+      "id": 11,
+      "name": "Server: crossChainProtocol",
+      "category": "servers",
+      "status": "partial",
+      "message": "available on http://localhost:3005",
+      "timestamp": "2025-06-25T05:56:22.932Z",
+      "duration": 0
+    },
+    {
+      "id": 12,
+      "name": "Server: websocketServer",
+      "category": "servers",
+      "status": "partial",
+      "message": "available on ws://localhost:8080",
+      "timestamp": "2025-06-25T05:56:22.932Z",
+      "duration": 0
+    },
+    {
+      "id": 13,
+      "name": "Server: testServer",
+      "category": "servers",
+      "status": "partial",
+      "message": "available on http://localhost:8000",
+      "timestamp": "2025-06-25T05:56:22.932Z",
+      "duration": 0
+    }
+  ],
+  "serverConnections": {
+    "computeNetworks": {
+      "port": 3001,
+      "status": "connected",
+      "endpoint": "http://localhost:3001"
+    },
+    "iotNetworks": {
+      "port": 3002,
+      "status": "connected",
+      "endpoint": "http://localhost:3002"
+    },
+    "storageNetworks": {
+      "port": 3003,
+      "status": "connected",
+      "endpoint": "http://localhost:3003"
+    },
+    "aiMlNetworks": {
+      "port": 3004,
+      "status": "failed",
+      "endpoint": "http://localhost:3004"
+    },
+    "crossChainProtocol": {
+      "port": 3005,
+      "status": "available",
+      "endpoint": "http://localhost:3005"
+    },
+    "websocketServer": {
+      "port": 8080,
+      "status": "available",
+      "endpoint": "ws://localhost:8080"
+    },
+    "testServer": {
+      "port": 8000,
+      "status": "available",
+      "endpoint": "http://localhost:8000"
+    }
+  },
+  "performance": {
+    "startTime": 1750830982908,
+    "endTime": 1750830982932,
+    "duration": 24
+  }
+}

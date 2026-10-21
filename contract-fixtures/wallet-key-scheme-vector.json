@@ -1,0 +1,13 @@
+{
+  "scheme": "ed25519",
+  "mnemonic": "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+  "bip39_passphrase": "",
+  "derivation": "SLIP-0010 master key; no child path",
+  "public_key_bytes": [
+    233, 107, 28, 107, 135, 105, 253, 176,
+    179, 79, 190, 207, 223, 133, 195, 59,
+    5, 60, 236, 173, 149, 23, 225, 171,
+    136, 203, 166, 20, 51, 87, 117, 193
+  ],
+  "address": "0x3f995ceb27e8177077dbed8b1e4f696af74da492"
+}

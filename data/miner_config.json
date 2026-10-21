@@ -1,0 +1,93 @@
+{
+  "mining_reward_address": null,
+  "gpu_mining_enabled": false,
+  "max_mining_threads": 4,
+  "mining_difficulty_override": null,
+  "max_power_consumption": 0,
+  "supported_providers": [
+    {
+      "id": "internal",
+      "name": "Wrfcoin Internal",
+      "enabled": true,
+      "api_endpoint": null,
+      "auth_token": null,
+      "resource_limits": {
+        "max_cpu_cores": 4,
+        "max_memory_mb": 4096,
+        "max_gpu_memory_mb": 0,
+        "max_disk_space_mb": 1024,
+        "max_execution_time_sec": 300
+      }
+    },
+    {
+      "id": "weather",
+      "name": "Weather Data Provider",
+      "enabled": true,
+      "api_endpoint": null,
+      "auth_token": null,
+      "resource_limits": {
+        "max_cpu_cores": 1,
+        "max_memory_mb": 512,
+        "max_gpu_memory_mb": 0,
+        "max_disk_space_mb": 256,
+        "max_execution_time_sec": 60
+      }
+    },
+    {
+      "id": "aethir",
+      "name": "Aethir Cloud GPU",
+      "enabled": false,
+      "api_endpoint": "https://api.aethir.com/v1",
+      "auth_token": null,
+      "resource_limits": {
+        "max_cpu_cores": 8,
+        "max_memory_mb": 16384,
+        "max_gpu_memory_mb": 24576,
+        "max_disk_space_mb": 102400,
+        "max_execution_time_sec": 7200
+      }
+    },
+    {
+      "id": "render",
+      "name": "Render Network",
+      "enabled": false,
+      "api_endpoint": "https://api.render.com/v1",
+      "auth_token": null,
+      "resource_limits": {
+        "max_cpu_cores": 16,
+        "max_memory_mb": 32768,
+        "max_gpu_memory_mb": 16384,
+        "max_disk_space_mb": 51200,
+        "max_execution_time_sec": 3600
+      }
+    },
+    {
+      "id": "icp",
+      "name": "Internet Computer Protocol",
+      "enabled": false,
+      "api_endpoint": "https://ic0.app",
+      "auth_token": null,
+      "resource_limits": {
+        "max_cpu_cores": 4,
+        "max_memory_mb": 8192,
+        "max_gpu_memory_mb": 0,
+        "max_disk_space_mb": 10240,
+        "max_execution_time_sec": 1800
+      }
+    },
+    {
+      "id": "tao",
+      "name": "TAO Network",
+      "enabled": false,
+      "api_endpoint": "https://api.tao.network",
+      "auth_token": null,
+      "resource_limits": {
+        "max_cpu_cores": 8,
+        "max_memory_mb": 16384,
+        "max_gpu_memory_mb": 32768,
+        "max_disk_space_mb": 204800,
+        "max_execution_time_sec": 14400
+      }
+    }
+  ]
+}

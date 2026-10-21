@@ -1,0 +1,159 @@
+{
+  "metadata": {
+    "created": "2025-05-29T19:13:16.517Z",
+    "lastUpdated": "2025-05-29T19:13:28.467Z",
+    "version": "1.0.0"
+  },
+  "services": {
+    "Frontend Application": {
+      "port": 5000,
+      "category": "frontend",
+      "registeredAt": "2025-05-29T19:13:16.527Z",
+      "status": "imported",
+      "source": "existing_configuration"
+    },
+    "Cross-Chain Protocol Server": {
+      "port": 3000,
+      "category": "api",
+      "registeredAt": "2025-05-29T19:13:16.527Z",
+      "status": "imported",
+      "source": "existing_configuration"
+    },
+    "Missing Endpoints Server": {
+      "port": 3001,
+      "category": "api",
+      "registeredAt": "2025-05-29T19:13:16.527Z",
+      "status": "imported",
+      "source": "existing_configuration"
+    },
+    "Wallet Server": {
+      "port": 4000,
+      "category": "application",
+      "registeredAt": "2025-05-29T19:13:16.527Z",
+      "status": "imported",
+      "source": "existing_configuration"
+    },
+    "Testnet API Server": {
+      "port": 4001,
+      "category": "application",
+      "registeredAt": "2025-05-29T19:13:16.527Z",
+      "status": "imported",
+      "source": "existing_configuration"
+    },
+    "Performance Dashboard API": {
+      "port": 4002,
+      "category": "application",
+      "registeredAt": "2025-05-29T19:13:16.528Z",
+      "status": "imported",
+      "source": "existing_configuration"
+    },
+    "Cross-Chain WebSocket": {
+      "port": 5001,
+      "category": "websocket",
+      "registeredAt": "2025-05-29T19:13:16.528Z",
+      "status": "imported",
+      "source": "existing_configuration"
+    },
+    "Compute Networks Server": {
+      "port": 6000,
+      "category": "compute",
+      "registeredAt": "2025-05-29T19:13:16.528Z",
+      "status": "imported",
+      "source": "existing_configuration"
+    },
+    "AI ML Networks": {
+      "port": 6001,
+      "category": "compute",
+      "registeredAt": "2025-05-29T19:13:16.528Z",
+      "status": "imported",
+      "source": "existing_configuration"
+    },
+    "IoT Sensor Networks": {
+      "port": 3002,
+      "category": "compute",
+      "registeredAt": "2025-05-29T19:13:16.528Z",
+      "status": "imported",
+      "source": "existing_configuration"
+    },
+    "Storage Networks": {
+      "port": 7000,
+      "category": "storage",
+      "registeredAt": "2025-05-29T19:13:16.528Z",
+      "status": "imported",
+      "source": "existing_configuration"
+    },
+    "Enhanced Cross-Chain Server": {
+      "port": 8002,
+      "category": "websocket",
+      "registeredAt": "2025-05-29T19:13:16.528Z",
+      "status": "imported",
+      "source": "existing_configuration"
+    },
+    "Memory Optimized Server": {
+      "port": 8003,
+      "category": "websocket",
+      "registeredAt": "2025-05-29T19:13:16.528Z",
+      "status": "imported",
+      "source": "existing_configuration"
+    },
+    "Contract Integration Server": {
+      "port": 9000,
+      "category": "integration",
+      "registeredAt": "2025-05-29T19:13:16.528Z",
+      "status": "imported",
+      "source": "existing_configuration"
+    },
+    "Node Discovery Server": {
+      "port": 9001,
+      "category": "integration",
+      "registeredAt": "2025-05-29T19:13:16.528Z",
+      "status": "imported",
+      "source": "existing_configuration"
+    },
+    "WebSocket Server Fixed": {
+      "port": 8000,
+      "category": "websocket",
+      "registeredAt": "2025-05-29T19:13:20.801Z",
+      "status": "registered"
+    },
+    "Enhanced Weather Rewards": {
+      "port": 6004,
+      "category": "compute",
+      "registeredAt": "2025-05-29T19:13:24.843Z",
+      "status": "registered"
+    },
+    "Weather Earnings Transfer": {
+      "port": 3003,
+      "category": "api",
+      "registeredAt": "2025-05-29T19:13:28.467Z",
+      "status": "registered"
+    },
+    "Compute Contribution Server": {
+      "port": 6003,
+      "category": "compute",
+      "registeredAt": "2025-06-02T21:40:00.000Z",
+      "status": "registered"
+    },
+    "NAS Storage Network": {
+      "port": 7002,
+      "category": "storage",
+      "registeredAt": "2025-06-02T21:40:00.000Z",
+      "status": "registered"
+    },
+    "AlertManager Webhook Handler": {
+      "port": 19093,
+      "category": "integration",
+      "registeredAt": "2026-05-18T00:00:00.000Z",
+      "status": "registered",
+      "description": "Receives AlertManager alerts and routes to Slack"
+    },
+    "DeFi Simulator Node": {
+      "port": 7100,
+      "category": "simulation",
+      "registeredAt": "2026-09-18T00:00:00.000Z",
+      "status": "registered",
+      "description": "Opt-in read/quote-only defi-node simulator; no custody or settlement"
+    }
+  },
+  "reservedPorts": [5000]
+}

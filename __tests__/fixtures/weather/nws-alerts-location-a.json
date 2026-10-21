@@ -1,0 +1,62 @@
+{
+  "alerts": [
+    {
+      "id": "urn:oid:2.49.0.1.840.0.tornado-warning",
+      "areaDesc": "Cook County, IL",
+      "geocode": {
+        "UGC": ["ILZ014"]
+      },
+      "affectedZones": ["https://api.weather.gov/zones/forecast/ILZ014"],
+      "references": [],
+      "sent": "2026-03-05T12:00:00Z",
+      "effective": "2026-03-05T12:00:00Z",
+      "onset": "2026-03-05T12:03:00Z",
+      "expires": "2026-03-05T13:00:00Z",
+      "ends": null,
+      "status": "Actual",
+      "messageType": "Alert",
+      "category": "Met",
+      "severity": "Severe",
+      "certainty": "Likely",
+      "urgency": "Immediate",
+      "event": "Tornado Warning",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "senderName": "NWS Chicago IL",
+      "headline": "Tornado Warning issued March 5 at 12:00PM CST",
+      "description": "A severe thunderstorm capable of producing a tornado was located near Chicago.",
+      "instruction": "Take shelter in a basement or interior room.",
+      "response": "Execute",
+      "parameters": {}
+    },
+    {
+      "id": "urn:oid:2.49.0.1.840.0.red-flag-watch",
+      "areaDesc": "Foothills Fire Zone",
+      "geocode": {
+        "UGC": ["COZ214"]
+      },
+      "affectedZones": ["https://api.weather.gov/zones/fire/COZ214"],
+      "references": [],
+      "sent": "2026-03-05T12:00:00Z",
+      "effective": "2026-03-05T12:10:00Z",
+      "onset": "2026-03-05T13:00:00Z",
+      "expires": "2026-03-05T19:00:00Z",
+      "ends": null,
+      "status": "Actual",
+      "messageType": "Alert",
+      "category": "Met",
+      "severity": "Moderate",
+      "certainty": "Possible",
+      "urgency": "Expected",
+      "event": "Red Flag Watch",
+      "sender": "w-nws.webmaster@noaa.gov",
+      "senderName": "NWS Boulder CO",
+      "headline": "Red Flag Watch for critical wildfire weather conditions",
+      "description": "Low humidity and strong winds may support rapid wildfire spread.",
+      "instruction": "Avoid outdoor burning.",
+      "response": "Monitor",
+      "parameters": {}
+    }
+  ],
+  "count": 2,
+  "generated": "2026-03-05T12:00:00Z"
+}

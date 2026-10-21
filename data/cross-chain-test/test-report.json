@@ -1,0 +1,83 @@
+{
+  "timestamp": "2025-05-23T10:06:03.744Z",
+  "bridgesCount": 10,
+  "transactionsCount": 20,
+  "transactionsByBridge": {
+    "axelar": 2,
+    "layerzero": 2,
+    "wormhole": 2,
+    "ibc": 2,
+    "ilpv4": 2,
+    "xcmp": 2,
+    "near": 2,
+    "optimism": 2,
+    "base": 2,
+    "cosmos-ibc": 2
+  },
+  "networkCoverage": {
+    "Ethereum": {
+      "outgoing": 6,
+      "incoming": 4
+    },
+    "Cosmos": {
+      "outgoing": 3,
+      "incoming": 1
+    },
+    "Binance Smart Chain": {
+      "outgoing": 1,
+      "incoming": 1
+    },
+    "Solana": {
+      "outgoing": 1,
+      "incoming": 1
+    },
+    "Osmosis": {
+      "outgoing": 2,
+      "incoming": 2
+    },
+    "Terra": {
+      "outgoing": 0,
+      "incoming": 1
+    },
+    "WRF Network": {
+      "outgoing": 1,
+      "incoming": 2
+    },
+    "XRP Ledger": {
+      "outgoing": 1,
+      "incoming": 1
+    },
+    "Stellar": {
+      "outgoing": 0,
+      "incoming": 1
+    },
+    "Polkadot": {
+      "outgoing": 1,
+      "incoming": 0
+    },
+    "Moonbeam": {
+      "outgoing": 0,
+      "incoming": 1
+    },
+    "Acala": {
+      "outgoing": 1,
+      "incoming": 0
+    },
+    "Astar": {
+      "outgoing": 0,
+      "incoming": 1
+    },
+    "Near": {
+      "outgoing": 1,
+      "incoming": 1
+    },
+    "Optimism": {
+      "outgoing": 1,
+      "incoming": 2
+    },
+    "Base": {
+      "outgoing": 1,
+      "incoming": 1
+    }
+  }
+}

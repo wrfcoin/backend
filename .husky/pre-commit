@@ -1,0 +1,113 @@
+#!/usr/bin/env sh
+# Pre-commit guards — parallel to core4#1584/#1625
+# Blocks: type regressions, rpcAuthMiddleware orphaned edits/deletions, known dev-secret literals
+
+set -e
+
+# 1. Working-tree source hygiene
+UNTRACKED_SOURCES=$(git ls-files --others --exclude-standard -- \
+  services server shared api middleware routes \
+  | grep -E '\.(ts|js|mjs|cjs)$' || true)
+if [ -n "$UNTRACKED_SOURCES" ]; then
+  echo ""
+  echo "ERROR: untracked source files found in tracked directories:"
+  echo ""
+  printf '%s\n' "$UNTRACKED_SOURCES" | sed 's/^/  ??  /'
+  echo ""
+  echo "Commit the file on its owning branch, delete the orphan, or ignore it deliberately."
+  echo "See server/SERVICE_REGISTRY.md for the full decision runbook."
+  echo ""
+  exit 1
+fi
+
+STAGED=$(git diff --cached --name-only)
+
+# 2. Critical staged-deletion guard
+#    Blocks the audit failure mode where security middleware or its regression
+#    test is staged for deletion.
+CRITICAL_DELETIONS=$(git diff --cached --diff-filter=D --name-only -- \
+  server/middleware/rpcAuthMiddleware.js \
+  __tests__/server/rpc-auth-middleware.test.ts || true)
+if [ -n "$CRITICAL_DELETIONS" ]; then
+  echo ""
+  echo "ERROR: Refusing to commit deletion of security-critical auth files:"
+  printf '%s\n' "$CRITICAL_DELETIONS"
+  echo "  Restore the file or split the deletion into a reviewed security migration."
+  echo ""
+  exit 1
+fi
+
+# 3. Type check
+npm run type-check
+
+# 4. rpcAuthMiddleware guard
+#    If the middleware is staged, the paired test file must also be staged.
+
+# 4a. Block accidental commits of live env files or env archive snapshots.
+#     Allow only example templates (e.g., .env.example, .env.testnet.example).
+DISALLOWED_ENV_FILES=$(printf '%s\n' "$STAGED" \
+  | grep -E '(^|/)\.env(\.[^/]+)*$' \
+  | grep -Ev '(^|/)\.env(\.[^/]+)*\.example$' || true)
+if [ -n "$DISALLOWED_ENV_FILES" ]; then
+  echo ""
+  echo "ERROR: Refusing to commit non-example env file(s):"
+  printf '%s\n' "$DISALLOWED_ENV_FILES"
+  echo "  Commit only env templates (*.example), never live secret-bearing env files."
+  echo ""
+  exit 1
+fi
+
+DISALLOWED_ENV_ARCHIVES=$(printf '%s\n' "$STAGED" \
+  | grep -E '(^|/)\.env(\.[^/]+)*\.archive$' || true)
+if [ -n "$DISALLOWED_ENV_ARCHIVES" ]; then
+  echo ""
+  echo "ERROR: Refusing to commit env archive snapshot(s):"
+  printf '%s\n' "$DISALLOWED_ENV_ARCHIVES"
+  echo "  Remove archive files or keep them outside the repository."
+  echo ""
+  exit 1
+fi
+
+if printf '%s\n' "$STAGED" | grep -qF 'server/middleware/rpcAuthMiddleware.js'; then
+  if ! printf '%s\n' "$STAGED" | grep -qF '__tests__/server/rpc-auth-middleware.test.ts'; then
+    echo ""
+    echo "ERROR: server/middleware/rpcAuthMiddleware.js is staged without its test file."
+    echo "  Also stage: __tests__/server/rpc-auth-middleware.test.ts"
+    echo ""
+    exit 1
+  fi
+fi
+
+# 5. Staged testnet-secret scanner
+#    Blocks known dev/fallback literals, WRFCOIN_OPERATOR_TOKEN assignments,
+#    and long raw hex values on secret/token/key/password lines.
+ADDITIONS=$(git diff --cached -U0 -- '*.ts' '*.js' '*.json' '*.env' '.env*' 2>/dev/null \
+    | grep '^+' \
+    | grep -v '^+++' || true)
+
+DEV_PATTERN='dev-rpc-api-key|dev-admin-token|changeme|change-me'
+if printf '%s\n' "$ADDITIONS" | grep -qiE "$DEV_PATTERN"; then
+  echo ""
+  echo "ERROR: Staged content contains a known dev/fallback secret value."
+  echo "  Forbidden pattern: $DEV_PATTERN"
+  echo "  Use a real secret or a REPLACE_ placeholder in .env.example."
+  echo ""
+  exit 1
+fi
+
+if printf '%s\n' "$ADDITIONS" | grep -qiE 'WRFCOIN_OPERATOR_TOKEN[[:space:]]*='; then
+  echo ""
+  echo "ERROR: Staged content contains WRFCOIN_OPERATOR_TOKEN assignment."
+  echo "  Do not commit operator tokens; use a REPLACE_ placeholder in examples."
+  echo ""
+  exit 1
+fi
+
+if printf '%s\n' "$ADDITIONS" \
+    | grep -qiE '(SECRET|TOKEN|KEY|PASSWORD|PRIVATE)[A-Z0-9_[:space:]-]*[=:][^#]*[A-Fa-f0-9]{32,}'; then
+  echo ""
+  echo "ERROR: Staged content appears to contain a raw long hex secret."
+  echo "  Use a REPLACE_ placeholder in examples and never commit live secrets."
+  echo ""
+  exit 1
+fi
