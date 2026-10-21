@@ -106,7 +106,7 @@
     "kubo-rpc-client": "^4.1.1",
     "memoizee": "^0.4.17",
     "merkletreejs": "^0.6.0",
-    "mongoose": "^9.10.3",
+    "mongoose": "^9.11.2",
     "mqtt-packet": "^9.0.2",
     "multer": "^2.1.0",
     "node-cron": "^4.6.0",
