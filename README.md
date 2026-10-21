@@ -60,3 +60,7 @@ Contributions follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 ## License
 
 Licensed under either [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+
+---
+
+_Note: issue and pull-request numbers mentioned in this repository refer to a private archive that predates this public repository; they are not links into this repo._
