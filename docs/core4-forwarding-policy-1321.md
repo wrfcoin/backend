@@ -86,7 +86,7 @@ to caller credentials. JSON config rejects unknown fields and unsafe integers.
 | `WRFCOIN_ADMIN_GOVERNANCE_PROPOSAL_CONFIG` | JSON `{proposal_id, parameter, value, voting_deadline?, deposit?}` matching core4; optional numbers restricted to safe unsigned integers. Core4 validates governed parameter/value and available funds. |
 | `WRFCOIN_GOVERNANCE_PROPOSER_ADDRESS` | Fixed funded on-chain proposer address; never a backend user ID. |
 | `WRFCOIN_CONTRIBUTOR_TOKEN` | Existing Contributor token, also used by signed wallet relay. |
-| `WRFCOIN_GOVERNANCE_SIGNING_VERSION` | `1` (legacy preimage; the live chain-777 version) or `2` (domain-separated); server config only, never caller-selected. Missing/other values refuse voting with 503. Must equal the chain's active protocol version. |
+| `WRFCOIN_GOVERNANCE_SIGNING_VERSION` | `1` (legacy preimage) or `2` (domain-separated); server config only, never caller-selected. Missing/other values refuse voting with 503. Must equal the chain's active protocol version. |
 | `WRFCOIN_GOVERNANCE_CHAIN_ID`, `WRFCOIN_GOVERNANCE_NETWORK_ID` | Explicit nonempty strings matching core4's signing identity (required under both versions). No defaults. Match core4's `WRFCOIN_CHAIN_ID` / `WRFCOIN_NETWORK_ID`; these backend variables are scoped to governance so empty values cannot override wallet-login defaults. |
 
 Compose passes these variables through with empty defaults under the standing
@@ -185,3 +185,8 @@ proposals (`POST /api/governance/proposals`), a verified admin may send a body:
 - Mining reward address (`WRFCOIN_MINING_REWARD_ADDRESS`), stealth keys (`WRFCOIN_ADMIN_STEALTH_CONFIG`) and the proposer address (`WRFCOIN_GOVERNANCE_PROPOSER_ADDRESS`) stay **config-fixed**; a non-empty body on mining or stealth is still refused.
 - The Operator token stays server-side.
 - **Audit:** every admin core4 write that passes validation logs `admin_core4_write` twice (security logger): `outcome=attempt` before the upstream call and `ok` or `refused` (with upstream status) after it. Fields: action, actor (JWT userId), sessionId, `source` (`body` or `config`), path, and identifiers only (NFT id, owner/recipient address, proposal id, parameter). Never keys, metadata, tokens or headers. Rejected calls are not logged here (they never reach core4).
+
+For chain `888` / network `testnet`, verify the recorded genesis schedule and
+owner-published genesis hash `553a3758386d9631037d7469686acb4a121ced81dcf5cde256e2d05667c5f332` before selecting the signing
+version. The placeholder is not a usable hash; previous-chain activation
+heights do not select a version for this genesis.
