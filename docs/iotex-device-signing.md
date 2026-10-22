@@ -18,7 +18,7 @@ domain || u32le(len)+chain_id || u32le(len)+network_id || u32le(len)+subject_id
 ```
 - `domain`: `wrfcoin.iotex.device_data.v1`, `wrfcoin.iotex.w3bstream_event.v1` or `wrfcoin.iotex.attestation.v1`.
   One per kind, so a signature for one kind is worthless for another.
-- `chain_id` / `network_id`: the backend's `WRFCOIN_CHAIN_ID` / `WRFCOIN_NETWORK_ID` (default `777` / `testnet`).
+- `chain_id` / `network_id`: the backend's `WRFCOIN_CHAIN_ID` / `WRFCOIN_NETWORK_ID` (set explicitly to `888` / `testnet` after the cut).
 - `subject_id`: the device id (`/devices/:id`), the publisher id, or the device id for an attestation.
 - `timestamp`: decimal Unix time in **seconds**. The backend refuses anything more than 5 minutes from its clock.
 - `nonce`: 8-64 characters of `[A-Za-z0-9._-]`.
@@ -35,3 +35,8 @@ domain || u32le(len)+chain_id || u32le(len)+network_id || u32le(len)+subject_id
   refused. The check is against the stored rows, so it survives a restart.
 - Attestation responses (operator/IoT-admin route) are `{ signature, timestamp, nonce }`. A `publicKey` in the response
   is never trusted: it must equal the registered key, and the signature is checked against the registered key.
+
+For the post-cut chain, verify the owner-published genesis hash
+`553a3758386d9631037d7469686acb4a121ced81dcf5cde256e2d05667c5f332` before enabling submissions. This is a placeholder, not
+a usable hash. Earlier balances and activation heights are not evidence for
+the new genesis.
