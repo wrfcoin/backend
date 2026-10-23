@@ -184,7 +184,8 @@ const pgPort=process.env.CHAIN_REWARD_TEST_PORT;
     // The store also writes the forecast track-record rows (core4#3604 A4); the schema must carry their tables.
     await pool.query(readFileSync('drizzle/migrations/0035_chain_forecast_index.sql','utf8'));
   });
-  afterAll(async()=>{await pool.query('DROP TABLE operator_role_labels,chain_role_payees,chain_role_payouts,chain_reward_blocks,chain_reward_index_state CASCADE; DROP FUNCTION register_chain_role_payee()');await pool.end();});
+  // Drop every object 0031-0035 create, so a second run on the same database starts clean.
+  afterAll(async()=>{await pool.query('DROP TABLE chain_forecast_decision_events,chain_forecast_block_stats,operator_role_labels,chain_role_payees,chain_role_payouts,chain_reward_blocks,chain_reward_index_state CASCADE; DROP FUNCTION register_chain_role_payee()');await pool.end();});
   beforeEach(async()=>{await pool.query('TRUNCATE chain_reward_index_state CASCADE');});
   const dbPass = (get=read,tip=3) => withRewardStore(pool,'777',genesis,store=>pass(store,get,tip));
   const cool = () => pool.query("UPDATE chain_reward_index_state SET next_run_at='-infinity'");
