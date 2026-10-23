@@ -53,15 +53,6 @@ class WrfcoinCORSConfig {
     });
     baseOrigins.push(...customOrigins.map(origin => origin.trim()));
 
-    // Add Replit domains
-    const replitDomain = process.env.REPL_SLUG;
-    if (replitDomain) {
-      baseOrigins.push(
-        `https://${replitDomain}.replit.app`,
-        `https://${replitDomain}.repl.co`
-      );
-    }
-
     return [...new Set(baseOrigins.filter(Boolean))];
   }
 
@@ -158,10 +149,7 @@ class WrfcoinCORSConfig {
       allowedPatterns.push(
         /^http:\/\/localhost:\d+$/,
         /^http:\/\/127\.0\.0\.1:\d+$/,
-        /^http:\/\/0\.0\.0\.0:\d+$/,
-        // Replit patterns only in development
-        /^https:\/\/[\w-]+\.replit\.app$/,
-        /^https:\/\/[\w-]+\.repl\.co$/
+        /^http:\/\/0\.0\.0\.0:\d+$/
       );
     }
 
