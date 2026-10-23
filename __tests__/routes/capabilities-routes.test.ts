@@ -9,7 +9,7 @@ import {
 } from '../../server/routes/capabilities-routes.js';
 
 const EXPECTED_FEATURE_KEYS = [
-  'earningsRead',
+  'earningsRead', 'forecastersRead',
   'wallet', 'wallet.history', 'explorer', 'pop', 'mining', 'weather', 'governance', 'nfts',
   'settings', 'resources', 'crossChain', 'carbon', 'aiIntegration', 'privacy',
   'defi', 'staking', 'sharding', 'iot', 'messaging', 'storage', 'cortex',
