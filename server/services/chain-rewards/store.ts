@@ -107,6 +107,17 @@ export async function withRewardStore<T>(pool: Pool, chainId: string, genesis: s
             await client.query('INSERT INTO chain_role_payouts(chain_id,genesis_hash,height,block_hash,role,event_id,payee_address,operator_identity,amount) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [...args, block.height, block.hash, p.role, p.eventId, p.payee, p.identity, p.amount]);
           }
           for (const payee of new Set(block.payouts.map(p => p.payee))) await writePayeeAlias(client, args, payee);
+          if (block.forecast) {
+            const f = block.forecast;
+            for (const d of f.decisions) {
+              await client.query(`INSERT INTO chain_forecast_decision_events(chain_id,genesis_hash,height,block_hash,commit_id,forecaster_address,station_id,amount,provenance_class,skill_score,rmse,mae,bias,horizon_hours,variables)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+                [...args, block.height, block.hash, d.commitId, d.forecaster, d.stationId, d.amount, d.provenanceClass, d.skillScore, d.rmse, d.mae, d.bias, d.horizonHours, d.variables]);
+            }
+            await client.query(`INSERT INTO chain_forecast_block_stats(chain_id,genesis_hash,height,block_hash,minted_count,minted_total,with_receipt_count,baseline_count,skipped_records)
+              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+              [...args, block.height, block.hash, f.stats.mintedCount, f.stats.mintedTotal, f.stats.withReceiptCount, f.stats.baselineCount, f.skipped]);
+          }
           await client.query('UPDATE chain_reward_index_state SET cursor_height=$3,cursor_hash=$4,checked_at=now() WHERE chain_id=$1 AND genesis_hash=$2', [...args, block.height, block.hash]);
         });
       },

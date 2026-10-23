@@ -1630,6 +1630,8 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // router — it's imported by this file, not mounted separately.
   safeMount('/api/weather/leaderboard',     './routes/weather-leaderboard-routes');
   safeMount('/api/earnings',                './routes/earnings-routes');
+  // core4#3604 A4: public forecaster track record, fed by the chain-rewards indexer's forecast rows.
+  safeMount('/api/forecasters',             './routes/forecasters-routes');
 
   const mountSnapshot = safeMountReadinessSnapshot();
   appLogger.info('safeMount inventory', {

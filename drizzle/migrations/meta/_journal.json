@@ -246,6 +246,13 @@
       "when": 1791774000000,
       "tag": "0034_chain_reward_catchup_schedule",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "5",
+      "when": 1792000000000,
+      "tag": "0035_chain_forecast_index",
+      "breakpoints": true
     }
   ]
 }

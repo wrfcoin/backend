@@ -181,6 +181,8 @@ const pgPort=process.env.CHAIN_REWARD_TEST_PORT;
     await pool.query(readFileSync('drizzle/migrations/0032_operator_role_labels.sql','utf8'));
     await pool.query(readFileSync('drizzle/migrations/0033_chain_role_payee_aliases.sql','utf8'));
     await pool.query(readFileSync('drizzle/migrations/0034_chain_reward_catchup_schedule.sql','utf8'));
+    // The store also writes the forecast track-record rows (core4#3604 A4); the schema must carry their tables.
+    await pool.query(readFileSync('drizzle/migrations/0035_chain_forecast_index.sql','utf8'));
   });
   afterAll(async()=>{await pool.query('DROP TABLE operator_role_labels,chain_role_payees,chain_role_payouts,chain_reward_blocks,chain_reward_index_state CASCADE; DROP FUNCTION register_chain_role_payee()');await pool.end();});
   beforeEach(async()=>{await pool.query('TRUNCATE chain_reward_index_state CASCADE');});

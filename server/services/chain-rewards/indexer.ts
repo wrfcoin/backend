@@ -1,5 +1,6 @@
 import { nodeHttpFetch } from '../../../shared/core4-node-http.js';
 import { losslessJson, parseRewardBlock, RewardIndexError, type RewardBlock } from './parser.js';
+import { parseForecastBlock } from './forecast-parser.js';
 import { withRewardStore, type IndexStore, type Pool } from './store.js';
 
 import { MAX_BLOCK_READS, READ_PACE_MS, RUN_INTERVAL_MS, errorBackoffMs } from './scheduling.js';
@@ -55,7 +56,10 @@ export async function runRewardIndexOnce(options: {
     await store.reserveRead(); reads++;
     const result = await read(h);
     if (result.status !== 200) throw new RewardIndexError(result.status === 404 ? 'MISSING_ARCHIVE' : result.status === 429 ? 'RATE_LIMITED' : 'UPSTREAM');
-    return parseRewardBlock(result.raw, h);
+    const block = parseRewardBlock(result.raw, h);
+    // Forecast track record (core4#3604 A4) from the same read; tolerant, so it cannot fail this pass.
+    block.forecast = parseForecastBlock(result.raw, h);
+    return block;
   };
   let status = 'ok', lag: number | null = null;
   try {
