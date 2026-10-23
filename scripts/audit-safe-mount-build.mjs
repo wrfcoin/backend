@@ -50,7 +50,8 @@ const reachedHeader = 'x-safe-mount-build-reached';
 // 53: explorer B1 mounts the public cached /api/explorer summary (./routes/explorer-routes).
 // 54: backend#1382 mounts /api/weather/temperature-history (JWT, daily cell aggregates).
 // 55: B2 adds the default-OFF /api/earnings read router; every compiled mount is still probed.
-const expectedMountCount = 55;
+// 56: core4#3604 A4 adds the default-OFF /api/forecasters read router (./routes/forecasters-routes).
+const expectedMountCount = 56;
 
 // Removed by #935/#937 — each of these now PASSES this gate, and the gate
 // itself instructed the removal ("known failures now pass; remove their
