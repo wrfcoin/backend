@@ -13,7 +13,6 @@ const { resolveAllowedOrigins } = strictCorsConfig;
 const { isExplicitlyDisallowedOrigin } = strictCorsConfig;
 
 const DEFAULT_ALLOWED_ORIGINS = [
-  'https://wrfcoin.replit.app',
   'https://wrfcoin.app',
   'https://www.wrfcoin.app',
   'https://api.wrfcoin.app',
@@ -32,9 +31,6 @@ const ALLOWED_ORIGINS = resolveAllowedOrigins({
 
 const ALLOWED_PATTERNS = [
   /^https:\/\/[\w-]+\.wrfcoin\.app$/,
-  /^https:\/\/[\w-]+\.replit\.app$/,
-  /^https:\/\/[\w-]+\.repl\.co$/,
-  /^https:\/\/[\w-]+\.replit\.dev$/,
 ];
 
 const LOCALHOST_PATTERN = /^http:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d+$/;
