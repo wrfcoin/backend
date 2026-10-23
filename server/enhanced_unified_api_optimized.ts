@@ -186,6 +186,12 @@ const enhancedApiIpRateLimit = createRateLimitMiddleware({
   keyGenerator: apiIpBudgetKey,
   message: 'Too many requests from this IP, please try again later.',
 });
+// Audit browsing has its own read budget and never spends login attempts.
+const bondGrantAuditReadRateLimit = createRateLimitMiddleware({
+  ...RATE_LIMIT_PRESETS.api,
+  keyPrefix: 'ratelimit:faucet-bond-grants',
+  message: 'Too many bond grant history requests, please try again later.',
+});
 const walletLoginRateLimit = createRateLimitMiddleware({
   ...RATE_LIMIT_PRESETS.auth,
   message: 'Too many wallet login attempts, please try again later.',
@@ -247,7 +253,8 @@ const enhancedApiProbeState = { draining: false };
 app.use(enhancedApiIpRateLimit);
 app.use(enhancedApiRateLimit);
 app.use(helmet());
-app.use(['/api/auth/nonce', '/api/auth/wallet-login', '/api/faucet/bond-grant', '/api/faucet/bond-grants'], walletLoginRateLimit);
+app.use(['/api/auth/nonce', '/api/auth/wallet-login', '/api/faucet/bond-grant'], walletLoginRateLimit);
+app.use('/api/faucet/bond-grants', bondGrantAuditReadRateLimit);
 
 // CORS + security headers (same functions as raw handler)
 app.use((req, res, next) => {

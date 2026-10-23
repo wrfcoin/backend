@@ -7,6 +7,7 @@ import { jest, beforeEach, afterEach, describe, it, expect } from '@jest/globals
 function redisFake() {
   const sets = new Map<string, Array<{score:number; member:string}>>();
   return {
+    keys:()=>[...sets.keys()],
     status:'ready', on:jest.fn(), connect:jest.fn(async()=>undefined), quit:jest.fn(async()=>'OK'), disconnect:jest.fn(),
     ttl:jest.fn(async()=>-2), exists:jest.fn(async()=>0), incr:jest.fn(async()=>1), expire:jest.fn(async()=>1), setex:jest.fn(async()=>'OK'), del:jest.fn(async()=>1),
     pipeline:()=>{
@@ -42,7 +43,9 @@ function makeApp(parsed=false, limited=false) {
     const mod=require('../../shared/middleware/rate-limit-redis');
     // Same instance/config/paths as the deployed entrypoint.
     const limiter=mod.createRateLimitMiddleware({...mod.RATE_LIMIT_PRESETS.auth,message:'Too many wallet login attempts, please try again later.'});
-    a.use(['/api/auth/nonce','/api/auth/wallet-login','/api/faucet/bond-grant','/api/faucet/bond-grants'],limiter);
+    a.use(['/api/auth/nonce','/api/auth/wallet-login','/api/faucet/bond-grant'],limiter);
+    a.use('/api/faucet/bond-grants',mod.createRateLimitMiddleware({...mod.RATE_LIMIT_PRESETS.api,keyPrefix:'ratelimit:faucet-bond-grants',message:'Too many bond grant history requests, please try again later.'}));
+    a.post('/api/auth/wallet-login',(_req,res)=>res.sendStatus(200));
   }
   if(parsed)a.use(express.json({limit:'1mb'}));
   a.use('/api/onboarding',require('../routes/onboarding-routes').default);
@@ -124,14 +127,32 @@ describe('bond-grant proxy',()=>{
     delete process.env.FAUCET_SERVICE_URL;delete process.env.ONBOARDING_FAUCET_SERVICE_URL;
     const r=await request(app).get('/api/faucet/bond-grants');expect(r.status).toBe(503);expect(upstream).not.toHaveBeenCalled();
   });
-  it('the wallet-login limiter returns 429 after five calls and keeps separate client IP budgets',async()=>{
+  it('GET traffic never consumes auth budget; exhausted auth budget still permits audit reads',async()=>{
     app=makeApp(true,true);
     upstream.mockImplementation(async()=>new Response(JSON.stringify({grants:[]})));
-    for(let n=0;n<5;n++)expect((await request(app).get('/api/faucet/bond-grants').set('X-Forwarded-For','198.51.100.21')).status).toBe(200);
-    const limited=await request(app).get('/api/faucet/bond-grants').set('X-Forwarded-For','198.51.100.21');expect(limited.status).toBe(429);
-    expect((await request(app).get('/api/faucet/bond-grants').set('X-Forwarded-For','198.51.100.22')).status).toBe(200);
+    const ip='198.51.100.21';
+    for(let n=0;n<6;n++)expect((await request(app).get('/api/faucet/bond-grants').set('X-Forwarded-For',ip)).status).toBe(200);
+    const keys=(global as any).__bondRedis.keys();
+    expect(keys.some((k:string)=>k.startsWith('ratelimit:faucet-bond-grants:'))).toBe(true);
+    expect(keys.some((k:string)=>k.startsWith('ratelimit:auth:'))).toBe(false);
+    for(let n=0;n<5;n++)expect((await request(app).post('/api/auth/wallet-login').set('X-Forwarded-For',ip).send({})).status).toBe(200);
+    expect((await request(app).post('/api/auth/wallet-login').set('X-Forwarded-For',ip).send({})).status).toBe(429);
+    expect((await request(app).get('/api/faucet/bond-grants').set('X-Forwarded-For',ip)).status).toBe(200);
+    // POST retains the same login-style budget; a fresh IP reaches captcha validation.
+    expect((await request(app).post('/api/faucet/bond-grant').set('X-Forwarded-For',ip).send({})).status).toBe(429);
+    expect((await request(app).post('/api/faucet/bond-grant').set('X-Forwarded-For','198.51.100.22').send({})).status).toBe(400);
     const src=readFileSync('server/enhanced_unified_api_optimized.ts','utf8');
-    expect(src).toContain("app.use(['/api/auth/nonce', '/api/auth/wallet-login', '/api/faucet/bond-grant', '/api/faucet/bond-grants'], walletLoginRateLimit)");
+    expect(src).toContain("app.use(['/api/auth/nonce', '/api/auth/wallet-login', '/api/faucet/bond-grant'], walletLoginRateLimit)");
+    expect(src).toContain("app.use('/api/faucet/bond-grants', bondGrantAuditReadRateLimit)");
+    expect(src).toContain("keyPrefix: 'ratelimit:faucet-bond-grants'");
     expect(src).toContain("safeMount('/api/faucet',                  './routes/faucet-bond-routes')");
+  });
+  it('audit read limiter has its own 100-per-minute per-IP limit',async()=>{
+    app=makeApp(true,true);
+    upstream.mockImplementation(async()=>new Response(JSON.stringify({grants:[]})));
+    for(let n=0;n<100;n++)expect((await request(app).get('/api/faucet/bond-grants').set('X-Forwarded-For','198.51.100.31')).status).toBe(200);
+    expect((await request(app).get('/api/faucet/bond-grants').set('X-Forwarded-For','198.51.100.31')).status).toBe(429);
+    expect((await request(app).get('/api/faucet/bond-grants').set('X-Forwarded-For','198.51.100.32')).status).toBe(200);
+    expect((await request(app).post('/api/auth/wallet-login').set('X-Forwarded-For','198.51.100.31').send({})).status).toBe(200);
   });
 });
