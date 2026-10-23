@@ -23,6 +23,7 @@
     "/api/documentation/tutorials/list",
     "/api/earnings/leaderboard",
     "/api/explorer/summary",
+    "/api/faucet/bond-grants",
     "/api/governance/analytics/dashboard",
     "/api/governance/analytics/delegates",
     "/api/governance/analytics/participation",

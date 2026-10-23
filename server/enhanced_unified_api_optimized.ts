@@ -246,7 +246,7 @@ const enhancedApiProbeState = { draining: false };
 app.use(enhancedApiIpRateLimit);
 app.use(enhancedApiRateLimit);
 app.use(helmet());
-app.use(['/api/auth/nonce', '/api/auth/wallet-login'], walletLoginRateLimit);
+app.use(['/api/auth/nonce', '/api/auth/wallet-login', '/api/faucet/bond-grant', '/api/faucet/bond-grants'], walletLoginRateLimit);
 
 // CORS + security headers (same functions as raw handler)
 app.use((req, res, next) => {
@@ -1580,6 +1580,7 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // token-gated catch-all, and this table is the DEPLOYED entrypoint (#857 —
   // the #869 mount in unified_api_server.ts never reached production).
   safeMount('/api/onboarding',              './routes/onboarding-routes');
+  safeMount('/api/faucet',                  './routes/faucet-bond-routes');
   // backend#1178: referrals are the one growth-cluster router with shipping
   // callers (frontend useReferrals.js, mobile referral_service.dart). Mutators
   // need a wallet JWT for the acting wallet; activation pays nothing. Table:

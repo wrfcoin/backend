@@ -282,7 +282,7 @@ class FaucetClaimError extends Error {
   }
 }
 
-function getFaucetServiceUrl(): string | null {
+export function getFaucetServiceUrl(): string | null {
   const configured =
     process.env.FAUCET_SERVICE_URL?.trim() ||
     process.env.ONBOARDING_FAUCET_SERVICE_URL?.trim();
@@ -365,7 +365,7 @@ function getEnvelopeData(payload: unknown): Record<string, unknown> {
 // math-captcha, 24h address cooldown, and IP rate-limit. Mirrors the faucet's
 // FAUCET_API_TOKEN || WRFCOIN_OPERATOR_TOKEN fallback so both sides agree on
 // the same secret without extra provisioning.
-function getFaucetServiceToken(): string | null {
+export function getFaucetServiceToken(): string | null {
   const token =
     process.env.FAUCET_SERVICE_TOKEN?.trim() ||
     process.env.WRFCOIN_OPERATOR_TOKEN?.trim();
@@ -570,6 +570,16 @@ function asyncRoute(
   };
 }
 
+// Shared by drip claims and bond-grant proxy requests; one-use and same TTL.
+export function consumeFaucetChallenge(challengeId: unknown, answer: unknown): string | null {
+  const id = typeof challengeId === 'string' ? challengeId : '';
+  const challenge = challenges.get(id);
+  challenges.delete(id);
+  if (!challenge || Date.now() - challenge.createdAt > CHALLENGE_TTL_MS) return 'Challenge not found or expired';
+  if (Number(answer) !== challenge.answer) return 'Incorrect captcha answer';
+  return null;
+}
+
 router.post('/faucet/claim', asyncRoute(async (req: Request, res: Response) => {
   const { walletAddress, challengeId, answer } = req.body;
 
@@ -599,32 +609,11 @@ router.post('/faucet/claim', asyncRoute(async (req: Request, res: Response) => {
     return;
   }
 
-  const challenge = challenges.get(challengeId);
-  if (!challenge || Date.now() - challenge.createdAt > CHALLENGE_TTL_MS) {
-    if (challenge) {
-      challenges.delete(challengeId);
-    }
-    res.status(400).json({
-      error: {
-        code: 'CAPTCHA_FAILED',
-        message: 'Challenge not found or expired',
-      },
-    });
+  const captchaMessage = consumeFaucetChallenge(challengeId, answer);
+  if (captchaMessage) {
+    res.status(400).json({ error: { code: 'CAPTCHA_FAILED', message: captchaMessage } });
     return;
   }
-
-  if (Number(answer) !== challenge.answer) {
-    challenges.delete(challengeId);
-    res.status(400).json({
-      error: {
-        code: 'CAPTCHA_FAILED',
-        message: 'Incorrect captcha answer',
-      },
-    });
-    return;
-  }
-
-  challenges.delete(challengeId);
 
   const normalizedAddress = normalizeWalletAddress(walletAddress);
 
