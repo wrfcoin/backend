@@ -23,6 +23,7 @@
     "/api/documentation/tutorials/list",
     "/api/earnings/leaderboard",
     "/api/explorer/summary",
+    "/api/faucet/bond-grants",
     "/api/forecasters/",
     "/api/forecasters/:keyOrAddress",
     "/api/governance/analytics/dashboard",
