@@ -4,7 +4,7 @@ The WRFCoin backend is the Node.js and TypeScript API layer connecting the testn
 
 ## Public testnet
 
-Public launch target: **Thursday, 2026-10-22, around 19:00 UTC**.
+The public testnet opened on **2026-10-22**.
 
 This is a test network. It may be reset without notice. Balances and tokens have no monetary value. No migration to mainnet is promised or implied. Please attach no production bridges, exchange listings or irreplaceable assets.
 
@@ -12,6 +12,14 @@ This is a test network. It may be reset without notice. Balances and tokens have
 [Quickstart](https://github.com/wrfcoin/docs/blob/main/testnet/quickstart.md) ·
 [Testnet support](https://github.com/wrfcoin/testnet-support) ·
 [Security policy](SECURITY.md)
+
+## Try it
+
+1. Open the [WRFCoin website](https://wrfcoin.com) to watch the chain: block height, the weather map and the block explorer.
+2. Follow the [quickstart](https://github.com/wrfcoin/docs/blob/main/testnet/quickstart.md) to set up a wallet and claim testnet WRF from the faucet.
+3. Read the [facts page](https://github.com/wrfcoin/docs/blob/main/testnet/facts.md) for what the testnet does and does not offer.
+4. To run the API locally, see [Run the API with Docker](#run-the-api-with-docker).
+5. Ask for help or report bugs at [testnet-support](https://github.com/wrfcoin/testnet-support); report vulnerabilities privately through the [security policy](SECURITY.md).
 
 ## What works today
 

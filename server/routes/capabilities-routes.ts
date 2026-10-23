@@ -23,6 +23,7 @@
 
 import express, { Router } from 'express';
 import { earningsEnabled } from '../services/chain-rewards/earnings.js';
+import { forecastersEnabled } from '../services/chain-rewards/forecaster-stats.js';
 import type {
   CapabilityMode,
   CapabilityReadinessResult,
@@ -145,6 +146,7 @@ export interface CapabilitiesRouterOptions {
  */
 const FEATURE_SEEDS: FeatureSeed[] = [
   { key: 'earningsRead', status: 'unavailable', note: 'Default-OFF indexed producer/attester earnings; contribution and forecast coverage remain gated' },
+  { key: 'forecastersRead', status: 'unavailable', note: 'Default-OFF forecaster track record (/api/forecasters, core4#3604 A4) read from the chain-rewards indexer forecast rows; skill and per-forecaster paid totals are not yet exposed by the node' },
   { key: 'wallet', status: 'operational', note: '/api/wallet and /api/wallet-auth are mounted (wallet-routes.js, wallet-auth-legacy-routes.js)' },
   // backend#1167: sub-capability of wallet, not a frontend features.ts key.
   // The capability model has no "partial" class, so window-limited history is
@@ -452,13 +454,13 @@ export function createCapabilitiesRouter(
     );
     const features: Record<string, FeatureStatusEntry> = {};
     for (const seed of FEATURE_SEEDS) {
-      if (seed.key === 'earningsRead' && !earningsEnabled()) {
+      if ((seed.key === 'earningsRead' && !earningsEnabled()) || (seed.key === 'forecastersRead' && !forecastersEnabled())) {
         features[seed.key] = { status: 'unavailable', reasonCode: 'not_wired' };
         continue;
       }
       const observation = evidence[seed.key];
       features[seed.key] = evaluateFeature(
-        seed.key === 'earningsRead' ? { ...seed, status: 'configured' } : seed,
+        seed.key === 'earningsRead' || seed.key === 'forecastersRead' ? { ...seed, status: 'configured' } : seed,
         observation?.capabilityId === seed.key ? observation : undefined,
         evaluatedAt,
         maxEvidenceAgeMs,

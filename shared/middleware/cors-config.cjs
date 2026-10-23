@@ -13,7 +13,6 @@ const {
 } = require('../../server/utils/strict-cors-config.js');
 
 const DEFAULT_ALLOWED_ORIGINS = [
-  'https://wrfcoin.replit.app',
   'https://wrfcoin.app',
   'https://www.wrfcoin.app',
   'https://api.wrfcoin.app',
@@ -30,12 +29,9 @@ const ALLOWED_ORIGINS = resolveAllowedOrigins({
   developmentDefaults: DEFAULT_ALLOWED_ORIGINS,
 });
 
-// Replit domain patterns for dynamic subdomains
+// Dynamic subdomains of the platform domain only
 const ALLOWED_PATTERNS = [
   /^https:\/\/[\w-]+\.wrfcoin\.app$/,
-  /^https:\/\/[\w-]+\.replit\.app$/,
-  /^https:\/\/[\w-]+\.repl\.co$/,
-  /^https:\/\/[\w-]+\.replit\.dev$/,
 ];
 
 // Development localhost pattern

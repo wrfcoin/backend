@@ -1,0 +1,28 @@
+name: Self-hosted boundary
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/check_self_hosted_boundary.py'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - 'scripts/check_self_hosted_boundary.py'
+
+jobs:
+  boundary:
+    name: Persistent runners are push/dispatch only
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint workflow runner boundary
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/check_self_hosted_boundary.py --self-test
+          python3 scripts/check_self_hosted_boundary.py

@@ -24,6 +24,8 @@
     "/api/earnings/leaderboard",
     "/api/explorer/summary",
     "/api/faucet/bond-grants",
+    "/api/forecasters/",
+    "/api/forecasters/:keyOrAddress",
     "/api/governance/analytics/dashboard",
     "/api/governance/analytics/delegates",
     "/api/governance/analytics/participation",

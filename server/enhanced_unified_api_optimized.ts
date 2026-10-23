@@ -44,6 +44,7 @@ import {
 } from './services/streak-service.js';
 import {
   getWormholeTransfer,
+  isWormholeBridgeEnabled,
   initiateOutboundTransfer,
   processInboundTransfer,
 } from './services/wormhole-transfer-service.js';
@@ -75,7 +76,7 @@ import { Registry, collectDefaultMetrics } from 'prom-client';
 import { handleStationDiscoveryRequest } from './routes/station-discovery-routes.js';
 import { buildLiveStats } from './utils/live-stats.js';
 import { notWiredEnvelope } from './middleware/require-wired-storage.js';
-import { hasOperatorOrReaderToken } from './middleware/operator-token-auth.js';
+import { hasOperatorOrReaderToken, hasOperatorToken } from './middleware/operator-token-auth.js';
 import { anonymousCoordinateGuard } from './middleware/anonymous-coordinate-guard.js';
 import {
   extractCore4Data as extractCore4DataForStats,
@@ -889,8 +890,16 @@ async function handleRequest(
       path === '/api/transport/sms/observations/queue' &&
       req.method === 'GET'
     ) {
+      if (!hasOperatorToken(req)) {
+        error(401, 'Operator bearer token required', null, 'UNAUTHORIZED');
+        return;
+      }
       success(smsObservationGatewayService.listQueue(), 'SMS observation queue');
     } else if (path === '/api/cache/clear' && req.method === 'POST') {
+      if (!hasOperatorToken(req)) {
+        error(401, 'Operator bearer token required', null, 'UNAUTHORIZED');
+        return;
+      }
       const responseTime = Date.now() - requestStart;
       monitoringDashboard.recordRequest(path, responseTime, false, false);
 
@@ -916,7 +925,11 @@ async function handleRequest(
         const auth = await walletAuthService.walletLogin(req.body ?? {});
         success(auth, 'Wallet login successful');
       } catch (e) {
-        error(401, e instanceof Error ? e.message : 'Wallet login failed');
+        // Defense in depth: no exception text on the wire; details stay in the server log.
+        appLogger.warn('wallet login failed', {
+          error: e instanceof Error ? e.message : String(e),
+        });
+        error(401, 'Wallet login failed', null, 'WALLET_LOGIN_FAILED');
       }
     } else if (path === '/api/auth/refresh' && req.method === 'POST') {
       try {
@@ -985,6 +998,14 @@ async function handleRequest(
         error(401, e instanceof Error ? e.message : 'Invalid GitHub social auth');
       }
     } else if (path === '/api/bridges/wormhole/inbound/process' && req.method === 'POST') {
+      if (!hasOperatorToken(req)) {
+        error(401, 'Operator bearer token required', null, 'UNAUTHORIZED');
+        return;
+      }
+      if (!isWormholeBridgeEnabled()) {
+        error(404, 'Not found', null, 'NOT_FOUND');
+        return;
+      }
       const body = req.body ?? {};
       if (
         !Number.isInteger(body?.emitterChain) ||
@@ -1016,6 +1037,14 @@ async function handleRequest(
         error(400, e instanceof Error ? e.message : 'Failed to process inbound transfer');
       }
     } else if (path === '/api/bridges/wormhole/outbound/initiate' && req.method === 'POST') {
+      if (!hasOperatorToken(req)) {
+        error(401, 'Operator bearer token required', null, 'UNAUTHORIZED');
+        return;
+      }
+      if (!isWormholeBridgeEnabled()) {
+        error(404, 'Not found', null, 'NOT_FOUND');
+        return;
+      }
       const body = req.body ?? {};
       if (!body?.sender || !body?.recipient || !body?.amount) {
         error(400, 'sender, recipient, and amount are required');
@@ -1631,6 +1660,8 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // router — it's imported by this file, not mounted separately.
   safeMount('/api/weather/leaderboard',     './routes/weather-leaderboard-routes');
   safeMount('/api/earnings',                './routes/earnings-routes');
+  // core4#3604 A4: public forecaster track record, fed by the chain-rewards indexer's forecast rows.
+  safeMount('/api/forecasters',             './routes/forecasters-routes');
 
   const mountSnapshot = safeMountReadinessSnapshot();
   appLogger.info('safeMount inventory', {

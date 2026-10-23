@@ -37,6 +37,26 @@ type WormholeTransferRecord = {
 };
 
 const transferStore = new Map<string, WormholeTransferRecord>();
+export const MAX_IN_MEMORY_TRANSFERS = 5000;
+
+function rememberTransfer(transferId: string, record: WormholeTransferRecord) {
+  transferStore.set(transferId, record);
+  // Map iterates in insertion order, so the first key is the oldest entry.
+  while (transferStore.size > MAX_IN_MEMORY_TRANSFERS) {
+    const oldest = transferStore.keys().next().value;
+    if (oldest === undefined) break;
+    transferStore.delete(oldest);
+  }
+}
+
+/** Raw-handler Wormhole routes stay off unless an upstream operator API is configured. */
+export function isWormholeBridgeEnabled(): boolean {
+  return (process.env.WORMHOLE_OPERATOR_API_URL || '').trim().length > 0;
+}
+
+export function __wormholeTransferStoreSize(): number {
+  return transferStore.size;
+}
 const processedVaas = new Map<string, string>();
 
 function defaultDb(): DbExecutor {
@@ -318,7 +338,7 @@ export async function processInboundTransfer(
     },
   };
 
-  transferStore.set(transferId, record);
+  rememberTransfer(transferId, record);
   processedVaas.set(replayKey, transferId);
   await persistInboundBestEffort(executor, transferId, req, record.status);
   return record;
@@ -345,7 +365,7 @@ export async function initiateOutboundTransfer(
     },
   };
 
-  transferStore.set(transferId, record);
+  rememberTransfer(transferId, record);
   await persistOutboundBestEffort(executor, transferId, req);
   return record;
 }

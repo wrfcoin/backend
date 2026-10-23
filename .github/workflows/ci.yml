@@ -214,6 +214,22 @@ jobs:
             console.log(`Catch-up real-PostgreSQL cases passed: ${passed}/${cases.length}`);
             if (cases.length !== 4 || passed !== 4) process.exit(1);
           ' "$RUNNER_TEMP/chain-catchup-pg.json"
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          set +e
+          npx jest --config __tests__/jest.standalone.cjs \
+            --runTestsByPath __tests__/chain-forecast-index.test.ts \
+            --runInBand --json --outputFile="$RUNNER_TEMP/chain-forecast-pg.json"
+          status=$?
+          set -e
+          node -e '
+            const r = require(process.argv[1]);
+            const cases = r.testResults.flatMap(f => f.assertionResults)
+              .filter(a => a.ancestorTitles.includes("real PostgreSQL: index, rewind cascade and the read model"));
+            for (const c of cases) console.log(`${c.status.padEnd(8)} ${c.title}`);
+            const passed = cases.filter(c => c.status === "passed").length;
+            console.log(`Forecast index real-PostgreSQL cases passed: ${passed}/${cases.length}`);
+            if (cases.length !== 3 || passed !== 3) process.exit(1);
+          ' "$RUNNER_TEMP/chain-forecast-pg.json"
           exit "$status"
       # Named, verbose, fail-if-skipped proof that the real-PostgreSQL cases
       # executed in CI (npm test above runs them too, but only as counts).

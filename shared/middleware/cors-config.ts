@@ -14,7 +14,6 @@ const { resolveAllowedOrigins, isExplicitlyDisallowedOrigin } =
   _strictCorsModule as { resolveAllowedOrigins: (...args: unknown[]) => string[]; isExplicitlyDisallowedOrigin: (origin: string) => boolean };
 
 const DEFAULT_ALLOWED_ORIGINS: string[] = [
-  'https://wrfcoin.replit.app',
   'https://wrfcoin.app',
   'https://www.wrfcoin.app',
   'https://api.wrfcoin.app',
@@ -30,12 +29,9 @@ const ALLOWED_ORIGINS: string[] = resolveAllowedOrigins({
   developmentDefaults: DEFAULT_ALLOWED_ORIGINS,
 });
 
-// Replit domain patterns for dynamic subdomains
+// Dynamic subdomains of the platform domain only
 const ALLOWED_PATTERNS: RegExp[] = [
   /^https:\/\/[\w-]+\.wrfcoin\.app$/,
-  /^https:\/\/[\w-]+\.replit\.app$/,
-  /^https:\/\/[\w-]+\.repl\.co$/,
-  /^https:\/\/[\w-]+\.replit\.dev$/,
 ];
 
 // Development localhost pattern
