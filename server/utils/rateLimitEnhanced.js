@@ -137,6 +137,7 @@ class EnhancedRateLimit {
     this.userTiers = new Map(); // User privilege tiers
     this.suspiciousIPs = new Set(); // Track suspicious activity (in-memory fallback)
     this.violationCounts = new Map(); // Track violations for auto-blocking
+    this.warnedProxyViolations = new Set(); // Proxy addresses already warned about (log once)
 
     // Redis client (optional)
     this.redis = null;
@@ -332,6 +333,17 @@ class EnhancedRateLimit {
    */
   async recordViolation(ip) {
     const normalizedIp = normalizeIp(ip);
+
+    // backend#1229: never count escalation against a shared trusted proxy
+    // address; it is limited per request only.
+    if (isTrustedProxy(normalizedIp)) {
+      if (!this.warnedProxyViolations.has(normalizedIp)) {
+        this.warnedProxyViolations.add(normalizedIp);
+        // eslint-disable-next-line no-console -- this module logs via console throughout
+        console.warn(`[EnhancedRateLimit] Not escalating violations on trusted proxy address ${normalizedIp}`);
+      }
+      return false;
+    }
 
     // Use Redis if enabled
     if (this.redisEnabled && this.redis) {

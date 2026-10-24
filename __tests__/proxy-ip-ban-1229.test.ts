@@ -329,4 +329,23 @@ describe('backend#1229: Express req.ip and getSecureClientIp agree on the client
       limiter.stopCleanup();
     }
   });
+  it('does not count or escalate violations on a trusted proxy in EnhancedRateLimit, warning once', async () => {
+    const EnhancedRateLimit = require('../server/utils/rateLimitEnhanced.js');
+    const limiter = new EnhancedRateLimit();
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      for (let i = 0; i < limiter.config.suspiciousThreshold + 2; i++) {
+        expect(await limiter.recordViolation(INGRESS_GATEWAY)).toBe(false);
+      }
+      expect(limiter.violationCounts.has(INGRESS_GATEWAY)).toBe(false);
+      expect((await limiter.isIpBlocked(INGRESS_GATEWAY)).blocked).toBe(false);
+      expect(warn.mock.calls.filter((c) => String(c[0]).includes(INGRESS_GATEWAY))).toHaveLength(1);
+      // an ordinary client is still counted and banned
+      let banned = false;
+      for (let i = 0; i < limiter.config.suspiciousThreshold; i++) banned = await limiter.recordViolation(PUBLIC_A);
+      expect(banned).toBe(true);
+    } finally {
+      limiter.stopCleanup();
+    }
+  });
 });
