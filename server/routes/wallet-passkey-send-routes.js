@@ -35,6 +35,12 @@ const PASSKEY_MEMBERS = new Set([...Object.keys(FIXED_BYTES), ...VARIABLE]);
 let core4ClientPromise = null;
 const getCore4Client = () => (core4ClientPromise ||= import('../../shared/core4-route-client.js'));
 
+/** 4xx the node uses to refuse a transfer on its merits (not auth/rate-limit state) pass through. */
+const isNodeContractStatus = (status) => status === 503 || (status >= 400 && status < 500 && ![401, 403, 429].includes(status));
+/** Generic 502 for node 401/403/429/5xx so internal auth and rate-limit state never reaches an anonymous caller. */
+const sendGenericUpstream = (res) =>
+  res.status(502).json({ success: false, error: { code: 'UPSTREAM_ERROR', message: 'Upstream node request failed' } });
+
 const enabled = () => process.env.WRFCOIN_ENABLE_PASSKEY_SEND === 'true';
 const invalid = (res, message) =>
   res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message } });
@@ -111,8 +117,11 @@ router.post('/send-passkey', (req, res, next) => (enabled() ? next() : res.statu
           transparent_opt_out_reason: 'first-party wallet',
         },
       });
-      // core4's refusals (503 FEATURE_NOT_ACTIVE, 400 AUTHORIZATION_INVALID, ...) pass through unchanged.
-      if (!response.ok) return res.status(response.status || 502).json(response.payload);
+      // core4's refusals (503 FEATURE_NOT_ACTIVE, 400 AUTHORIZATION_INVALID, other 4xx validation) pass
+      // through unchanged; node 401/403/429/5xx become a generic 502.
+      if (!response.ok) {
+        return isNodeContractStatus(response.status) ? res.status(response.status).json(response.payload) : sendGenericUpstream(res);
+      }
       const result = extractCore4Data(response.payload) || {};
       return res.status(response.status || 202).json({ hash: result.tx_id ?? result.hash ?? null, status: 'submitted', settled: false });
     } catch (error) {
@@ -127,12 +136,13 @@ router.post('/send-passkey', (req, res, next) => (enabled() ? next() : res.statu
 router.get('/send-passkey/nonce/:address', (req, res, next) => (enabled() ? next() : res.status(404).json({ error: 'Not found' })),
   PASSKEY_SEND_LIMITER, async (req, res) => {
     try {
-      const { address } = req.params;
-      if (!isLaunchAddress(address)) return invalid(res, 'Expected a core4 hex wallet address.');
+      if (!isLaunchAddress(req.params.address)) return invalid(res, 'Expected a core4 hex wallet address.');
+      // core4 parses hex case-insensitively and answers with the lowercase form; send that form.
+      const address = req.params.address.toLowerCase();
       const { fetchCore4Json, extractCore4Data } = await getCore4Client();
       const response = await fetchCore4Json(`/addresses/${encodeURIComponent(address)}`, { headers: core4ReaderHeaders(req.headers) });
       if (response.status === 404) return res.json({ address, nonce: '0' });
-      if (!response.ok) return res.status(response.status || 502).json(response.payload);
+      if (!response.ok) return sendGenericUpstream(res);
       const account = extractCore4Data(response.payload) || {};
       return res.json({ address, nonce: String(account.nonce ?? 0) });
     } catch (error) {
