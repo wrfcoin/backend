@@ -542,61 +542,36 @@ router.get('/stations/credentials', async (req, res) => {
   }
 });
 
-// Get coverage zones for the data-desert gamification map (mobile#62)
+// Data-desert map (mobile#62). Shows the rule the chain PAYS (core4#28, ADR 2026-10-23-3563, A1):
+// core4 GET /network/scarcity, ~2 degree cells counted from the on-chain station registry. This
+// route derives no rule of its own; when the node cannot answer it says so.
 router.get('/coverage-zones', weatherGetLimiter, async (req, res) => {
   try {
-    let zones = [];
-
-    // Try to derive zones from real station locations in the DB.
-    try {
-      const pool = await getPool();
-      // #885: GROUP BY on raw lat/lng produces one group per unique coordinate —
-      // effectively unbounded (grows with every distinct station location) and
-      // can hold a pool connection under launch-time map polling. Round
-      // coordinates into ~0.5° grid buckets (matches the 50km zone radius) so the
-      // result set is bounded by geography, and cap it with a LIMIT.
-      const result = await pool.query(`
-        SELECT
-          ROUND(latitude::numeric, 1) AS lat_bucket,
-          ROUND(longitude::numeric, 1) AS lng_bucket,
-          COUNT(*) AS station_count
-        FROM weather_stations
-        WHERE is_active = true
-          AND latitude IS NOT NULL
-          AND longitude IS NOT NULL
-        GROUP BY lat_bucket, lng_bucket
-        ORDER BY station_count DESC
-        LIMIT 500
-      `);
-
-      if (result.rows && result.rows.length > 0) {
-        zones = result.rows.map((row) => {
-          const count = Number(row.station_count);
-          const type = count >= 3 ? 'covered' : count >= 1 ? 'sparse' : 'desert';
-          const multiplier = type === 'desert' ? 2.0 : type === 'sparse' ? 1.5 : 1.0;
-          return {
-            lat: Number(row.lat_bucket),
-            lng: Number(row.lng_bucket),
-            radius: 50,
-            type,
-            rewardMultiplier: multiplier,
-          };
-        });
-      }
-    } catch (dbError) {
-      logger.warn('DB query failed for coverage-zones, using fallback', {
-        error: dbError.message,
-      });
+    const { getDefaultScarcityReader } = await import('../services/chain-scarcity.js');
+    const result = await (await getDefaultScarcityReader())();
+    if (result.kind !== 'ok') {
+      return res
+        .status(503)
+        .json(createApiError('SCARCITY_UNAVAILABLE', 'The node could not report the paid scarcity rule'));
     }
-
-    res.json({ zones });
+    const { rule, cells, observedAtHeight } = result.view;
+    const radiusKm = Math.round((rule.cellSizeDegrees * 111) / 2);
+    res.json({
+      source: 'chain',
+      observedAtHeight,
+      rule,
+      zones: cells.map((cell) => ({
+        lat: cell.centerLatitude,
+        lng: cell.centerLongitude,
+        radius: radiusKm,
+        type: cell.multiplier > rule.baselineMultiplier ? 'sparse' : 'covered',
+        rewardMultiplier: cell.multiplier,
+        stationCount: cell.stationCount,
+      })),
+    });
   } catch (error) {
     logger.error('Error getting coverage zones', { error: error.message });
-    res.status(500).json({
-      error: true,
-      message: 'Failed to retrieve coverage zones',
-      details: error.message,
-    });
+    res.status(503).json(createApiError('SCARCITY_UNAVAILABLE', 'Failed to retrieve coverage zones'));
   }
 });
 
