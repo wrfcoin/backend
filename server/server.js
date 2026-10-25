@@ -623,6 +623,9 @@ mcpServer
 // API Routes
 app.use('/api/blockchain', require('./routes/blockchain-routes'));
 app.use('/api/explorer', require('./routes/explorer-routes'));
+// Self-proving passkey send (no JWT; dormant unless WRFCOIN_ENABLE_PASSKEY_SEND=true). Before the
+// auth-gated wallet router.
+app.use('/api/wallet', require('./routes/wallet-passkey-send-routes'));
 app.use('/api/wallet', require('./routes/wallet-routes'));
 app.use('/api/wallet-auth', require('./routes/wallet-auth-legacy-routes'));
 const weatherStreakRoutes = require('./routes/weather-streak-routes');
