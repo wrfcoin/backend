@@ -29,6 +29,7 @@ describe('POST /api/wallet/send-passkey', () => {
   const saved = Object.fromEntries(envKeys.map((k) => [k, process.env[k]]));
   let seen: Seen[] = [];
   let reply: { status: number; json: unknown } = { status: 202, json: { ok: true, data: { tx_id: 'tx-1' } } };
+  let addressReply: { status: number; json: unknown } | null = null;
   let upstream: http.Server;
   let app: express.Express;
 
@@ -39,6 +40,10 @@ describe('POST /api/wallet/send-passkey', () => {
       req.on('end', () => {
         seen.push({ method: req.method ?? '', path: req.url ?? '', headers: req.headers, body: raw ? JSON.parse(raw) : undefined });
         if (req.method === 'GET' && req.url?.startsWith('/addresses/')) {
+          if (addressReply) {
+            res.writeHead(addressReply.status, { 'content-type': 'application/json' });
+            return res.end(JSON.stringify(addressReply.json));
+          }
           res.writeHead(200, { 'content-type': 'application/json' });
           return res.end(JSON.stringify({ ok: true, data: { address: FROM, balance: '999', nonce: 7 } }));
         }
@@ -64,7 +69,7 @@ describe('POST /api/wallet/send-passkey', () => {
     for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
     await new Promise((r) => upstream.close(r));
   });
-  beforeEach(() => { seen = []; reply = { status: 202, json: { ok: true, data: { tx_id: 'tx-1' } } }; process.env.WRFCOIN_ENABLE_PASSKEY_SEND = 'true'; });
+  beforeEach(() => { seen = []; addressReply = null; reply = { status: 202, json: { ok: true, data: { tx_id: 'tx-1' } } }; process.env.WRFCOIN_ENABLE_PASSKEY_SEND = 'true'; });
 
   it('relays a passkey transfer with no JWT, the Contributor token, and no ed25519 fields', async () => {
     const res = await request(app).post('/api/wallet/send-passkey').send(body());
@@ -146,6 +151,38 @@ describe('POST /api/wallet/send-passkey', () => {
     expect(seen[0].headers.authorization).toBe(`Bearer ${READER}`);
     const bad = await request(app).get('/api/wallet/send-passkey/nonce/nope');
     expect(bad.status).toBe(400);
+  });
+
+  it.each([
+    [400, { error: { code: 'VALIDATION_ERROR', message: 'amount is zero' } }],
+    [422, { error: { code: 'UNPROCESSABLE', message: 'bad nonce' } }],
+  ])('passes core4 4xx validation %s through unchanged', async (status, json) => {
+    reply = { status, json };
+    const res = await request(app).post('/api/wallet/send-passkey').send(body());
+    expect(res.status).toBe(status);
+    expect(res.body).toEqual(json);
+  });
+
+  it.each([401, 403, 429, 500, 502, 504])('maps core4 %s to a generic 502 with no node body', async (status) => {
+    reply = { status, json: { error: { code: 'RATE_LIMITED_INTERNAL', message: 'contributor token role mismatch' } } };
+    const res = await request(app).post('/api/wallet/send-passkey').send(body());
+    expect(res.status).toBe(502);
+    expect(JSON.stringify(res.body)).not.toMatch(/RATE_LIMITED_INTERNAL|contributor|token/i);
+  });
+
+  it.each([401, 403, 429, 503])('maps a core4 %s on the nonce lookup to a generic 502', async (status) => {
+    addressReply = { status, json: { error: { code: 'INTERNAL_AUTH_STATE', message: 'reader token expired' } } };
+    const res = await request(app).get(`/api/wallet/send-passkey/nonce/${FROM}`);
+    expect(res.status).toBe(502);
+    expect(JSON.stringify(res.body)).not.toMatch(/INTERNAL_AUTH_STATE|reader|token/i);
+  });
+
+  it('lowercases the nonce address before the node lookup and echoes the canonical form', async () => {
+    const mixed = '0xCA0E0F30E971631615883CBA3976053463C3F63E';
+    const res = await request(app).get(`/api/wallet/send-passkey/nonce/${mixed}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ address: FROM, nonce: '7' });
+    expect(seen[0].path).toBe(`/addresses/${FROM}`);
   });
 
   it('is rate limited per IP no looser than the ed25519 send route', () => {
