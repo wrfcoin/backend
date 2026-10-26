@@ -101,7 +101,7 @@
     "http-proxy-middleware": "^3.0.7",
     "ioredis": "^5.11.0",
     "isomorphic-dompurify": "3.23.0",
-    "jose": "^6.2.12",
+    "jose": "^6.2.13",
     "jsonwebtoken": "^9.0.2",
     "kubo-rpc-client": "^4.1.1",
     "memoizee": "^0.4.17",
@@ -130,7 +130,7 @@
     "ws": "^8.22.0",
     "xml2js": "^0.6.2",
     "yaml": "^2.9.1",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "overrides": {
     "adm-zip": "0.6.0",
