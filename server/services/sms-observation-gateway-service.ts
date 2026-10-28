@@ -59,6 +59,15 @@ interface SmsGatewayServiceOptions {
   retryDelayMs?: number;
   maxAttempts?: number;
   riskThreshold?: 'low' | 'moderate' | 'high' | 'critical';
+  /**
+   * Transport label recorded in `transportMeta.transport` and the ingest route
+   * passed to the weather ingestor. Defaults keep the SMS gateway unchanged; the
+   * email gateway (backend-archive#1495) reuses this envelope + queue with its
+   * own label, route, queue-id prefix and secret.
+   */
+  transport?: string;
+  ingestRoute?: string;
+  queueIdPrefix?: string;
 }
 
 const RISK_ORDER = {
@@ -133,6 +142,9 @@ export class SmsObservationGatewayService {
   private readonly retryDelayMs: number;
   private readonly maxAttempts: number;
   private readonly riskThreshold: keyof typeof RISK_ORDER;
+  private readonly transport: string;
+  private readonly ingestRoute: string;
+  private readonly queueIdPrefix: string;
   private readonly queue = new Map<string, SmsGatewayQueueEntry>();
   private readonly stationLatestObservedAt = new Map<string, string>();
   private readonly senderHistory = new Map<
@@ -152,6 +164,9 @@ export class SmsObservationGatewayService {
     this.retryDelayMs = options.retryDelayMs || 30_000;
     this.maxAttempts = options.maxAttempts || 3;
     this.riskThreshold = options.riskThreshold || 'critical';
+    this.transport = options.transport || 'sms';
+    this.ingestRoute = options.ingestRoute || '/api/transport/sms/observations';
+    this.queueIdPrefix = options.queueIdPrefix || 'smsq_';
   }
 
   /**
@@ -372,11 +387,11 @@ export class SmsObservationGatewayService {
       };
 
       const result = await this.weatherIngestor({
-        route: '/api/transport/sms/observations',
+        route: this.ingestRoute,
         payload: canonicalPayload,
         idempotencyKey: current.messageId,
         transportMeta: {
-          transport: 'sms',
+          transport: this.transport,
           sender: current.sender,
           queueId: current.queueId,
           delayed: current.delayed,
@@ -432,7 +447,7 @@ export class SmsObservationGatewayService {
     lastError?: string;
   }): SmsGatewayQueueEntry {
     return {
-      queueId: `smsq_${crypto.randomUUID().replace(/-/g, '')}`,
+      queueId: `${this.queueIdPrefix}${crypto.randomUUID().replace(/-/g, '')}`,
       messageId: args.input.messageId,
       sender: args.input.sender,
       stationId: args.envelope.sid,

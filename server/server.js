@@ -651,6 +651,15 @@ app.use(
     smsObservationGatewayRoutes.createSmsObservationGatewayRouter?.() ||
     smsObservationGatewayRoutes
 );
+// Email observation gateway (backend-archive#1495): dormant (404) unless
+// WRFCOIN_ENABLE_EMAIL_OBSERVATIONS=true, read per request.
+const emailObservationGatewayRoutes = require('./routes/email-observation-gateway-routes');
+app.use(
+  '/api/transport/email',
+  emailObservationGatewayRoutes.default ||
+    emailObservationGatewayRoutes.createEmailObservationGatewayRouter?.() ||
+    emailObservationGatewayRoutes
+);
 const socialAuthRoutes = require('./routes/social-auth-routes');
 app.use('/api/auth/social', socialAuthRoutes.default || socialAuthRoutes);
 

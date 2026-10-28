@@ -245,6 +245,7 @@
     "/api/sanctions/orchestration/metrics",
     "/api/streaks/:userId",
     "/api/streaks/:userId/badges",
+    "/api/transport/email/observations/queue",
     "/api/transport/sms/observations/queue",
     "/api/v1/rewards/config",
     "/api/v1/rewards/forecast-coverage",

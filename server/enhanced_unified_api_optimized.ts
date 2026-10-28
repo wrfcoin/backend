@@ -1573,6 +1573,7 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   safeMount('/api',                         './routes/weather-alerts-routes');
   safeMount('/api',                         './routes/weather-report-routes');
   safeMount('/api/transport/sms',           './routes/sms-observation-gateway-routes');
+  safeMount('/api/transport/email',         './routes/email-observation-gateway-routes');
   safeMount('/api/auth/social',             './routes/social-auth-routes');
   safeMount('/api/gas',                     './routes/gas-relay-routes');
   safeMount('/api/chain',                   './routes/chain-routes');
