@@ -151,3 +151,8 @@ describe('GET /api/weather/alerts/* routing on the live mount table (backend#128
     expect(mockPerPoint).not.toHaveBeenCalled();
   });
 });
+
+it('shadow endpoint reaches its own auth gate in live mount order', async () => {
+  const res = await request(buildApp(fakeService())).get('/api/weather/alerts/shadow');
+  expect(res.status).toBe(401);
+});
