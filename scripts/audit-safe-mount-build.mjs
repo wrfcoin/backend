@@ -54,7 +54,8 @@ const reachedHeader = 'x-safe-mount-build-reached';
 // 57: self-serve bond-grant proxy.
 // 58: backend-archive#1495 mounts the default-OFF /api/transport/email observation gateway.
 // 59: backend#21's passkey send router reaches the deployed entrypoint (./routes/wallet-passkey-send-gate).
-const expectedMountCount = 59;
+// 60: owner ruling 2026-10-28 (b) mounts the default-OFF /api/public/balance read.
+const expectedMountCount = 60;
 
 // Removed by #935/#937 — each of these now PASSES this gate, and the gate
 // itself instructed the removal ("known failures now pass; remove their

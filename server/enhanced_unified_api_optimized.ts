@@ -1624,6 +1624,8 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // the #869 mount in unified_api_server.ts never reached production).
   safeMount('/api/onboarding',              './routes/onboarding-routes');
   safeMount('/api/faucet',                  './routes/faucet-bond-routes');
+  // Owner ruling 2026-10-28 (b): passkey wallets have no JWT; default-OFF public balance read (3 fields).
+  safeMount('/api/public/balance',          './routes/public-balance-routes');
   // backend#1178: referrals are the one growth-cluster router with shipping
   // callers (frontend useReferrals.js, mobile referral_service.dart). Mutators
   // need a wallet JWT for the acting wallet; activation pays nothing. Table:
