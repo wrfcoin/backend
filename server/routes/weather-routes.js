@@ -699,11 +699,11 @@ router.get('/stations', weatherGetLimiter, async (req, res) => {
 });
 
 // backend#1289: weather-alerts-routes (mounted at /api AFTER this router) owns
-// GET /api/weather/alerts/active and /history. Without this skip, those two
+// GET /api/weather/alerts/active, /history and /shadow. Without this skip, these
 // segments were caught here as a location and answered 400. next('route')
-// skips the rest of this route (the limiter too), so only those two paths
+// skips the rest of this route (the limiter too), so only reserved paths
 // change; /alerts/<lat,lon> and /alerts/<name>?lat=&lng= are served as before.
-const ALERTS_ROUTER_SEGMENTS = new Set(['active', 'history']);
+const ALERTS_ROUTER_SEGMENTS = new Set(['active', 'history', 'shadow']);
 
 function skipAlertsRouterSegments(req, _res, next) {
   return next(ALERTS_ROUTER_SEGMENTS.has(req.params.location) ? 'route' : undefined);

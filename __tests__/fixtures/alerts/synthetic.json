@@ -1,0 +1,365 @@
+{
+  "provenance": "synthetic",
+  "configs": {
+    "research": {
+      "rainRateMmH": 30,
+      "rainHourMm": 30,
+      "heatIndexC": 40.56,
+      "gustMs": 25.93,
+      "stations": 2,
+      "cooldownMs": 3600000,
+      "freshnessMs": 600000,
+      "releaseRatio": 0.8
+    }
+  },
+  "windows": [
+    {
+      "at": 1800000000000,
+      "cell": "0.0,36.0",
+      "hazard": "rain",
+      "readings": [
+        {
+          "station": "station-01",
+          "cell": "0.0,36.0",
+          "region": "research",
+          "at": 1800000000000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "rainRateMmH": 100
+        },
+        {
+          "station": "station-02",
+          "cell": "0.0,36.0",
+          "region": "research",
+          "at": 1800000000000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "rainRateMmH": 100
+        }
+      ],
+      "official": [],
+      "observedOutcome": true
+    },
+    {
+      "at": 1800007200000,
+      "cell": "0.1,36.0",
+      "hazard": "rain",
+      "readings": [
+        {
+          "station": "station-01",
+          "cell": "0.1,36.0",
+          "region": "research",
+          "at": 1800007200000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "rainRateMmH": 100
+        },
+        {
+          "station": "station-02",
+          "cell": "0.1,36.0",
+          "region": "research",
+          "at": 1800007200000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "rainRateMmH": 100
+        }
+      ],
+      "official": [],
+      "observedOutcome": false
+    },
+    {
+      "at": 1800014400000,
+      "cell": "0.2,36.0",
+      "hazard": "rain",
+      "readings": [
+        {
+          "station": "station-01",
+          "cell": "0.2,36.0",
+          "region": "research",
+          "at": 1800014400000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "rainRateMmH": 0
+        },
+        {
+          "station": "station-02",
+          "cell": "0.2,36.0",
+          "region": "research",
+          "at": 1800014400000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "rainRateMmH": 0
+        }
+      ],
+      "official": [],
+      "observedOutcome": true
+    },
+    {
+      "at": 1800021600000,
+      "cell": "0.3,36.0",
+      "hazard": "rain",
+      "readings": [
+        {
+          "station": "station-01",
+          "cell": "0.3,36.0",
+          "region": "research",
+          "at": 1800021600000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "rainRateMmH": 0
+        },
+        {
+          "station": "station-02",
+          "cell": "0.3,36.0",
+          "region": "research",
+          "at": 1800021600000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "rainRateMmH": 0
+        }
+      ],
+      "official": [],
+      "observedOutcome": false
+    },
+    {
+      "at": 1800028800000,
+      "cell": "1.0,36.0",
+      "hazard": "heat",
+      "readings": [
+        {
+          "station": "station-01",
+          "cell": "1.0,36.0",
+          "region": "research",
+          "at": 1800028800000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "heatIndexC": 100
+        },
+        {
+          "station": "station-02",
+          "cell": "1.0,36.0",
+          "region": "research",
+          "at": 1800028800000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "heatIndexC": 100
+        }
+      ],
+      "official": [],
+      "observedOutcome": true
+    },
+    {
+      "at": 1800036000000,
+      "cell": "1.1,36.0",
+      "hazard": "heat",
+      "readings": [
+        {
+          "station": "station-01",
+          "cell": "1.1,36.0",
+          "region": "research",
+          "at": 1800036000000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "heatIndexC": 100
+        },
+        {
+          "station": "station-02",
+          "cell": "1.1,36.0",
+          "region": "research",
+          "at": 1800036000000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "heatIndexC": 100
+        }
+      ],
+      "official": [],
+      "observedOutcome": false
+    },
+    {
+      "at": 1800043200000,
+      "cell": "1.2,36.0",
+      "hazard": "heat",
+      "readings": [
+        {
+          "station": "station-01",
+          "cell": "1.2,36.0",
+          "region": "research",
+          "at": 1800043200000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "heatIndexC": 0
+        },
+        {
+          "station": "station-02",
+          "cell": "1.2,36.0",
+          "region": "research",
+          "at": 1800043200000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "heatIndexC": 0
+        }
+      ],
+      "official": [],
+      "observedOutcome": true
+    },
+    {
+      "at": 1800050400000,
+      "cell": "1.3,36.0",
+      "hazard": "heat",
+      "readings": [
+        {
+          "station": "station-01",
+          "cell": "1.3,36.0",
+          "region": "research",
+          "at": 1800050400000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "heatIndexC": 0
+        },
+        {
+          "station": "station-02",
+          "cell": "1.3,36.0",
+          "region": "research",
+          "at": 1800050400000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "heatIndexC": 0
+        }
+      ],
+      "official": [],
+      "observedOutcome": false
+    },
+    {
+      "at": 1800057600000,
+      "cell": "2.0,36.0",
+      "hazard": "wind",
+      "readings": [
+        {
+          "station": "station-01",
+          "cell": "2.0,36.0",
+          "region": "research",
+          "at": 1800057600000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "gustMs": 100
+        },
+        {
+          "station": "station-02",
+          "cell": "2.0,36.0",
+          "region": "research",
+          "at": 1800057600000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "gustMs": 100
+        }
+      ],
+      "official": [],
+      "observedOutcome": true
+    },
+    {
+      "at": 1800064800000,
+      "cell": "2.1,36.0",
+      "hazard": "wind",
+      "readings": [
+        {
+          "station": "station-01",
+          "cell": "2.1,36.0",
+          "region": "research",
+          "at": 1800064800000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "gustMs": 100
+        },
+        {
+          "station": "station-02",
+          "cell": "2.1,36.0",
+          "region": "research",
+          "at": 1800064800000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "gustMs": 100
+        }
+      ],
+      "official": [],
+      "observedOutcome": false
+    },
+    {
+      "at": 1800072000000,
+      "cell": "2.2,36.0",
+      "hazard": "wind",
+      "readings": [
+        {
+          "station": "station-01",
+          "cell": "2.2,36.0",
+          "region": "research",
+          "at": 1800072000000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "gustMs": 0
+        },
+        {
+          "station": "station-02",
+          "cell": "2.2,36.0",
+          "region": "research",
+          "at": 1800072000000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "gustMs": 0
+        }
+      ],
+      "official": [],
+      "observedOutcome": true
+    },
+    {
+      "at": 1800079200000,
+      "cell": "2.3,36.0",
+      "hazard": "wind",
+      "readings": [
+        {
+          "station": "station-01",
+          "cell": "2.3,36.0",
+          "region": "research",
+          "at": 1800079200000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "gustMs": 0
+        },
+        {
+          "station": "station-02",
+          "cell": "2.3,36.0",
+          "region": "research",
+          "at": 1800079200000,
+          "verification": "verified",
+          "qualityTier": "good",
+          "referenceAvailable": true,
+          "gustMs": 0
+        }
+      ],
+      "official": [],
+      "observedOutcome": false
+    }
+  ]
+}

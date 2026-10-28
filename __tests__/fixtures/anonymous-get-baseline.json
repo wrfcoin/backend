@@ -264,6 +264,7 @@
     "/api/wallet/:address/transactions",
     "/api/weather/alerts/active",
     "/api/weather/alerts/history",
+    "/api/weather/alerts/shadow",
     "/api/weather/health",
     "/api/weather/stations/:stationId/reward-progress",
     "/api/weather/stations/credentials",

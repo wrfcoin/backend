@@ -19,12 +19,8 @@ export interface CompactSmsObservationEnvelope {
   sig: string;
 }
 
-export interface SmsGatewayInbound {
-  messageId: string;
-  sender: string;
-  text: string;
-  receivedAt?: string;
-}
+import type { SmsGatewayInbound } from './sms-gateway.js';
+export type { SmsGatewayInbound } from './sms-gateway.js';
 
 export interface SmsGatewayQueueEntry {
   queueId: string;
