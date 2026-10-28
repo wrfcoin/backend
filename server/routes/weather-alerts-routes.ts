@@ -35,6 +35,17 @@ export function createWeatherAlertsRouter(
   // registered after it (#880).
   router.use('/weather/alerts', authenticateJWT);
 
+  // Read-only research endpoint. There is no client-submitted verification route.
+  router.get('/weather/alerts/shadow', weatherGetLimiter, async (_req, res) => {
+    if (process.env.ALERT_ENGINE_SHADOW !== '1') return res.status(404).json({ error: 'Shadow alerts disabled' });
+    try {
+      const { pool } = await import('../db.js');
+      const { ShadowAlertStore } = await import('../services/weather/shadow-alert-store.js');
+      const events = await new ShadowAlertStore(pool).list();
+      return res.json({ shadow: true, events });
+    } catch { return res.status(503).json({ error: 'Shadow history unavailable' }); }
+  });
+
   router.get('/weather/alerts/active', weatherGetLimiter, (_req, res) => {
     try {
       const alerts = service.getActiveAlerts();
