@@ -52,7 +52,8 @@ const reachedHeader = 'x-safe-mount-build-reached';
 // 55: B2 adds the default-OFF /api/earnings read router; every compiled mount is still probed.
 // 56: core4#3604 A4 adds the default-OFF /api/forecasters read router (./routes/forecasters-routes).
 // 57: self-serve bond-grant proxy.
-const expectedMountCount = 57;
+// 58: backend-archive#1495 mounts the default-OFF /api/transport/email observation gateway.
+const expectedMountCount = 58;
 
 // Removed by #935/#937 — each of these now PASSES this gate, and the gate
 // itself instructed the removal ("known failures now pass; remove their

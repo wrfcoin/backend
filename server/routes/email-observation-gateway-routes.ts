@@ -1,7 +1,10 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import {
+  EmailGatewayRefusal,
   EmailObservationGatewayService,
+  MAX_EMAIL_BODY_BYTES,
   getEmailObservationGatewayService,
+  publicEntry,
 } from '../services/email-observation-gateway-service.js';
 
 // CJS operator-token middleware — typed inline to avoid declaration-file
@@ -59,8 +62,19 @@ export function createEmailObservationGatewayRouter(
     return next();
   };
 
-  // Inbound email webhooks carry no JWT; the envelope HMAC is the authentication.
-  router.post('/observations', dormant, async (req: Request, res: Response) => {
+  // Refuse an oversized request from its declared length, before any work. The servers also
+  // mount a 16 KiB body parser on this path ahead of their global 1 MB parser.
+  const declaredSizeCap = (req: Request, res: Response, next: NextFunction) => {
+    const declared = Number(req.headers?.['content-length'] ?? 0);
+    if (Number.isFinite(declared) && declared > MAX_EMAIL_BODY_BYTES + 4096) {
+      return res.status(413).json({ success: false, error: 'request body too large' });
+    }
+    return next();
+  };
+
+  // Inbound email webhooks carry no JWT; the envelope HMAC is the authentication. The response
+  // never carries the sender (not even its hash) or the risk detail.
+  router.post('/observations', dormant, declaredSizeCap, async (req: Request, res: Response) => {
     const inbound = extractInbound(req);
     if (!inbound.messageId || !inbound.sender || !inbound.body) {
       return res.status(400).json({
@@ -85,10 +99,11 @@ export function createEmailObservationGatewayRouter(
               : 400;
       return res.status(status).json({
         success: entry.deliveryState !== 'rejected',
-        data: entry,
+        data: publicEntry(entry),
       });
     } catch (error) {
-      return res.status(400).json({ success: false, error: getErrorMessage(error) });
+      const status = error instanceof EmailGatewayRefusal ? error.status : 400;
+      return res.status(status).json({ success: false, error: getErrorMessage(error) });
     }
   });
 

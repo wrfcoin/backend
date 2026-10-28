@@ -188,6 +188,9 @@ app.use(createEnhancedMetricsMiddleware({
 app.use(createSecurityAlertMiddleware());
 
 // Body parsing with size limits to prevent abuse
+// Email observation gateway (backend-archive#1495): 16 KiB parse limit on its own path, mounted
+// first so the global 1 MB parsers below see an already-parsed body and skip it.
+app.use('/api/transport/email', bodyParser.json({ limit: '16kb' }), bodyParser.urlencoded({ extended: false, limit: '16kb' }));
 app.use(bodyParser.json({ limit: '1mb', verify: (req, _res, buf) => { req.rawBody = buf.toString(); } }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '1mb', verify: (req, _res, buf) => { req.rawBody = buf.toString(); } }));
 

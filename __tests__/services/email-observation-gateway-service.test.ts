@@ -1,25 +1,36 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import {
+  EmailGatewayRefusal,
   EmailObservationGatewayService,
   EMAIL_INGEST_ROUTE,
   MAX_EMAIL_BODY_BYTES,
+  REPLAY_SCOPE,
   extractEnvelopeText,
+  hashSender,
   normalizeSender,
   resolveEmailGatewaySecret,
+  type ReplayStore,
 } from '../../server/services/email-observation-gateway-service.js';
 import {
   encodeCompactSmsObservationEnvelope,
   signCompactSmsObservationEnvelope,
 } from '../../server/services/sms-observation-gateway-service.js';
+import { RouteDurableStore } from '../../shared/route-durable-store.js';
 
 // Fixtures only: no mailbox, no provider, no network.
 const SECRET = 'email-test-secret-0123456789';
 const SMS_SECRET = 'sms-test-secret-0123456789ab';
+const TS = 1_772_758_800;
+const NOW = new Date(TS * 1000 + 30_000);
 
-function envelope(secret = SECRET, mid = 'email-msg-1', obs = { ts: 1_772_758_800, tmp: 21.1, hum: 49 }) {
-  const unsigned = { v: 1 as const, mid, sid: 'EMAIL-STATION-1', ts: obs.ts, obs };
+function envelope(opts: { secret?: string; mid?: string; ts?: number; tmp?: number } = {}) {
+  const ts = opts.ts ?? TS;
+  const obs = { ts, tmp: opts.tmp ?? 21.1, hum: 49 };
+  const unsigned = { v: 1 as const, mid: opts.mid ?? 'email-msg-1', sid: 'EMAIL-STATION-1', ts, obs };
   return encodeCompactSmsObservationEnvelope({
     ...unsigned,
-    sig: signCompactSmsObservationEnvelope(unsigned, secret),
+    sig: signCompactSmsObservationEnvelope(unsigned, opts.secret ?? SECRET),
   });
 }
 
@@ -27,15 +38,41 @@ function emailBody(env: string) {
   return ['Hi,', '', `WRF1:${env}`, '', '-- ', 'Sent from my phone', '> quoted reply'].join('\n');
 }
 
-function service(calls: any[] = []) {
+function memoryStore(): ReplayStore & { keys: string[] } {
+  const map = new Map<string, unknown>();
+  return {
+    keys: [] as string[],
+    async getIdempotency(scope, key) {
+      return map.get(`${scope}:${key}`) ?? null;
+    },
+    async putIdempotency(scope, key, status, body) {
+      map.set(`${scope}:${key}`, { status, body });
+      this.keys.push(`${scope}:${key}`);
+    },
+  };
+}
+
+function service(calls: any[] = [], extra: Record<string, unknown> = {}) {
   return new EmailObservationGatewayService({
     sharedSecret: SECRET,
+    replayStore: memoryStore(),
     weatherIngestor: async (input: any) => {
       calls.push(input);
       return { status: 201, body: { success: true, id: `weather-email-${calls.length}` }, canonicalized: {} as any };
     },
-    nowFn: () => new Date('2026-10-28T00:00:00Z'),
+    nowFn: () => NOW,
+    ...extra,
   });
+}
+
+async function refusal(promise: Promise<unknown>): Promise<EmailGatewayRefusal> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof EmailGatewayRefusal) return error;
+    throw error;
+  }
+  throw new Error('expected a refusal');
 }
 
 describe('email observation gateway service', () => {
@@ -48,7 +85,6 @@ describe('email observation gateway service', () => {
     });
     expect(entry.deliveryState).toBe('processed');
     expect(entry.queueId).toMatch(/^emailq_/);
-    expect(entry.sender).toBe('observer@example.org');
     expect(entry.stationId).toBe('EMAIL-STATION-1');
     expect(calls).toHaveLength(1);
     expect(calls[0].route).toBe(EMAIL_INGEST_ROUTE);
@@ -56,7 +92,7 @@ describe('email observation gateway service', () => {
     expect(calls[0].payload).toEqual({
       schema_version: 'wrf.weather.observation.v1',
       station_id: 'EMAIL-STATION-1',
-      observed_at_unix: 1_772_758_800,
+      observed_at_unix: TS,
       observation: { temperature_c: 21.1, humidity: 49 },
     });
   });
@@ -64,7 +100,7 @@ describe('email observation gateway service', () => {
   it('rejects an envelope signed with any other secret, including the SMS secret', async () => {
     const calls: any[] = [];
     await expect(
-      service(calls).ingestInboundEmail({ messageId: 'm1', sender: 'a@b.c', body: emailBody(envelope(SMS_SECRET)) })
+      service(calls).ingestInboundEmail({ messageId: 'm1', sender: 'a@b.c', body: emailBody(envelope({ secret: SMS_SECRET })) })
     ).rejects.toThrow(/Invalid compact envelope signature/);
     expect(calls).toHaveLength(0);
   });
@@ -72,51 +108,159 @@ describe('email observation gateway service', () => {
   it('rejects a body with no envelope and an oversize body, without ingesting', async () => {
     const calls: any[] = [];
     const svc = service(calls);
-    await expect(svc.ingestInboundEmail({ messageId: 'm1', sender: 'a@b.c', body: 'temp 21C, humid 49%' }))
-      .rejects.toThrow(/no WRF1 observation envelope/);
-    await expect(
+    expect((await refusal(svc.ingestInboundEmail({ messageId: 'm1', sender: 'a@b.c', body: 'temp 21C, humid 49%' }))).status).toBe(400);
+    const big = await refusal(
       svc.ingestInboundEmail({ messageId: 'm2', sender: 'a@b.c', body: emailBody(envelope()) + 'x'.repeat(MAX_EMAIL_BODY_BYTES) })
-    ).rejects.toThrow(/exceeds/);
+    );
+    expect(big.status).toBe(413);
     expect(calls).toHaveLength(0);
   });
 
-  it('dedups by message id and by payload hash', async () => {
+  describe('freshness window (default ±5 min)', () => {
+    it.each([
+      ['6 min old', TS - 360, 400],
+      ['6 min ahead', TS + 420, 400],
+      ['4 min old', TS - 210, null],
+      ['4 min ahead', TS + 240, null],
+    ])('%s', async (_label, ts, status) => {
+      const calls: any[] = [];
+      const run = service(calls).ingestInboundEmail({ messageId: 'm1', sender: 'a@b.c', body: emailBody(envelope({ ts })) });
+      if (status === null) {
+        expect((await run).deliveryState).toBe('processed');
+      } else {
+        const error = await refusal(run);
+        expect(error.status).toBe(status);
+        expect(error.message).toMatch(/freshness window/);
+        expect(calls).toHaveLength(0);
+      }
+    });
+  });
+
+  it('dedups in memory by message id and payload hash', async () => {
     const calls: any[] = [];
     const svc = service(calls);
     const body = emailBody(envelope());
     expect((await svc.ingestInboundEmail({ messageId: 'm1', sender: 'a@b.c', body })).deliveryState).toBe('processed');
-    expect((await svc.ingestInboundEmail({ messageId: 'm1', sender: 'a@b.c', body })).deliveryState).toBe('duplicate');
-    const resent = emailBody(envelope(SECRET, 'email-msg-2'));
-    expect((await svc.ingestInboundEmail({ messageId: 'm2', sender: 'a@b.c', body: resent })).deliveryState).toBe('duplicate');
+    // The same envelope again is refused by the replay record before the engine sees it.
+    expect((await refusal(svc.ingestInboundEmail({ messageId: 'm2', sender: 'a@b.c', body }))).status).toBe(409);
+    // A re-signed envelope with a new mid but the same observation is a payload-hash duplicate.
+    const resent = emailBody(envelope({ mid: 'email-msg-2' }));
+    expect((await svc.ingestInboundEmail({ messageId: 'm3', sender: 'a@b.c', body: resent })).deliveryState).toBe('duplicate');
     expect(calls).toHaveLength(1);
   });
 
-  it('queues for retry when the ingestor fails, then delivers on flush', async () => {
-    let fail = true;
-    let now = new Date('2026-10-28T00:00:00Z');
-    const svc = new EmailObservationGatewayService({
-      sharedSecret: SECRET,
-      retryDelayMs: 1000,
-      nowFn: () => now,
-      weatherIngestor: async () => {
-        if (fail) throw new Error('ingest down');
-        return { status: 201, body: { success: true, id: 'w1' }, canonicalized: {} as any };
-      },
-    });
-    const first = await svc.ingestInboundEmail({ messageId: 'm1', sender: 'a@b.c', body: emailBody(envelope()) });
-    expect(first.deliveryState).toBe('queued_for_retry');
-    fail = false;
-    now = new Date(now.getTime() + 1000);
-    const flushed = await svc.flushReadyQueue(now);
-    expect(flushed.map(e => e.deliveryState)).toEqual(['processed']);
+  it('replay protection survives a restart (route durable store, file backend)', async () => {
+    const file = path.join(process.cwd(), 'backend', 'data', `email-replay-test-${process.pid}-${Date.now()}.json`);
+    try {
+      const body = emailBody(envelope());
+      const first = new EmailObservationGatewayService({
+        sharedSecret: SECRET,
+        replayStore: new RouteDurableStore(file, 'file'),
+        weatherIngestor: async () => ({ status: 201, body: { success: true, id: 'w1' }, canonicalized: {} as any }),
+        nowFn: () => NOW,
+      });
+      expect((await first.ingestInboundEmail({ messageId: 'm1', sender: 'a@b.c', body })).deliveryState).toBe('processed');
+
+      // "Restart": a new store instance on the same file and a new service with empty memory.
+      const calls: any[] = [];
+      const restarted = new EmailObservationGatewayService({
+        sharedSecret: SECRET,
+        replayStore: new RouteDurableStore(file, 'file'),
+        weatherIngestor: async (input: any) => {
+          calls.push(input);
+          return { status: 201, body: { success: true, id: 'w2' }, canonicalized: {} as any };
+        },
+        nowFn: () => NOW,
+      });
+      const replay = await refusal(restarted.ingestInboundEmail({ messageId: 'fresh-id', sender: 'a@b.c', body }));
+      expect(replay.status).toBe(409);
+      expect(calls).toHaveLength(0);
+      // Control: a different genuine envelope is still accepted after the restart.
+      const other = emailBody(envelope({ mid: 'email-msg-9', tmp: 19.5 }));
+      expect((await restarted.ingestInboundEmail({ messageId: 'm9', sender: 'a@b.c', body: other })).deliveryState).toBe('processed');
+    } finally {
+      fs.rmSync(file, { force: true });
+      fs.rmSync(`${file}.tmp`, { force: true });
+    }
+  });
+
+  it('records a replay key only for genuine envelopes', async () => {
+    const store = memoryStore();
+    const svc = service([], { replayStore: store });
+    await expect(
+      svc.ingestInboundEmail({ messageId: 'm1', sender: 'a@b.c', body: emailBody(envelope({ secret: SMS_SECRET })) })
+    ).rejects.toThrow(/signature/);
+    expect(store.keys).toHaveLength(0);
+    await svc.ingestInboundEmail({ messageId: 'm2', sender: 'a@b.c', body: emailBody(envelope()) });
+    expect(store.keys).toHaveLength(1);
+    expect(store.keys[0].startsWith(`${REPLAY_SCOPE}:sig:`)).toBe(true);
+  });
+
+  it('applies a per-sender cap and a global cap (429)', async () => {
+    const svc = service([], { senderLimit: { max: 2, windowMs: 60_000 }, globalLimit: { max: 4, windowMs: 60_000 } });
+    const send = (sender: string, i: number) =>
+      svc.ingestInboundEmail({ messageId: `m${i}`, sender, body: emailBody(envelope({ mid: `mid-${i}`, tmp: 10 + i })) });
+    await send('a@b.c', 1);
+    await send('A@B.C', 2); // same sender after normalisation
+    const perSender = await refusal(send('a@b.c', 3));
+    expect(perSender.status).toBe(429);
+    expect(perSender.message).toMatch(/sender is at its rate cap/);
+    await send('other@b.c', 4); // global hit 4 (the refused hit 3 still counted)
+    const global = await refusal(send('third@b.c', 5));
+    expect(global.status).toBe(429);
+    expect(global.message).toMatch(/global rate cap/);
+  });
+
+  it('keeps every in-memory map bounded under attacker-chosen senders', async () => {
+    const svc = service([], { maxTrackedEntries: 5, globalLimit: { max: 1_000, windowMs: 60_000 } });
+    for (let i = 0; i < 40; i += 1) {
+      await svc.ingestInboundEmail({
+        messageId: `m${i}`,
+        sender: `attacker-${i}@example.org`,
+        body: emailBody(envelope({ mid: `mid-${i}`, tmp: i })),
+      });
+    }
+    for (const [name, size] of Object.entries(svc.trackedEntryCounts())) {
+      expect({ name, bounded: size <= 5 }).toEqual({ name, bounded: true });
+    }
+  });
+
+  it('never stores, scores or forwards the raw address', async () => {
+    const calls: any[] = [];
+    const svc = service(calls);
+    const entry = await svc.ingestInboundEmail({ messageId: 'm1', sender: 'Observer <Observer@Example.org>', body: emailBody(envelope()) });
+    const expected = hashSender('observer@example.org', SECRET);
+    expect(entry.sender).toBe(expected);
+    expect(entry.sender).toMatch(/^es_[0-9a-f]{32}$/);
+    expect(calls[0].transportMeta.sender).toBe(expected);
+    const serialized = JSON.stringify(svc.listQueue());
+    expect(serialized).not.toMatch(/example\.org/i);
+    expect(hashSender('observer@example.org', 'another-secret-0123456789')).not.toBe(expected);
   });
 
   it('extracts the envelope line and a bare JSON envelope, and normalizes senders', () => {
-    expect(extractEnvelopeText('x\n  WRF1: abc_DEF-123  \ny')).toBe('abc_DEF-123');
+    expect(extractEnvelopeText('x\n  WRF1: abc_DEF-123  \r\ny')).toBe('abc_DEF-123');
     expect(extractEnvelopeText('{"v":1}')).toBe('{"v":1}');
     expect(extractEnvelopeText('WRF1:bad chars!')).toBeNull();
+    expect(extractEnvelopeText('\n\n  \nWRF1:\n\nabc')).toBeNull();
     expect(normalizeSender(' Name <ME@Host.ORG> ')).toBe('me@host.org');
     expect(normalizeSender('ME@host.org')).toBe('me@host.org');
+  });
+
+  it('scans pathological bodies in linear time', () => {
+    const bodies = [
+      '\n'.repeat(MAX_EMAIL_BODY_BYTES),
+      ' \n'.repeat(MAX_EMAIL_BODY_BYTES / 2),
+      '\t \r\n'.repeat(MAX_EMAIL_BODY_BYTES / 4),
+      'WRF1:\n'.repeat(MAX_EMAIL_BODY_BYTES / 6),
+      `WRF1:${'a'.repeat(MAX_EMAIL_BODY_BYTES - 6)}!`,
+    ];
+    for (const body of bodies) {
+      const started = process.hrtime.bigint();
+      expect(extractEnvelopeText(body)).toBeNull();
+      const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+      expect(elapsedMs).toBeLessThan(50);
+    }
   });
 });
 
