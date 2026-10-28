@@ -1,0 +1,7 @@
+{
+  "provenance": "Recorded synthetic APRS101-format fixtures; fictional callsigns; no network capture or real station identity.",
+  "receivedAt": "2026-10-28T12:00:00Z",
+  "valid": "K0TST-2>APRS,TCPIP*:!4000.00N/10500.00W_220/004g005t068r000p000P000h50b10132eFixture",
+  "timestamped": "K0TST>APRS,TCPIP*:@281159z4000.00N/10500.00W_220/004g005t-07r000p000P000h00b09900",
+  "malformed": "K0TST>APRS,TCPIP*:!4060.00N/10500.00W_220/004t068h50b10132"
+}

@@ -104,6 +104,7 @@ import {
 import { createOperatorProfileRouter } from './routes/operator-profile-routes.js';
 import { createStationDetailRouter } from './routes/station-detail-routes.js';
 import { createStationOwnerRouter, captureOwnerActionRawBody } from './routes/station-owner-routes.js';
+import { createBridgeClaimRouter } from './routes/bridge-claim-routes.js';
 import { createWrfForecastNotWiredRouter } from './routes/wrf-forecast-not-wired-routes.js';
 // backend#1134: the four factory-built ingestion routers were only ever mounted on
 // the compute_networks_server (port 6000), never on this live main-api entrypoint.
@@ -294,6 +295,7 @@ app.use('/api/operators', createOperatorProfileRouter());
 app.use('/api', createStationDetailRouter());
 // Station theft protection: signed owner-action relay + ownership state (spec r23/station-owner-actions-spec.md).
 app.use('/api', createStationOwnerRouter());
+app.use('/api', createBridgeClaimRouter());
 // backend#1289 (b3): /api/v1/weather/wrf-forecast/* answers the not-wired 501
 // instead of the catch-all 404.
 app.use('/api', createWrfForecastNotWiredRouter());

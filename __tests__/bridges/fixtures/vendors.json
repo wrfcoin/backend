@@ -1,0 +1,5 @@
+{
+  "ambient":[{"macAddress":"AA:BB:CC:DD:EE:01","lastData":{"dateutc":1793188800000,"tempf":68,"humidity":50,"baromabsin":29.5}}],
+  "weatherlink":{"station_id_uuid":"00000000-0000-4000-8000-000000000001","sensors":[{"data":[{"ts":1793188800,"temp":68,"hum":50,"bar_absolute":29.5}]}]},
+  "netatmo":{"body":{"devices":[{"_id":"module-01","dashboard_data":{"time_utc":1793188800,"Temperature":20,"Humidity":50,"Pressure":999}}]}}
+}
