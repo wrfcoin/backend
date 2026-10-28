@@ -45,7 +45,7 @@ const okAccount = (over: Record<string, unknown> = {}): Reply => ({
 });
 
 describe('GET /api/public/balance/:address', () => {
-  const envKeys = ['CORE4_API_URL', 'WRFCOIN_READER_TOKEN', 'PUBLIC_BALANCE_READ_ENABLED', 'TRUSTED_PROXIES', 'DISABLE_FILE_LOG_TRANSPORTS'];
+  const envKeys = ['CORE4_API_URL', 'WRFCOIN_READER_TOKEN', 'PUBLIC_BALANCE_READ_ENABLED', 'TRUSTED_PROXIES', 'DISABLE_FILE_LOG_TRANSPORTS', 'PUBLIC_BALANCE_UPSTREAM_MAX_PER_MIN'];
   const saved = Object.fromEntries(envKeys.map((k) => [k, process.env[k]]));
   let seen: Seen[] = [];
   let tipReply: Reply = okTip;
@@ -79,6 +79,7 @@ describe('GET /api/public/balance/:address', () => {
       TRUSTED_PROXIES: '127.0.0.1,::1',
       DISABLE_FILE_LOG_TRANSPORTS: 'true',
     });
+    delete process.env.PUBLIC_BALANCE_UPSTREAM_MAX_PER_MIN;
     seen = [];
     tipReply = okTip;
     accountReply = okAccount();
@@ -94,6 +95,8 @@ describe('GET /api/public/balance/:address', () => {
     return app;
   }
   const accountReads = () => seen.filter((s) => s.path.startsWith('/addresses/')).length;
+  const tipReads = () => seen.filter((s) => s.path === '/blockchain').length;
+  const addr = (i: number) => `0x${i.toString(16).padStart(40, '0')}`;
 
   it('pins the response shape: exactly address, balance and height, in the chain units and string form', async () => {
     const r = await request(makeApp()).get(`/api/public/balance/${ADDR}`)
@@ -179,6 +182,61 @@ describe('GET /api/public/balance/:address', () => {
     expect(accountReads()).toBe(1);
   });
 
+  it('reads the tip once per 5 s for all addresses, not once per address', async () => {
+    accountReply = okAccount({ address: undefined }); // one fixture answers for many addresses
+    const app = makeApp();
+    for (let i = 1; i <= 4; i += 1) expect((await request(app).get(`/api/public/balance/${addr(i)}`)).status).toBe(200);
+    expect(accountReads()).toBe(4);
+    expect(tipReads()).toBe(1);
+    clock += 5_001;
+    expect((await request(app).get(`/api/public/balance/${addr(5)}`)).body.height).toBe(4242);
+    expect(tipReads()).toBe(2);
+  });
+
+  it('caps account reads process-wide: distinct addresses from distinct clients stop at the cap with 503 + Retry-After and no node call', async () => {
+    process.env.PUBLIC_BALANCE_UPSTREAM_MAX_PER_MIN = '3';
+    accountReply = okAccount({ address: undefined });
+    const app = makeApp();
+    const from = (i: number) => request(app).get(`/api/public/balance/${addr(i)}`).set('X-Forwarded-For', `198.51.100.${i}`);
+    for (let i = 1; i <= 3; i += 1) expect((await from(i)).status).toBe(200);
+    const before = seen.length;
+    for (let i = 4; i <= 8; i += 1) {
+      const r = await from(i);
+      expect(r.status).toBe(503);
+      expect(r.body.error.code).toBe('UPSTREAM_BUDGET_EXHAUSTED');
+      expect(Number(r.headers['retry-after'])).toBeGreaterThan(0);
+      expect(r.body.balance).toBeUndefined();
+    }
+    expect(seen.length).toBe(before); // past the cap: zero upstream calls, tip included
+    expect(accountReads()).toBe(3);
+    // A cached address stays free while the budget is spent.
+    expect((await from(1)).status).toBe(200);
+    // The next minute reopens the budget.
+    clock += 60_000;
+    expect((await from(9)).status).toBe(200);
+    expect(accountReads()).toBe(4);
+  });
+
+  it('reads the cap from PUBLIC_BALANCE_UPSTREAM_MAX_PER_MIN: default 120, at most 500, junk falls back', () => {
+    const { upstreamMaxPerMinute } = require('../server/routes/public-balance-routes');
+    expect(upstreamMaxPerMinute()).toBe(120);
+    for (const [raw, want] of [['60', 60], ['500', 500], ['100000', 500], ['0', 120], ['-5', 120], ['1e3', 120], ['abc', 120]] as const) {
+      process.env.PUBLIC_BALANCE_UPSTREAM_MAX_PER_MIN = raw;
+      expect(upstreamMaxPerMinute()).toBe(want);
+    }
+  });
+
+  it('keeps an untrusted peer in its own bucket however it spoofs X-Forwarded-For', async () => {
+    process.env.TRUSTED_PROXIES = '10.9.9.9'; // the loopback test peer is NOT a trusted proxy here
+    const app = makeApp();
+    for (let i = 0; i < 30; i += 1) {
+      const r = await request(app).get(`/api/public/balance/${ADDR}`).set('X-Forwarded-For', `203.0.113.${i + 1}`);
+      expect(r.status).toBe(200);
+    }
+    const spoofed = await request(app).get(`/api/public/balance/${ADDR}`).set('X-Forwarded-For', '192.0.2.77');
+    expect(spoofed.status).toBe(429);
+  });
+
   describe('upstream failures are 502 or 504, never a 200 and never a zero', () => {
     const cases: Array<[string, () => void]> = [
       ['account 500', () => { accountReply = { status: 500, json: { ok: false, error: { code: 'INTERNAL', message: 'db path /var/x' } } }; }],
@@ -188,6 +246,7 @@ describe('GET /api/public/balance/:address', () => {
       ['tip 503', () => { tipReply = { status: 503, json: { ok: false } }; }],
       ['tip without a height', () => { tipReply = { status: 200, json: { ok: true, data: { tip: 'x' } } }; }],
       ['balance as a number', () => { accountReply = okAccount({ spendable_balance: 5, balance: 5 }); }],
+      ['no spendable_balance (gross balance only, never used)', () => { accountReply = okAccount({ spendable_balance: undefined }); }],
       ['balance with a fraction', () => { accountReply = okAccount({ spendable_balance: '1.5' }); }],
       ['answer for another address', () => { accountReply = okAccount({ address: OTHER }); }],
     ];
