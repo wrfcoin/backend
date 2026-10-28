@@ -55,6 +55,22 @@ interface SmsGatewayServiceOptions {
   retryDelayMs?: number;
   maxAttempts?: number;
   riskThreshold?: 'low' | 'moderate' | 'high' | 'critical';
+  /**
+   * Transport label recorded in `transportMeta.transport` and the ingest route
+   * passed to the weather ingestor. Defaults keep the SMS gateway unchanged; the
+   * email gateway (backend-archive#1495) reuses this envelope + queue with its
+   * own label, route, queue-id prefix and secret.
+   */
+  transport?: string;
+  ingestRoute?: string;
+  queueIdPrefix?: string;
+  /**
+   * Upper bound on every in-memory map (queue, dedup indexes, per-station and per-sender
+   * history); the oldest entry is evicted first and sender history is kept LRU. Defaults to
+   * unbounded, which is the SMS gateway's existing behaviour. The email gateway sets it because
+   * its sender keys are attacker-chosen.
+   */
+  maxTrackedEntries?: number;
 }
 
 const RISK_ORDER = {
@@ -129,6 +145,10 @@ export class SmsObservationGatewayService {
   private readonly retryDelayMs: number;
   private readonly maxAttempts: number;
   private readonly riskThreshold: keyof typeof RISK_ORDER;
+  private readonly transport: string;
+  private readonly ingestRoute: string;
+  private readonly queueIdPrefix: string;
+  private readonly maxTrackedEntries: number;
   private readonly queue = new Map<string, SmsGatewayQueueEntry>();
   private readonly stationLatestObservedAt = new Map<string, string>();
   private readonly senderHistory = new Map<
@@ -148,6 +168,30 @@ export class SmsObservationGatewayService {
     this.retryDelayMs = options.retryDelayMs || 30_000;
     this.maxAttempts = options.maxAttempts || 3;
     this.riskThreshold = options.riskThreshold || 'critical';
+    this.transport = options.transport || 'sms';
+    this.ingestRoute = options.ingestRoute || '/api/transport/sms/observations';
+    this.queueIdPrefix = options.queueIdPrefix || 'smsq_';
+    this.maxTrackedEntries = options.maxTrackedEntries ?? Number.POSITIVE_INFINITY;
+  }
+
+  /** Evict oldest-first until `map` is within `maxTrackedEntries` (a no-op when unbounded). */
+  private bound<K, V>(map: Map<K, V>): void {
+    while (map.size > this.maxTrackedEntries) {
+      const oldest = map.keys().next();
+      if (oldest.done) return;
+      map.delete(oldest.value);
+    }
+  }
+
+  /** Number of entries currently held across the in-memory maps (for bounded-memory tests). */
+  trackedEntryCounts(): Record<string, number> {
+    return {
+      queue: this.queue.size,
+      senderHistory: this.senderHistory.size,
+      processedMessageIds: this.processedMessageIds.size,
+      processedPayloadHashes: this.processedPayloadHashes.size,
+      stationLatestObservedAt: this.stationLatestObservedAt.size,
+    };
   }
 
   /**
@@ -249,6 +293,7 @@ export class SmsObservationGatewayService {
         lastError: `sender exceeded ${this.riskThreshold} risk threshold`,
       });
       this.queue.set(entry.queueId, entry);
+      this.bound(this.queue);
       this.recordHistory(input.sender, observedAt, 'failed');
       return entry;
     }
@@ -269,6 +314,7 @@ export class SmsObservationGatewayService {
         risk,
       });
       this.queue.set(duplicateEntry.queueId, duplicateEntry);
+      this.bound(this.queue);
       this.recordHistory(input.sender, observedAt, 'duplicate');
       return duplicateEntry;
     }
@@ -285,6 +331,7 @@ export class SmsObservationGatewayService {
       risk,
     });
     this.queue.set(entry.queueId, entry);
+    this.bound(this.queue);
     return this.processEntry(entry.queueId);
   }
 
@@ -368,11 +415,11 @@ export class SmsObservationGatewayService {
       };
 
       const result = await this.weatherIngestor({
-        route: '/api/transport/sms/observations',
+        route: this.ingestRoute,
         payload: canonicalPayload,
         idempotencyKey: current.messageId,
         transportMeta: {
-          transport: 'sms',
+          transport: this.transport,
           sender: current.sender,
           queueId: current.queueId,
           delayed: current.delayed,
@@ -393,6 +440,9 @@ export class SmsObservationGatewayService {
       this.processedMessageIds.set(current.messageId, queueId);
       this.processedPayloadHashes.set(current.payloadHash, queueId);
       this.stationLatestObservedAt.set(current.stationId, current.observedAt);
+      this.bound(this.processedMessageIds);
+      this.bound(this.processedPayloadHashes);
+      this.bound(this.stationLatestObservedAt);
       this.recordHistory(
         current.sender,
         current.observedAt,
@@ -428,7 +478,7 @@ export class SmsObservationGatewayService {
     lastError?: string;
   }): SmsGatewayQueueEntry {
     return {
-      queueId: `smsq_${crypto.randomUUID().replace(/-/g, '')}`,
+      queueId: `${this.queueIdPrefix}${crypto.randomUUID().replace(/-/g, '')}`,
       messageId: args.input.messageId,
       sender: args.input.sender,
       stationId: args.envelope.sid,
@@ -486,7 +536,12 @@ export class SmsObservationGatewayService {
   ) {
     const current = this.senderHistory.get(sender) || [];
     current.push({ observedAt, status });
+    if (Number.isFinite(this.maxTrackedEntries)) {
+      // LRU: move this sender to the newest position before evicting the oldest.
+      this.senderHistory.delete(sender);
+    }
     this.senderHistory.set(sender, current.slice(-25));
+    this.bound(this.senderHistory);
   }
 }
 

@@ -275,6 +275,9 @@ app.options('*', (_req, res) => { res.status(200).end(); });
 
 // Body parsing (replaces manual req.on('data') accumulation)
 // station owner-action relay forwards the caller's exact bytes (never re-serialised): keep the raw body.
+// Email observation gateway (backend-archive#1495): 16 KiB parse limit on its own path, ahead
+// of the global 1 MB parsers (which then skip the already-parsed body).
+app.use('/api/transport/email', express.json({ limit: '16kb' }), express.urlencoded({ extended: false, limit: '16kb' }));
 app.use(express.json({ limit: '1mb', verify: captureOwnerActionRawBody }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
@@ -1573,6 +1576,7 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   safeMount('/api',                         './routes/weather-alerts-routes');
   safeMount('/api',                         './routes/weather-report-routes');
   safeMount('/api/transport/sms',           './routes/sms-observation-gateway-routes');
+  safeMount('/api/transport/email',         './routes/email-observation-gateway-routes');
   safeMount('/api/auth/social',             './routes/social-auth-routes');
   safeMount('/api/gas',                     './routes/gas-relay-routes');
   safeMount('/api/chain',                   './routes/chain-routes');
