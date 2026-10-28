@@ -88,7 +88,7 @@
     "express-slow-down": "^3.1.1",
     "express-validator": "^7.3.2",
     "file-type": "^21.3.4",
-    "geoip-lite": "^1.4.10",
+    "geoip-lite": "^2.0.3",
     "graphql": "^16.14.1",
     "graphql-http": "^1.23.1",
     "graphql-redis-subscriptions": "^2.7.0",
