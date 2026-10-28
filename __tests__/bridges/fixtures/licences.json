@@ -1,0 +1,5 @@
+[
+  {"callsign":"K0TST","country":"US","email":"licensee@example.invalid","current":true},
+  {"callsign":"VE0TST","country":"CA","email":"reference@example.invalid","current":true},
+  {"callsign":"W0OLD","country":"US","email":"expired@example.invalid","current":false}
+]

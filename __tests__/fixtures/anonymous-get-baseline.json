@@ -125,6 +125,7 @@
     "/api/appeals/:id",
     "/api/appeals/publications",
     "/api/appeals/sla/breaches",
+    "/api/bridge-claims/:claimId",
     "/api/bridges/wormhole/transfers/:transferId",
     "/api/cross-chain/networks",
     "/api/cross-chain/operation/:id",

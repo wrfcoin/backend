@@ -167,6 +167,7 @@
     "protobufjs@7.x": "7.6.5"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.12",
     "@types/bcrypt": "^5.0.2",
     "@types/bcryptjs": "^2.4.6",
     "@types/compression": "^1.8.1",
