@@ -1567,6 +1567,9 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   app.use('/api/oracle', oracleSubmitRoutes);
   safeMount('/api/blockchain',              './routes/blockchain-routes');
   safeMount('/api/explorer',                './routes/explorer-routes');
+  // backend#21: self-proving passkey send (no JWT), before the requireAuth wallet router as in
+  // server.js. Dormant unless WRFCOIN_ENABLE_PASSKEY_SEND=true; off, it falls through unchanged.
+  safeMount('/api/wallet',                  './routes/wallet-passkey-send-gate');
   safeMount('/api/wallet',                  './routes/wallet-routes');
   safeMount('/api/wallet-auth',             './routes/wallet-auth-legacy-routes');
   safeMount('/api/weather/streak',          './routes/weather-streak-routes');

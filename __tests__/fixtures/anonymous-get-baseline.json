@@ -262,6 +262,7 @@
     "/api/wallet/:address/nfts",
     "/api/wallet/:address/nonce",
     "/api/wallet/:address/transactions",
+    "/api/wallet/send-passkey/nonce/:address",
     "/api/weather/alerts/active",
     "/api/weather/alerts/history",
     "/api/weather/alerts/shadow",
