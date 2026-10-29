@@ -53,7 +53,8 @@ const reachedHeader = 'x-safe-mount-build-reached';
 // 56: core4#3604 A4 adds the default-OFF /api/forecasters read router (./routes/forecasters-routes).
 // 57: self-serve bond-grant proxy.
 // 58: backend-archive#1495 mounts the default-OFF /api/transport/email observation gateway.
-const expectedMountCount = 58;
+// 59: backend#21's passkey send router reaches the deployed entrypoint (./routes/wallet-passkey-send-gate).
+const expectedMountCount = 59;
 
 // Removed by #935/#937 — each of these now PASSES this gate, and the gate
 // itself instructed the removal ("known failures now pass; remove their
