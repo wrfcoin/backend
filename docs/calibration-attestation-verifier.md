@@ -65,20 +65,23 @@ Reason codes:
 
 ### Trust roots
 
-Set `CALIBRATION_TRUST_ROOTS_JSON` to a JSON array of active trust roots:
+Set `CALIBRATION_TRUST_ROOTS_JSON` to a JSON array of active trust roots. Pin each root by its raw
+ed25519 public key (`publicKeyHex`); the fingerprint is derived as sha256 of the key bytes:
 
 ```json
 [
   {
-    "rootId": "wrf-root-ca-1",
-    "subject": "WRF Root CA",
-    "fingerprintSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "rootId": "wrfcoin-owner-testnet",
+    "subject": "WRFCoin owner (testnet)",
+    "publicKeyHex": "<64 hex: the owner-held key's public half>",
     "active": true
   }
 ]
 ```
 
-If no active trust roots are configured, verification fails closed with `CAL_TRUST_ROOT_UNCONFIGURED`.
+An older entry may pin `fingerprintSha256` instead. An entry whose `publicKeyHex` and
+`fingerprintSha256` disagree, or that pins nothing valid, is dropped. If no active trust roots are
+configured, verification fails closed with `CAL_TRUST_ROOT_UNCONFIGURED`.
 
 ### Revocations
 
@@ -148,3 +151,82 @@ Rejected (revoked certificate):
   "trustRootId": "wrf-root-ca-1"
 }
 ```
+
+## Station calibration certificates (public flow)
+
+Mounted at `/api/calibration-certificates` (`server/routes/calibration-certificate-routes.ts`,
+`server/services/calibration-certificates.ts`). Default OFF: every path is 404 unless
+`CALIBRATION_CERTIFICATES_ENABLED=true`. Needs migration `0038_calibration_certificates`.
+
+Demo: *a station owner gets a calibration certificate for their sensor and anyone can see it on the
+station's page.*
+
+### Who does what
+
+1. **The station owner asks** the trust root for a certificate, outside the API (for example a
+   GitHub issue), giving only the station's public alias (`st_` + 12 hex, shown on the station page)
+   and their wallet address. No names, emails or other personal data are collected or stored.
+2. **The trust root checks the sensor** (method of its choosing) and signs with its offline key:
+
+   ```sh
+   npx tsx scripts/calibration-certificate.ts keygen --key ~/calibration-root.pem \
+       --root-id wrfcoin-owner-testnet --subject "WRFCoin owner (testnet)"   # once; prints the public entry
+   npx tsx scripts/calibration-certificate.ts sign --key ~/calibration-root.pem \
+       --subject "WRFCoin owner (testnet)" --station st_0123456789ab --owner 0x... --days 365 \
+       --sensor "Davis 6152 temp/RH" --method "two-point salt test" --reference "NIST-traceable thermometer" \
+       --out cert.json
+   npx tsx scripts/calibration-certificate.ts verify --file cert.json --roots "$(cat roots.json)"
+   npx tsx scripts/calibration-certificate.ts submit --file cert.json --api http://<backend>:4001
+   ```
+
+   `sign` converts a raw station id to its alias locally; the raw id is never written into the
+   certificate. The private key is never printed or sent.
+3. **The backend verifies** (`POST /api/calibration-certificates`): schema, subject is an alias of a
+   known station, signature by an active trust root, validity window, revocation, artifact-id
+   clone. The signature is the authorization; nothing unsigned is stored. The certificate is stored
+   under its content id (CIDv1, raw codec, sha2-256 of the canonical JSON: the same id
+   `ipfs add --cid-version=1 --raw-leaves` would give, so it can be pinned later unchanged).
+4. **Anyone reads** `GET /api/calibration-certificates/station/:alias`: `status` (`calibrated`,
+   `expired`, `revoked`, `not_trusted`, `invalid` or `none`), the newest certificate with its full
+   signed JSON, up to five older ones, and the trust-root public keys, so the certificate can be
+   re-verified independently. Status is recomputed on every read: expiry, a revocation and a removed
+   trust root all show without a background job. The frontend station page shows it as a badge.
+
+### Expiry and revocation
+
+- Each certificate carries `issuedAt`/`expiresAt` (CLI default 365 days, at most 5 years). After
+  `expiresAt` the station reads `expired`.
+- `npx tsx scripts/calibration-certificate.ts revoke --key ... --artifact-id <id> --reason
+  sensor_replaced --out rev.json`, then `submit --file rev.json`. Only an active trust root's
+  signature is accepted (`POST /api/calibration-certificates/revocations`); the first revocation of a
+  certificate stands. Reasons: `superseded`, `sensor_replaced`, `sensor_moved`, `calibration_error`,
+  `key_compromise`, `other`.
+- Removing a root from `CALIBRATION_TRUST_ROOTS_JSON` turns its certificates `not_trusted`.
+
+### Exposure
+
+The public edge admits only `GET /api/calibration-certificates/station/st_<12 hex>` with no query
+(infra `public_onboarding.caddy`, behind `PUBLIC_READONLY_API=on`). The two POSTs are reached from
+the operator network. Reads: 30/min per client; writes: 10/min per client; bodies at most 16 KiB.
+
+### Chain (not built: consensus change)
+
+core4 already has the record type, but there is no live way to write it:
+
+- `StateTransition::RecordCalibrationAttestation` and `ChainState.calibration_attestations`
+  (`shared-protocol/src/blockchain/state.rs`) exist, verify a `Calibrator`-role signing key from
+  `signing_keys`, and are part of the state root.
+- The only code that produced that transition was `native-chain/src/legacy/proof_of_publishing.rs`
+  (a `calibration_attestation` field inside a reveal), and `native-chain/src/legacy` is not compiled
+  (`native-chain/src/lib.rs` has no `legacy` module). No live `TransactionType` maps to it.
+- `has_active_calibration` decides `contributor_class_for_station` (`VerifiedStation`), which sets
+  the trust weight used for rewards. Writing calibration records therefore changes rewards: it is
+  consensus code (new transaction type or reveal field, feature-scheduled, all three producers
+  upgraded together, determinism differential).
+- What is live: a reveal's `provenance.calibration_attestation_cid` is canonicalized and bound to the
+  station in `commit_reveal_state.calibration_cid_bindings` (first station wins; a reuse by another
+  station is refused). That binds a CID to a station on chain but does not make the station
+  "calibrated" and is not read by anything here.
+
+So certificates live off chain for now, publicly verifiable by signature. Putting them on chain is
+an owner decision (see DECISIONS.md) and a separate consensus feature.

@@ -10,6 +10,7 @@
     "/api/blockchain/validators/:address",
     "/api/bridges/capabilities/readiness",
     "/api/build",
+    "/api/calibration-certificates/station/:alias",
     "/api/capabilities",
     "/api/competitions/",
     "/api/competitions/:week",
