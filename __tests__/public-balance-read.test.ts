@@ -1,6 +1,6 @@
 /**
  * Public balance read for the passkey wallet (owner ruling 2026-10-28 (b)):
- * GET /api/public/balance/:address -> { address, balance, height }, default OFF, 30/min per IP,
+ * GET /api/public/balance/:address -> { address, balance, height, earned }, default OFF, 30/min per IP,
  * 5 s per-address cache, upstream failures are 502/504 and never a 200 with a zero.
  */
 import http from 'node:http';
@@ -98,13 +98,14 @@ describe('GET /api/public/balance/:address', () => {
   const tipReads = () => seen.filter((s) => s.path === '/blockchain').length;
   const addr = (i: number) => `0x${i.toString(16).padStart(40, '0')}`;
 
-  it('pins the response shape: exactly address, balance and height, in the chain units and string form', async () => {
+  it('pins the response shape: exactly address, balance, height and earned, in the chain units and string form', async () => {
     const r = await request(makeApp()).get(`/api/public/balance/${ADDR}`)
       .set('Authorization', 'Bearer caller-token-must-not-travel').set('x-request-id', 'caller-request-id');
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ address: LOWER, balance: '123456789012345677901', height: 4242 });
-    expect(Object.keys(r.body).sort()).toEqual(['address', 'balance', 'height']);
+    expect(r.body).toEqual({ address: LOWER, balance: '123456789012345677901', height: 4242, earned: '5' });
+    expect(Object.keys(r.body).sort()).toEqual(['address', 'balance', 'earned', 'height']);
     expect(typeof r.body.balance).toBe('string');
+    expect(typeof r.body.earned).toBe('string');
     expect(r.headers['cache-control']).toBe('no-store');
     // Tip first, then the account; the server Reader bearer only, no caller header.
     expect(seen.map((s) => s.path)).toEqual(['/blockchain', `/addresses/${LOWER}`]);
@@ -119,7 +120,23 @@ describe('GET /api/public/balance/:address', () => {
     accountReply = { status: 404, json: { ok: false, data: null, error: { code: 'NOT_FOUND', message: 'address not found' } } };
     const r = await request(makeApp()).get(`/api/public/balance/${OTHER}`);
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ address: OTHER, balance: '0', height: 4242 });
+    expect(r.body).toEqual({ address: OTHER, balance: '0', height: 4242, earned: '0' });
+  });
+
+  it('returns earned_balance_total exactly (above 2^53, no float), and it can exceed the spendable balance', async () => {
+    // Node pay is a direct state credit with no transaction: this total is where it shows.
+    accountReply = okAccount({ spendable_balance: '0', earned_balance_total: '37925925888000000001' });
+    const r = await request(makeApp()).get(`/api/public/balance/${ADDR}`);
+    expect(r.status).toBe(200);
+    expect(r.body.balance).toBe('0');
+    expect(r.body.earned).toBe('37925925888000000001');
+  });
+
+  it('answers earned: null (unknown, not zero) when the node does not send earned_balance_total, and keeps the balance', async () => {
+    accountReply = okAccount({ earned_balance_total: undefined });
+    const r = await request(makeApp()).get(`/api/public/balance/${ADDR}`);
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ address: LOWER, balance: '123456789012345677901', height: 4242, earned: null });
   });
 
   it.each([
@@ -249,6 +266,9 @@ describe('GET /api/public/balance/:address', () => {
       ['no spendable_balance (gross balance only, never used)', () => { accountReply = okAccount({ spendable_balance: undefined }); }],
       ['balance with a fraction', () => { accountReply = okAccount({ spendable_balance: '1.5' }); }],
       ['answer for another address', () => { accountReply = okAccount({ address: OTHER }); }],
+      ['earned as a number', () => { accountReply = okAccount({ earned_balance_total: 5 }); }],
+      ['earned negative', () => { accountReply = okAccount({ earned_balance_total: '-5' }); }],
+      ['earned with a fraction', () => { accountReply = okAccount({ earned_balance_total: '0.5' }); }],
     ];
     it.each(cases)('%s -> 502', async (_label, arrange) => {
       arrange();

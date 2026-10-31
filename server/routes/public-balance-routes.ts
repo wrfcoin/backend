@@ -1,17 +1,22 @@
 /**
  * Public balance read for the passkey wallet (owner ruling 2026-10-28 (b)).
  *
- *   GET /api/public/balance/:address   ->   { address, balance, height }
+ *   GET /api/public/balance/:address   ->   { address, balance, height, earned }
  *
  * A passkey wallet holds no ed25519 key, so it cannot get the wallet JWT that /api/wallet/:address
  * needs, and core4 GET /addresses/<addr> needs a Reader bearer. This route reads the account with the
- * backend's own Reader credential and returns three fields only:
+ * backend's own Reader credential and returns four fields only:
  *   - address: the lowercase form core4 answers with;
  *   - balance: the spendable amount in base units as a decimal string (core4 `spendable_balance`, the
  *     value a transfer is checked against and the one /api/wallet/:address calls `balance`);
  *   - height:  a tip height read before the account (shared, at most 5 s old), so the balance is at
- *     least that fresh.
- * No nonce, stake, earnings or history. A caller credential is never forwarded and the server
+ *     least that fresh;
+ *   - earned:  everything ever credited to the account as earnings, in base units as a decimal string
+ *     (core4 `earned_balance_total`; it never goes down when coins are spent). Node settlement pays
+ *     bonded nodes by crediting the payout account inside state apply, with no transaction, so block
+ *     indexes never see node pay and this total is the one public place it shows (owner demo
+ *     2026-10-31). `null` when the node did not send the field (an older node), never a guessed 0.
+ * No nonce, stake, per-reward history or transactions. A caller credential is never forwarded and the server
  * credential never leaves this process: upstream text is not relayed and this route logs nothing.
  *
  * Dormant unless PUBLIC_BALANCE_READ_ENABLED=true (read per request; 404 otherwise).
@@ -35,7 +40,7 @@ import express, { type Request, type RequestHandler, type Response } from 'expre
 
 type Core4Response = { ok: boolean; status: number; payload: any };
 export type Core4Fetch = (path: string, options?: Record<string, unknown>) => Promise<Core4Response>;
-export type PublicBalance = { address: string; balance: string; height: number };
+export type PublicBalance = { address: string; balance: string; height: number; earned: string | null };
 type ReadResult =
   | { kind: 'ok'; value: PublicBalance }
   | { kind: 'upstream_error' }
@@ -156,7 +161,7 @@ export function createPublicBalanceRouter(deps: PublicBalanceDeps = {}): express
       const account = await fetchCore4Json(`/addresses/${encodeURIComponent(address)}`, { headers });
       if (account.status === 404 && account.payload?.error?.code === 'NOT_FOUND') {
         // core4's answer for an account that is not in state: nothing has ever been credited to it.
-        return { kind: 'ok', value: { address, balance: '0', height } };
+        return { kind: 'ok', value: { address, balance: '0', height, earned: '0' } };
       }
       if (!account.ok) return { kind: 'upstream_error' };
       const data = unwrap(account.payload) ?? {};
@@ -164,7 +169,13 @@ export function createPublicBalanceRouter(deps: PublicBalanceDeps = {}): express
       const raw = data.spendable_balance;
       if (typeof raw !== 'string' || !BASE_UNITS_RE.test(raw)) return { kind: 'upstream_error' };
       if (typeof data.address === 'string' && data.address.toLowerCase() !== address) return { kind: 'upstream_error' };
-      return { kind: 'ok', value: { address, balance: raw, height } };
+      // Absent (an older node) is "unknown"; present but malformed means the answer is not trustworthy.
+      const earnedRaw = data.earned_balance_total;
+      if (earnedRaw !== undefined && earnedRaw !== null && (typeof earnedRaw !== 'string' || !BASE_UNITS_RE.test(earnedRaw))) {
+        return { kind: 'upstream_error' };
+      }
+      const earned = typeof earnedRaw === 'string' ? earnedRaw : null;
+      return { kind: 'ok', value: { address, balance: raw, height, earned } };
     } catch (error) {
       return { kind: isTimeout(error) ? 'upstream_timeout' : 'upstream_error' };
     }
@@ -203,8 +214,8 @@ export function createPublicBalanceRouter(deps: PublicBalanceDeps = {}): express
     if (!token) return fail(res, 503, 'CORE4_READER_CREDENTIAL_UNCONFIGURED', 'Chain reads are unavailable on this server.');
     const result = await read(input.toLowerCase(), token);
     if (result.kind === 'ok') {
-      const { address, balance, height } = result.value;
-      return res.json({ address, balance, height });
+      const { address, balance, height, earned } = result.value;
+      return res.json({ address, balance, height, earned });
     }
     if (result.kind === 'budget_exhausted') {
       res.set('Retry-After', String(result.retryAfterSeconds));
