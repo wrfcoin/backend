@@ -12,6 +12,7 @@ These are source entrypoints and their documented default ports. Availability de
 | Node Discovery | 9010 HTTP / 9002 WS default | `easy_node_discovery.js` |
 | Leaderboard | main-api (`/api/weather/leaderboard`) | `routes/weather-leaderboard-routes.ts` |
 | Forecasters | main-api (`/api/forecasters`) | `routes/forecasters-routes.ts` |
+| Weekly forecast competition | main-api (`/api/competitions`) | `routes/competition-routes.ts` |
 | Cross-Chain Protocol | 3000 | `cross_chain_protocol_server.js` |
 | Cross-Chain API | main-api (`/api/cross-chain`) | `routes/cross-chain.ts` |
 | Compute Networks | 6000 | `compute_networks_server.ts` |

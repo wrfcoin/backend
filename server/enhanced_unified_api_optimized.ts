@@ -1639,7 +1639,7 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // callers (frontend useReferrals.js, mobile referral_service.dart). Mutators
   // need a wallet JWT for the acting wallet; activation pays nothing. Table:
   // 0023_referrals. DEFERRED and deliberately NOT mounted (see
-  // /api/capabilities and server/CLAUDE.md): duels, challenges, competitions,
+  // /api/capabilities and server/CLAUDE.md): duels, challenges,
   // marketplace, academic, subscription, webhooks, telemetry,
   // contributor summary.
   safeMount('/api/referrals',               './routes/referral-routes');
@@ -1691,6 +1691,9 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // unusual?") relayed with the caller's own AppID, never stored or logged. Dormant unless
   // WOLFRAM_READING_CHECK_ENABLED=true.
   safeMount('/api/integrations/wolfram',    './routes/wolfram-reading-check-routes');
+  // backend#251: weekly forecast competition, points only, over the same indexed forecast rows.
+  // OFF unless FORECAST_COMPETITIONS_ENABLED=true too (set only after migration 0036 is applied).
+  safeMount('/api/competitions',            './routes/competition-routes');
 
   const mountSnapshot = safeMountReadinessSnapshot();
   appLogger.info('safeMount inventory', {
