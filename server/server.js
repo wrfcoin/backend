@@ -49,7 +49,6 @@ const {
 const config = require('../config');
 const DbAccessControl = require('./middleware/dbAccessControl');
 const dbSecurityMiddleware = require('./middleware/dbSecurityMiddleware');
-const computationalRoutes = require('./routes/computational');
 const WrfcoinSDK = require('./sdk');
 const governanceController = require('./controllers/governanceController');
 const wolframPlugin = require('./plugins/wolframPlugin');
@@ -577,7 +576,6 @@ app.get('/api/metrics/cache', async (req, res) => {
 app.use('/api/integrations/wolfram', wolframRoutes);
 
 // Register Computational NFT routes
-app.use('/api/computational', computationalRoutes);
 
 // Initialize SDK
 const sdk = new WrfcoinSDK({
@@ -729,10 +727,6 @@ app.use('/api/kpi/alignment', alignmentKpiRoutes.default || alignmentKpiRoutes);
 // Achievement routes for mobile gamification (backend#197)
 const achievementRoutes = require('./routes/achievementRoutes');
 app.use('/api/achievement', achievementRoutes.default || achievementRoutes);
-
-// Slack command routes for bidirectional Claude-in-Slack bridge
-const slackCommandRoutes = require('./routes/slack-command-routes');
-app.use('/api/slack', slackCommandRoutes.default || slackCommandRoutes);
 
 // Unknown API routes must fail closed before the production SPA catch-all.
 // Otherwise retired or misspelled GET endpoints return index.html with 200.
