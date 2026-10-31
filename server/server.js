@@ -18,7 +18,6 @@ const { csrfProtectionMiddleware } = require('../shared/middleware/csrf-protecti
 // Graceful shutdown manager
 const { GracefulShutdown, ShutdownPriority } = require('../shared/graceful-shutdown/index.js');
 
-const wolframRoutes = require('./routes/wolfram-routes');
 const { logger, securityLogger } = require('./utils/logger');
 const apiAudit = require('./middleware/apiAudit');
 // SECURITY FIX (102.8): Import session store configuration for Redis-based sessions
@@ -51,7 +50,6 @@ const DbAccessControl = require('./middleware/dbAccessControl');
 const dbSecurityMiddleware = require('./middleware/dbSecurityMiddleware');
 const WrfcoinSDK = require('./sdk');
 const governanceController = require('./controllers/governanceController');
-const wolframPlugin = require('./plugins/wolframPlugin');
 const aiPluginManager = require('./plugins/ai_plugin_manager');
 const MCPServer = require('./mcp/mcpServer');
 const { createHealthMiddleware } = require('./middleware/create-health-middleware');
@@ -572,8 +570,9 @@ app.get('/api/metrics/cache', async (req, res) => {
   }
 });
 
-// Register Wolfram API routes
-app.use('/api/integrations/wolfram', wolframRoutes);
+// Wolfram is bring-your-own-key (owner ruling 2026-11-01): no shared server key, no settings store,
+// no code execution. The deployed entrypoint mounts the one reading-check relay; see
+// routes/wolfram-reading-check-routes.ts.
 
 // Register Computational NFT routes
 
@@ -591,9 +590,6 @@ if (typeof governanceController.initialize === 'function') {
 } else {
   logger.warn('Governance controller initialization skipped - method not available');
 }
-
-// Initialize Wolfram plugin with empty config (will be configured through API)
-wolframPlugin.initialize({ appId: null });
 
 // Initialize AI Plugin Manager
 aiPluginManager.initialize().then(initialized => {

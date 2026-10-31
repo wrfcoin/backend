@@ -278,6 +278,9 @@ app.options('*', (_req, res) => { res.status(200).end(); });
 // Email observation gateway (backend-archive#1495): 16 KiB parse limit on its own path, ahead
 // of the global 1 MB parsers (which then skip the already-parsed body).
 app.use('/api/transport/email', express.json({ limit: '16kb' }), express.urlencoded({ extended: false, limit: '16kb' }));
+// Wolfram reading check (bring-your-own-key): the body carries the caller's own AppID, so it is read
+// raw (2 KiB) ahead of the global JSON parser, whose parse errors could quote it.
+app.use('/api/integrations/wolfram/reading-check', express.raw({ type: () => true, limit: 2048 }));
 app.use(express.json({ limit: '1mb', verify: captureOwnerActionRawBody }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
@@ -1684,6 +1687,10 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   safeMount('/api/earnings',                './routes/earnings-routes');
   // core4#3604 A4: public forecaster track record, fed by the chain-rewards indexer's forecast rows.
   safeMount('/api/forecasters',             './routes/forecasters-routes');
+  // Owner ruling 2026-11-01: Wolfram is bring-your-own-key. One fixed question ("is this reading
+  // unusual?") relayed with the caller's own AppID, never stored or logged. Dormant unless
+  // WOLFRAM_READING_CHECK_ENABLED=true.
+  safeMount('/api/integrations/wolfram',    './routes/wolfram-reading-check-routes');
 
   const mountSnapshot = safeMountReadinessSnapshot();
   appLogger.info('safeMount inventory', {

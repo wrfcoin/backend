@@ -57,7 +57,8 @@ const reachedHeader = 'x-safe-mount-build-reached';
 // 60: owner ruling 2026-10-28 (b) mounts the default-OFF /api/public/balance read.
 // 61: backend#229 mounts the default-OFF /api/proofs proof card read (./routes/proof-card-routes).
 // 62: owner demo queue 2026-11-01 item 3 mounts the default-OFF /api/network nodes read (./routes/network-nodes-routes).
-const expectedMountCount = 62;
+// 63: owner ruling 2026-11-01 mounts the default-OFF bring-your-own-key Wolfram reading check.
+const expectedMountCount = 63;
 
 // Removed by #935/#937 — each of these now PASSES this gate, and the gate
 // itself instructed the removal ("known failures now pass; remove their
