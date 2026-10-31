@@ -233,7 +233,8 @@ describe('live entrypoint wiring (#1178)', () => {
   });
 
   it.each([
-    'duel-routes', 'challenge-routes', 'competition-routes', 'proof-card-routes', 'marketplace-routes',
+    // proof-card-routes left this list in backend#229: rewritten to read the node, mounted default-OFF.
+    'duel-routes', 'challenge-routes', 'competition-routes', 'marketplace-routes',
     'academic-routes', 'subscription-routes', 'webhook-routes', 'telemetry-routes', 'contributor-summary-routes',
   ])('does not mount the deferred %s', (mod) => {
     expect(entry).not.toMatch(new RegExp(`['"]\\./routes/${mod}(\\.js)?['"]`));

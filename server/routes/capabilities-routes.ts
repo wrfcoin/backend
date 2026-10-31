@@ -24,6 +24,9 @@
 import express, { Router } from 'express';
 import { earningsEnabled } from '../services/chain-rewards/earnings.js';
 import { forecastersEnabled } from '../services/chain-rewards/forecaster-stats.js';
+
+/** Same per-request flag proof-card-routes.ts reads. */
+const proofCardsEnabled = () => process.env.PROOF_CARDS_ENABLED === 'true';
 import type {
   CapabilityMode,
   CapabilityReadinessResult,
@@ -230,7 +233,7 @@ const FEATURE_SEEDS: FeatureSeed[] = [
   { key: 'duels', status: 'unavailable', note: 'DEFERRED, not mounted (duel-routes.ts): forecast_duels has no migration, no code ever sets winner/resolvedAt (no resolver), and nothing escrows stakeAmount — mounting would accept stakes that can never settle (backend#1178)' },
   { key: 'challenges', status: 'unavailable', note: 'DEFERRED, not mounted (challenge-routes.ts): challenges/challenge_participants have no migration (backend#1178)' },
   { key: 'competitions', status: 'unavailable', note: 'DEFERRED, not mounted (competition-routes.ts): competitions/competition_scores have no migration (backend#1178)' },
-  { key: 'proofCards', status: 'unavailable', note: 'DEFERRED, not mounted (proof-card-routes.ts): only unified_api_server.ts mounted it and that entrypoint never deploys (backend#1178)' },
+  { key: 'proofCards', status: 'unavailable', note: 'Default-OFF (PROOF_CARDS_ENABLED) /api/proofs/:commitId (proof-card-routes.ts, backend#229): one station reading and the block it landed in, read from the node (reward-evidence, observation scan, /chain/block); no backend table. A reveal outside the bounded scan is reported not_located, never guessed' },
   { key: 'marketplace', status: 'unavailable', note: 'DEFERRED, not mounted (marketplace-routes.ts): only unified_api_server.ts mounted it and that entrypoint never deploys (backend#1178)' },
   { key: 'academic', status: 'unavailable', note: 'DEFERRED, not mounted (academic-routes.ts): only unified_api_server.ts mounted it and that entrypoint never deploys (backend#1178)' },
   { key: 'subscription', status: 'unavailable', note: 'DEFERRED, not mounted (subscription-routes.ts): only the never-deployed unified_api_server.ts mounted it (backend#1178)' },
@@ -454,13 +457,14 @@ export function createCapabilitiesRouter(
     );
     const features: Record<string, FeatureStatusEntry> = {};
     for (const seed of FEATURE_SEEDS) {
-      if ((seed.key === 'earningsRead' && !earningsEnabled()) || (seed.key === 'forecastersRead' && !forecastersEnabled())) {
+      if ((seed.key === 'earningsRead' && !earningsEnabled()) || (seed.key === 'forecastersRead' && !forecastersEnabled())
+        || (seed.key === 'proofCards' && !proofCardsEnabled())) {
         features[seed.key] = { status: 'unavailable', reasonCode: 'not_wired' };
         continue;
       }
       const observation = evidence[seed.key];
       features[seed.key] = evaluateFeature(
-        seed.key === 'earningsRead' || seed.key === 'forecastersRead' ? { ...seed, status: 'configured' } : seed,
+        seed.key === 'earningsRead' || seed.key === 'forecastersRead' || seed.key === 'proofCards' ? { ...seed, status: 'configured' } : seed,
         observation?.capabilityId === seed.key ? observation : undefined,
         evaluatedAt,
         maxEvidenceAgeMs,
