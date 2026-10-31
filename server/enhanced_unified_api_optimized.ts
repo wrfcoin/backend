@@ -1626,12 +1626,15 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   safeMount('/api/faucet',                  './routes/faucet-bond-routes');
   // Owner ruling 2026-10-28 (b): passkey wallets have no JWT; default-OFF public balance read (3 fields).
   safeMount('/api/public/balance',          './routes/public-balance-routes');
+  // backend#229 (owner demo queue 2026-11-01): default-OFF public proof card for one station reading,
+  // read from the node (reward evidence + reveal scan + block), never from a backend table.
+  safeMount('/api/proofs',                  './routes/proof-card-routes');
   // backend#1178: referrals are the one growth-cluster router with shipping
   // callers (frontend useReferrals.js, mobile referral_service.dart). Mutators
   // need a wallet JWT for the acting wallet; activation pays nothing. Table:
   // 0023_referrals. DEFERRED and deliberately NOT mounted (see
   // /api/capabilities and server/CLAUDE.md): duels, challenges, competitions,
-  // proof cards, marketplace, academic, subscription, webhooks, telemetry,
+  // marketplace, academic, subscription, webhooks, telemetry,
   // contributor summary.
   safeMount('/api/referrals',               './routes/referral-routes');
   safeMount('/api/reputation',              './routes/reputationRoutes');
