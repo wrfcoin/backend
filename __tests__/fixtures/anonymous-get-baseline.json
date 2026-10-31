@@ -62,6 +62,7 @@
     "/api/live",
     "/api/operators/:walletAddress/og-meta",
     "/api/operators/:walletAddress/profile",
+    "/api/public/balance/:address",
     "/api/pythia/bounties",
     "/api/pythia/events",
     "/api/pythia/health",
