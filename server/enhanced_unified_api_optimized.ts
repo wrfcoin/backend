@@ -1629,6 +1629,9 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // backend#229 (owner demo queue 2026-11-01): default-OFF public proof card for one station reading,
   // read from the node (reward evidence + reveal scan + block), never from a backend table.
   safeMount('/api/proofs',                  './routes/proof-card-routes');
+  // Owner demo queue 2026-11-01 item 3: default-OFF public producers / bonded nodes / attesters read,
+  // from the node (replaces the never-mounted validators.js table reads).
+  safeMount('/api/network',                 './routes/network-nodes-routes');
   // backend#1178: referrals are the one growth-cluster router with shipping
   // callers (frontend useReferrals.js, mobile referral_service.dart). Mutators
   // need a wallet JWT for the acting wallet; activation pays nothing. Table:

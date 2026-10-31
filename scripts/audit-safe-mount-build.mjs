@@ -56,7 +56,8 @@ const reachedHeader = 'x-safe-mount-build-reached';
 // 59: backend#21's passkey send router reaches the deployed entrypoint (./routes/wallet-passkey-send-gate).
 // 60: owner ruling 2026-10-28 (b) mounts the default-OFF /api/public/balance read.
 // 61: backend#229 mounts the default-OFF /api/proofs proof card read (./routes/proof-card-routes).
-const expectedMountCount = 61;
+// 62: owner demo queue 2026-11-01 item 3 mounts the default-OFF /api/network nodes read (./routes/network-nodes-routes).
+const expectedMountCount = 62;
 
 // Removed by #935/#937 — each of these now PASSES this gate, and the gate
 // itself instructed the removal ("known failures now pass; remove their
