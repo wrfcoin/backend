@@ -16,8 +16,11 @@ type DbExecutor = {
  * first-party wallet scheme decided in core4#3234 (SLIP-0010 ed25519, the
  * client signs); its JWT sub is the core4 chain address of the signing key,
  * which is what the wallet routes compare against a signed transfer's from.
+ * 'session_key' is a device key the owner registered on chain with limits
+ * (core4 feature session_keys); it signs in for the OWNER (JWT sub = owner
+ * address) only while core4 lists it as active with the wallet_login method.
  */
-export type WalletLoginScheme = 'evm' | 'ed25519';
+export type WalletLoginScheme = 'evm' | 'ed25519' | 'session_key';
 
 interface WalletLoginRequest {
   address: string;
@@ -41,6 +44,7 @@ interface RefreshTokenRecord {
   address: string;
   expiresAtMs: number;
   walletScheme?: WalletLoginScheme;
+  sessionPublicKey?: string;
 }
 
 export interface WalletLoginChallenge {
@@ -56,6 +60,7 @@ interface StoredWalletLoginChallenge extends WalletLoginChallenge {
   // Absent on challenges stored before ed25519 login existed: those are EVM.
   scheme?: WalletLoginScheme;
   network?: string;
+  sessionPublicKey?: string;
 }
 
 interface WalletLoginMessageInput {
@@ -71,6 +76,26 @@ interface Ed25519WalletLoginMessageInput extends WalletLoginMessageInput {
   network: string;
 }
 
+interface SessionKeyWalletLoginMessageInput extends Ed25519WalletLoginMessageInput {
+  sessionPublicKey: string;
+}
+
+/** One record of core4 GET /accounts/{owner}/session-keys (fields this service reads). */
+export interface SessionKeyListRecord {
+  public_key?: unknown;
+  status?: unknown;
+  allowed_methods?: unknown;
+}
+
+export interface SessionKeyList {
+  owner?: unknown;
+  feature_active?: unknown;
+  session_keys?: unknown;
+}
+
+/** Reads an owner's session keys from core4 (Reader credential). */
+export type SessionKeyLookup = (owner: string) => Promise<SessionKeyList>;
+
 interface CreateWalletAuthServiceOptions {
   db?: DbExecutor;
   jwtSecret?: string;
@@ -82,6 +107,7 @@ interface CreateWalletAuthServiceOptions {
   walletAuthChainId?: number | string;
   walletAuthNetwork?: string;
   now?: () => Date;
+  sessionKeyLookup?: SessionKeyLookup;
 }
 
 export class WalletNonceRateLimitError extends Error {
@@ -185,12 +211,23 @@ const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
  */
 export const ED25519_WALLET_LOGIN_DOMAIN = 'wrfcoin_wallet_login_ed25519_v1';
 
+/**
+ * Domain tag of the session-key challenge. Distinct from the ed25519 tag so a
+ * device key's login signature can never be replayed as the owner key's, and
+ * from wrfcoin_session_key_transfer_auth_v1 so it is never a transfer.
+ */
+export const SESSION_KEY_WALLET_LOGIN_DOMAIN = 'wrfcoin_wallet_login_session_key_v1';
+
+/** The method a session key's grant must allow to sign in. */
+export const SESSION_KEY_LOGIN_METHOD = 'wallet_login';
+
 export function parseWalletLoginScheme(raw: unknown): WalletLoginScheme {
   if (raw === undefined || raw === null || raw === '') return 'evm';
   if (typeof raw !== 'string') throw new Error('unsupported wallet login scheme');
   const scheme = raw.trim().toLowerCase();
   if (scheme === 'evm' || scheme === 'secp256k1') return 'evm';
   if (scheme === 'ed25519') return 'ed25519';
+  if (scheme === 'session_key') return 'session_key';
   throw new Error('unsupported wallet login scheme');
 }
 
@@ -287,6 +324,51 @@ export function buildEd25519WalletLoginMessage(input: Ed25519WalletLoginMessageI
   return `${ED25519_WALLET_LOGIN_DOMAIN}\n${domain} wants you to sign in with your WRFCoin ed25519 account:\n${input.address.toLowerCase()}\n\nSign in to WRFCoin Testnet.\n\nURI: ${input.origin}\nVersion: 1\nScheme: ed25519\nChain ID: ${input.chainId}\nNetwork: ${input.network}\nNonce: ${input.nonce}\nIssued At: ${input.issuedAt}\nExpiration Time: ${input.expirationTime}`;
 }
 
+/**
+ * Challenge a device session key signs to sign in for its owner. The ed25519
+ * challenge's fields (address = the OWNER's address) under its own domain tag,
+ * plus the session public key, so the signature is bound to that one key.
+ */
+export function buildSessionKeyWalletLoginMessage(input: SessionKeyWalletLoginMessageInput): string {
+  const domain = new URL(input.origin).host;
+  return `${SESSION_KEY_WALLET_LOGIN_DOMAIN}\n${domain} wants you to sign in with your WRFCoin account using a device key:\n${input.address.toLowerCase()}\n\nSign in to WRFCoin Testnet.\n\nURI: ${input.origin}\nVersion: 1\nScheme: session_key\nChain ID: ${input.chainId}\nNetwork: ${input.network}\nSession Key: ${input.sessionPublicKey.toLowerCase()}\nNonce: ${input.nonce}\nIssued At: ${input.issuedAt}\nExpiration Time: ${input.expirationTime}`;
+}
+
+/**
+ * True when core4's list for `owner` has `sessionPublicKey` as an ACTIVE key
+ * whose grant allows wallet_login. Anything else (feature off, revoked,
+ * expired, not yet valid, exhausted, other methods only, other owner) is false.
+ */
+export function sessionKeyAllowsLogin(list: SessionKeyList, owner: string, sessionPublicKey: string): boolean {
+  if (!list || typeof list !== 'object' || list.feature_active !== true) return false;
+  if (typeof list.owner === 'string' && list.owner.toLowerCase() !== owner.toLowerCase()) return false;
+  if (!Array.isArray(list.session_keys)) return false;
+  const key = sessionPublicKey.toLowerCase();
+  return (list.session_keys as SessionKeyListRecord[]).some(
+    (record) =>
+      !!record &&
+      typeof record.public_key === 'string' &&
+      record.public_key.toLowerCase() === key &&
+      record.status === 'active' &&
+      Array.isArray(record.allowed_methods) &&
+      record.allowed_methods.includes(SESSION_KEY_LOGIN_METHOD),
+  );
+}
+
+function defaultSessionKeyLookup(): SessionKeyLookup {
+  return async (owner: string) => {
+    const { core4ReaderHeaders } = require('../utils/core4-reader-credential.js') as {
+      core4ReaderHeaders: (headers?: Record<string, unknown>) => Record<string, string>;
+    };
+    const { fetchCore4Json, extractCore4Data } = await import('../../shared/core4-route-client.js');
+    const response = await fetchCore4Json(`/accounts/${encodeURIComponent(owner.toLowerCase())}/session-keys`, {
+      headers: core4ReaderHeaders({}),
+    });
+    if (!response.ok) throw new Error(`core4 session-key list unavailable (${response.status})`);
+    return (extractCore4Data(response.payload) ?? {}) as SessionKeyList;
+  };
+}
+
 function verifyEd25519Signature(publicKeyHex: string, signatureHex: string, message: string): boolean {
   return verifyEd25519SignatureBytes(publicKeyHex, signatureHex, Buffer.from(message, 'utf8'));
 }
@@ -365,6 +447,7 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
   const walletAuthChainId = resolveWalletAuthChainId(options.walletAuthChainId);
   const walletAuthNetwork = resolveWalletAuthNetwork(options.walletAuthNetwork);
   const now = options.now ?? (() => new Date());
+  const sessionKeyLookup = options.sessionKeyLookup ?? defaultSessionKeyLookup();
   let _redis: Redis | null = options.redis ?? null;
 
   function getRedis(): Redis {
@@ -397,20 +480,52 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
   function buildChallengeMessage(
     scheme: WalletLoginScheme,
     input: WalletLoginMessageInput,
+    sessionPublicKey = '',
   ): string {
+    if (scheme === 'session_key') {
+      return buildSessionKeyWalletLoginMessage({ ...input, network: walletAuthNetwork, sessionPublicKey });
+    }
     return scheme === 'ed25519'
       ? buildEd25519WalletLoginMessage({ ...input, network: walletAuthNetwork })
       : buildWalletLoginMessage(input);
   }
 
+  function parseSessionPublicKey(raw: unknown): string {
+    if (typeof raw !== 'string' || !raw.trim()) {
+      throw new Error('session public key is required for session_key login');
+    }
+    const key = stripHexPrefix(raw.trim()).toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(key) || !isStrictEd25519Point(key)) {
+      throw new Error('session public key must be a canonical 32-byte ed25519 key in hex');
+    }
+    return key;
+  }
+
+  async function assertSessionKeyCanLogin(owner: string, sessionPublicKey: string): Promise<void> {
+    let list: SessionKeyList;
+    try {
+      list = await sessionKeyLookup(owner);
+    } catch (error) {
+      appLogger.warn('session key lookup failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw new Error('session key status is unavailable');
+    }
+    if (!sessionKeyAllowsLogin(list, owner, sessionPublicKey)) {
+      throw new Error('session key is not active for wallet login on this account');
+    }
+  }
+
   async function generateNonce(
     address: string,
     rawScheme?: unknown,
-  ): Promise<WalletLoginChallenge & { scheme?: WalletLoginScheme; network?: string }> {
+    rawSessionPublicKey?: unknown,
+  ): Promise<WalletLoginChallenge & { scheme?: WalletLoginScheme; network?: string; sessionPublicKey?: string }> {
     const scheme = parseWalletLoginScheme(rawScheme);
     if (!isEvmAddress(address)) {
       throw new Error('invalid address format');
     }
+    const sessionPublicKey = scheme === 'session_key' ? parseSessionPublicKey(rawSessionPublicKey) : '';
     const nonce = crypto.randomBytes(32).toString('hex');
     const issuedAtMs = now().getTime();
     const issuedAt = new Date(issuedAtMs).toISOString();
@@ -422,7 +537,7 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
       nonce,
       issuedAt,
       expirationTime,
-    });
+    }, sessionPublicKey);
     const challenge: StoredWalletLoginChallenge = {
       nonce,
       message,
@@ -431,6 +546,7 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
       origin: walletAuthOrigin,
       chainId: walletAuthChainId,
       ...(scheme === 'ed25519' ? { scheme, network: walletAuthNetwork } : {}),
+      ...(scheme === 'session_key' ? { scheme, network: walletAuthNetwork, sessionPublicKey } : {}),
     };
     const result = await getRedis().eval(ISSUE_NONCE, 2,
       `${nonceBucketKey(scheme, address)}:issuance`, nonceKey(scheme, address, nonce),
@@ -446,6 +562,9 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
     if (scheme === 'ed25519') {
       return { nonce, message, issuedAt, expirationTime, scheme, network: walletAuthNetwork };
     }
+    if (scheme === 'session_key') {
+      return { nonce, message, issuedAt, expirationTime, scheme, network: walletAuthNetwork, sessionPublicKey };
+    }
     return { nonce, message, issuedAt, expirationTime };
   }
 
@@ -455,6 +574,7 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
     aTtlSec: number,
     rTtlSec: number,
     walletScheme: WalletLoginScheme = 'evm',
+    sessionPublicKey = '',
   ): Promise<AuthTokenResponse> {
     const expiresIn = aTtlSec;
 
@@ -466,6 +586,7 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
         type: 'access',
         // EVM tokens keep their original claim set.
         ...(walletScheme === 'ed25519' ? { wallet_scheme: 'ed25519' } : {}),
+        ...(walletScheme === 'session_key' ? { wallet_scheme: 'session_key' } : {}),
       },
       secret,
       {
@@ -485,6 +606,7 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
         address,
         expiresAtMs: (Math.floor(Date.now() / 1000) + rTtlSec) * 1000,
         ...(walletScheme === 'ed25519' ? { walletScheme } : {}),
+        ...(walletScheme === 'session_key' ? { walletScheme, sessionPublicKey } : {}),
       }),
       'EX',
       rTtlSec
@@ -537,6 +659,14 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
       }
       address = derivedAddress;
     }
+    let sessionPublicKey = '';
+    if (scheme === 'session_key') {
+      sessionPublicKey = parseSessionPublicKey(payload.pubkey);
+      if (!/^[0-9a-fA-F]{128}$/.test(stripHexPrefix(signature))) {
+        throw new Error('signature must be a 64-byte ed25519 signature in hex');
+      }
+      address = address.toLowerCase();
+    }
 
     // Validate nonce against Redis (single-use)
     let redisKey = nonceKey(scheme, address, nonce);
@@ -574,13 +704,14 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
             nonce: challenge.nonce,
             issuedAt: challenge.issuedAt,
             expirationTime: challenge.expirationTime,
-          })
+          }, sessionPublicKey)
         : '';
     if (
       typeof challenge.nonce !== 'string' ||
       typeof challenge.message !== 'string' ||
       (challenge.scheme ?? 'evm') !== scheme ||
-      (scheme === 'ed25519' && challenge.network !== walletAuthNetwork) ||
+      (scheme !== 'evm' && challenge.network !== walletAuthNetwork) ||
+      (scheme === 'session_key' && challenge.sessionPublicKey !== sessionPublicKey) ||
       challenge.origin !== walletAuthOrigin ||
       challenge.chainId !== walletAuthChainId ||
       !Number.isFinite(issuedAtMs) ||
@@ -615,9 +746,16 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
     const isValid =
       scheme === 'ed25519'
         ? verifyEd25519Signature(ed25519PublicKey, stripHexPrefix(signature), challenge.message)
-        : await verifyWalletSignature(address, signature, challenge.message);
+        : scheme === 'session_key'
+          ? verifyEd25519Signature(sessionPublicKey, stripHexPrefix(signature), challenge.message)
+          : await verifyWalletSignature(address, signature, challenge.message);
     if (!isValid) {
       throw new Error('invalid wallet signature');
+    }
+    // Only after the signature proves possession of the key: ask core4 whether
+    // the owner registered it, it is live, and its grant allows wallet_login.
+    if (scheme === 'session_key') {
+      await assertSessionKeyCanLogin(address, sessionPublicKey);
     }
 
     // Best-effort wallet upsert keeps auth available when local DB auth
@@ -637,7 +775,7 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
       });
     }
 
-    return await issueTokens(address, jwtSecret, accessTokenTtlSec, refreshTokenTtlSec, scheme);
+    return await issueTokens(address, jwtSecret, accessTokenTtlSec, refreshTokenTtlSec, scheme, sessionPublicKey);
   }
 
   async function refresh(payload: RefreshRequest): Promise<AuthTokenResponse> {
@@ -660,12 +798,20 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
     // Rotate: delete old token before issuing new one
     await getRedis().del(redisKey);
 
+    // A device key that was revoked (or expired) since sign-in stops
+    // refreshing: re-check it before minting a new token.
+    if (existing.walletScheme === 'session_key') {
+      if (typeof existing.sessionPublicKey !== 'string') throw new Error('invalid refresh token');
+      await assertSessionKeyCanLogin(existing.address, existing.sessionPublicKey);
+    }
+
     return await issueTokens(
       existing.address,
       jwtSecret,
       accessTokenTtlSec,
       refreshTokenTtlSec,
-      existing.walletScheme === 'ed25519' ? 'ed25519' : 'evm'
+      existing.walletScheme === 'ed25519' || existing.walletScheme === 'session_key' ? existing.walletScheme : 'evm',
+      existing.walletScheme === 'session_key' ? existing.sessionPublicKey : '',
     );
   }
 

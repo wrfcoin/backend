@@ -923,7 +923,9 @@ async function handleRequest(
       try {
         // ?scheme=ed25519 issues the first-party ed25519 challenge; no
         // scheme (or evm/secp256k1) keeps the original EVM challenge.
-        const challenge = await walletAuthService.generateNonce(address, query?.scheme);
+        // ?scheme=session_key&session_public_key=<hex> issues the device
+        // session-key challenge for the owner address in the path.
+        const challenge = await walletAuthService.generateNonce(address, query?.scheme, query?.session_public_key);
         success(challenge, 'Wallet login challenge generated');
       } catch (e) {
         if (e instanceof WalletNonceRateLimitError) {

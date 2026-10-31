@@ -24,6 +24,7 @@ const {
   parseBaseUnits,
   parseSignedTransfer,
 } = require('./wallet-transfer-contract');
+const { parseSessionKeyAction } = require('./session-key-contract');
 
 // All wallet operations require authentication (#230)
 router.use(requireAuth);
@@ -534,6 +535,20 @@ function rejectInvalidSignedTransfer(res, parsed) {
   });
 }
 
+// Exactly one authorization goes to core4: the owner's ed25519 key, or a
+// registered session key (core4 checks that key's scope and limits).
+function transferAuthorization(transfer) {
+  if (transfer.sessionKeyAuth) {
+    return {
+      session_key_auth: {
+        session_public_key: transfer.sessionKeyAuth.sessionPublicKey,
+        signature: transfer.sessionKeyAuth.signature,
+      },
+    };
+  }
+  return { auth_pubkey: transfer.authPubkey, auth_signature: transfer.authSignature };
+}
+
 async function submitSignedTransfer(req, res, expectedFrom) {
   const parsed = parseSignedTransfer(req.body);
   if (!parsed.ok) return rejectInvalidSignedTransfer(res, parsed);
@@ -569,8 +584,7 @@ async function submitSignedTransfer(req, res, expectedFrom) {
       nonce: transfer.nonce,
       transparent_opt_out: true,
       transparent_opt_out_reason: 'first-party wallet',
-      auth_pubkey: transfer.authPubkey,
-      auth_signature: transfer.authSignature,
+      ...transferAuthorization(transfer),
     },
   });
   if (!response.ok) return res.status(response.status || 502).json(response.payload);
@@ -600,6 +614,90 @@ router.post('/send', transferLimiter, async (req, res) => {
     const { sendCore4Unavailable } = await getCore4Client();
     logger.error('Transaction error:', error);
     return sendCore4Unavailable(res, error, 'Transaction failed');
+  }
+});
+
+/**
+ * Session keys (core4 feature session_keys): GET lists the caller's own
+ * grants with their limits and what is left; POST relays an owner-signed
+ * register or revoke. Both are owner-bound to the JWT subject. While the
+ * feature is off core4 answers the list with feature_active:false and the
+ * submit with 503 FEATURE_NOT_ACTIVE, which pass through unchanged.
+ */
+router.get('/:address/session-keys', async (req, res) => {
+  try {
+    if (!isLaunchAddress(req.params.address)) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_ADDRESS', message: 'Expected a core4 hex wallet address.' },
+      });
+    }
+    if (!requireOwnAddress(req, res)) return undefined;
+    if (!requireReaderToken(res)) return undefined;
+    const { fetchCore4Json, extractCore4Data } = await getCore4Client();
+    const response = await fetchCore4Json(
+      `/accounts/${encodeURIComponent(req.params.address.toLowerCase())}/session-keys`,
+      { headers: core4ReaderHeaders(req.headers) },
+    );
+    if (!response.ok) return res.status(response.status || 502).json(response.payload);
+    const data = extractCore4Data(response.payload);
+    if (!data || typeof data !== 'object' || !Array.isArray(data.session_keys)) {
+      return res.status(502).json({
+        success: false,
+        error: { code: 'CORE4_BAD_RESPONSE', message: 'core4 session-key list had an unexpected shape' },
+      });
+    }
+    return res.json({ success: true, data });
+  } catch (error) {
+    const { sendCore4Unavailable } = await getCore4Client();
+    return sendCore4Unavailable(res, error, 'Failed to read session keys');
+  }
+});
+
+router.post('/session-keys', transferLimiter, async (req, res) => {
+  try {
+    const caller = req.user && req.user.sub;
+    if (!caller || typeof caller !== 'string') {
+      return res.status(401).json({ error: 'Authenticated wallet address could not be determined' });
+    }
+    const parsed = parseSessionKeyAction(req.body);
+    if (!parsed.ok) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'VALIDATION_ERROR', message: parsed.message },
+      });
+    }
+    if (parsed.owner !== caller.toLowerCase()) {
+      return res.status(403).json({
+        success: false,
+        error: { code: 'FORBIDDEN', message: 'session key owner must match the authenticated wallet' },
+      });
+    }
+    let headers;
+    try {
+      headers = core4ContributorHeaders(req.headers);
+    } catch (error) {
+      if (error.code === CONTRIBUTOR_UNCONFIGURED) return sendContributorCredentialUnavailable(res);
+      throw error;
+    }
+    const { fetchCore4Json, extractCore4Data } = await getCore4Client();
+    const response = await fetchCore4Json('/session-keys/submit', {
+      method: 'POST',
+      headers,
+      body: { action: req.body.action },
+    });
+    if (!response.ok) return res.status(response.status || 502).json(response.payload);
+    const result = extractCore4Data(response.payload) || {};
+    return res.status(response.status || 202).json({
+      hash: result.tx_id ?? null,
+      action: parsed.kind.toLowerCase(),
+      status: 'submitted',
+      settled: false,
+    });
+  } catch (error) {
+    const { sendCore4Unavailable } = await getCore4Client();
+    logger.error('Session key action error:', error);
+    return sendCore4Unavailable(res, error, 'Session key action failed');
   }
 });
 

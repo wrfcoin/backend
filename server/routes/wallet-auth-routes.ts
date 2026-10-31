@@ -2,6 +2,9 @@
 // the public API route and direct service consumers cannot drift apart.
 export {
   ED25519_WALLET_LOGIN_DOMAIN,
+  SESSION_KEY_WALLET_LOGIN_DOMAIN,
+  buildSessionKeyWalletLoginMessage,
+  sessionKeyAllowsLogin,
   buildEd25519WalletLoginMessage,
   buildWalletLoginMessage,
   createWalletAuthService,

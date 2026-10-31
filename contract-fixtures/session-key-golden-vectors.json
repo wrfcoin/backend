@@ -1,0 +1,119 @@
+{
+  "source": "core4 shared-protocol test wallet_client_golden_vectors (branch feat/session-key-transfers). Regenerate from core4; never edit by hand.",
+  "inputs": {
+    "owner_seed_hex": "1111111111111111111111111111111111111111111111111111111111111111",
+    "session_seed_hex": "2222222222222222222222222222222222222222222222222222222222222222",
+    "chain_id": "wrfcoin-golden",
+    "network_id": "testnet",
+    "grant": {
+      "allowed_methods": [
+        "transfer",
+        "wallet_login"
+      ],
+      "allowed_targets": [
+        "0xffffffffffffffffffffffffffffffffffffffff"
+      ],
+      "max_value_per_use": "1000000000",
+      "max_total_value": "30000000000",
+      "window": {
+        "blocks": 1122,
+        "max_value": "1000000000"
+      },
+      "valid_from": 100,
+      "valid_until": 101080,
+      "max_uses": null
+    },
+    "registration_nonce": 0,
+    "transfer": {
+      "to": "0x0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+      "amount": "250000000",
+      "nonce": "3"
+    },
+    "revoke": {
+      "registration_nonce": 0
+    }
+  },
+  "expected": {
+    "owner_address": "0xa07ffc5e1799c00f3ac9fa7bbf1db75a25aaf4d0",
+    "owner_public_key": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+    "session_public_key": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+    "register_preimage": "1f00000000000000777266636f696e2e73657373696f6e5f6b65795f72656769737465722e76310e00000000000000777266636f696e2d676f6c64656e1400000000000000a07ffc5e1799c00f3ac9fa7bbf1db75a25aaf4d0080000000000000000000000000000002000000000000000a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0020000000000000008000000000000007472616e736665720c0000000000000077616c6c65745f6c6f67696e0100000000000000ffffffffffffffffffffffffffffffffffffffff00ca9a3b00000000000000000000000000ac23fc0600000000000000000000006400000000000000d88a0100000000000077696e646f77620400000000000000ca9a3b000000000000000000000000",
+    "transfer_preimage": "777266636f696e5f73657373696f6e5f6b65795f7472616e736665725f617574685f76310e000000777266636f696e2d676f6c64656e07000000746573746e65742a0000003078613037666663356531373939633030663361633966613762626631646237356132356161663464302a00000030783062306230623062306230623062306230623062306230623062306230623062306230623062306280b2e60e000000000300000000000000a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+    "transfer_signature": "5fc9d4e6b4e165df18690804d1c1ab6e1f4d2933d130c075494a33c1c7746cde902dc96ae1c7eede7ab391f224732c19eda57c530d647feae01532762b5d140a",
+    "revoke_preimage": "1d00000000000000777266636f696e2e73657373696f6e5f6b65795f7265766f6b652e76310e00000000000000777266636f696e2d676f6c64656e1400000000000000a07ffc5e1799c00f3ac9fa7bbf1db75a25aaf4d014000000000000000fce042fb21f424ee71e2a1b00a07f55b3421a3a08000000000000000000000000000000"
+  },
+  "register_body": {
+    "action": {
+      "Register": {
+        "owner": [
+          160,
+          127,
+          252,
+          94,
+          23,
+          153,
+          192,
+          15,
+          58,
+          201,
+          250,
+          123,
+          191,
+          29,
+          183,
+          90,
+          37,
+          170,
+          244,
+          208
+        ],
+        "registration_nonce": 0,
+        "grant": {
+          "public_key": "a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0",
+          "scope": {
+            "allowed_methods": [
+              "transfer",
+              "wallet_login"
+            ],
+            "allowed_targets": [
+              [
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255,
+                255
+              ]
+            ],
+            "max_value_per_use": 1000000000,
+            "max_total_value": 30000000000,
+            "window": {
+              "blocks": 1122,
+              "max_value": 1000000000
+            }
+          },
+          "valid_from": 100,
+          "valid_until": 101080,
+          "max_uses": null
+        },
+        "owner_public_key": "d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737",
+        "owner_signature": "a9e1ea947683f540ec8148aa9cdf77b0d5d4b345ee681ee35a0e56dc0d39e583a488c5c837965fed94f9b18e92ce1cf5a1e8b46b4efa051b8e925a4fa32a140f",
+        "session_signature": "01a0f4dde574f82081db590f95ce7f7ba0ad3344521c4fdf3052fd4dd202070f31c4b623e842d6f1ef67e48b95eeb8d88de55c42b810dee5369eefdc25707f0e"
+      }
+    }
+  }
+}
