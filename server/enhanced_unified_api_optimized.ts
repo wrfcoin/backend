@@ -1640,7 +1640,8 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // need a wallet JWT for the acting wallet; activation pays nothing. Table:
   // 0023_referrals. DEFERRED and deliberately NOT mounted (see
   // /api/capabilities and server/CLAUDE.md): duels, challenges,
-  // marketplace, academic, subscription, webhooks, telemetry,
+  // marketplace, academic, subscription, webhooks (superseded by
+  // /api/notifications below: no user-supplied URLs), telemetry,
   // contributor summary.
   safeMount('/api/referrals',               './routes/referral-routes');
   safeMount('/api/reputation',              './routes/reputationRoutes');
@@ -1694,6 +1695,9 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // backend#251: weekly forecast competition, points only, over the same indexed forecast rows.
   // OFF unless FORECAST_COMPETITIONS_ENABLED=true too (set only after migration 0036 is applied).
   safeMount('/api/competitions',            './routes/competition-routes');
+  // backend#389: payout notifications (Web Push / ntfy, wallet-login subscriptions, no email or personal data).
+  // OFF unless PAYOUT_NOTIFY_ENABLED=true (set only after migration 0037 is applied).
+  safeMount('/api/notifications',           './routes/payout-notification-routes');
 
   const mountSnapshot = safeMountReadinessSnapshot();
   appLogger.info('safeMount inventory', {
@@ -1767,6 +1771,17 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
       });
     } catch {
       appLogger.warn('Chain reward index not started');
+    }
+
+    // backend#389: payout watcher behind /api/notifications. OFF unless PAYOUT_NOTIFY_ENABLED=true.
+    // Never logs addresses, endpoints, topics or upstream text.
+    try {
+      const { startPayoutNotifier } = require('./services/payout-notify/watcher');
+      startPayoutNotifier({ logger: appLogger }).catch(() => {
+        appLogger.warn('Payout notifier not started');
+      });
+    } catch {
+      appLogger.warn('Payout notifier not started');
     }
 
     // backend#1253: chain -> weather_stations sync so chain-registered stations

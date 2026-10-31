@@ -246,6 +246,22 @@ jobs:
             console.log(`Forecast competition real-PostgreSQL cases passed: ${passed}/${cases.length}`);
             if (cases.length !== 4 || passed !== 4) process.exit(1);
           ' "$RUNNER_TEMP/forecast-competitions-pg.json"
+          if [ "$status" -ne 0 ]; then exit "$status"; fi
+          set +e
+          npx jest --config __tests__/jest.standalone.cjs \
+            --runTestsByPath __tests__/payout-notifications.test.ts \
+            --runInBand --json --outputFile="$RUNNER_TEMP/payout-notifications-pg.json"
+          status=$?
+          set -e
+          node -e '
+            const r = require(process.argv[1]);
+            const cases = r.testResults.flatMap(f => f.assertionResults)
+              .filter(a => a.ancestorTitles.includes("real PostgreSQL: payout notification store and watcher"));
+            for (const c of cases) console.log(`${c.status.padEnd(8)} ${c.title}`);
+            const passed = cases.filter(c => c.status === "passed").length;
+            console.log(`Payout notification real-PostgreSQL cases passed: ${passed}/${cases.length}`);
+            if (cases.length !== 5 || passed !== 5) process.exit(1);
+          ' "$RUNNER_TEMP/payout-notifications-pg.json"
           exit "$status"
       # Named, verbose, fail-if-skipped proof that the real-PostgreSQL cases
       # executed in CI (npm test above runs them too, but only as counts).

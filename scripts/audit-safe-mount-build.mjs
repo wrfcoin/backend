@@ -59,7 +59,8 @@ const reachedHeader = 'x-safe-mount-build-reached';
 // 62: owner demo queue 2026-11-01 item 3 mounts the default-OFF /api/network nodes read (./routes/network-nodes-routes).
 // 63: owner ruling 2026-11-01 mounts the default-OFF bring-your-own-key Wolfram reading check.
 // 64: backend#251 mounts the default-OFF weekly forecast competition read (./routes/competition-routes).
-const expectedMountCount = 64;
+// 65: backend#389 mounts the default-OFF payout notifications (./routes/payout-notification-routes).
+const expectedMountCount = 65;
 
 // Removed by #935/#937 — each of these now PASSES this gate, and the gate
 // itself instructed the removal ("known failures now pass; remove their

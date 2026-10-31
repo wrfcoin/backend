@@ -25,6 +25,7 @@ import express, { Router } from 'express';
 import { earningsEnabled } from '../services/chain-rewards/earnings.js';
 import { forecastersEnabled } from '../services/chain-rewards/forecaster-stats.js';
 import { competitionsEnabled } from '../services/chain-rewards/competition-stats.js';
+import { payoutNotifyEnabled } from '../services/payout-notify/watcher.js';
 
 /** Same per-request flag proof-card-routes.ts reads. */
 const proofCardsEnabled = () => process.env.PROOF_CARDS_ENABLED === 'true';
@@ -207,7 +208,7 @@ const FEATURE_SEEDS: FeatureSeed[] = [
   { key: 'computeMarketplace', status: 'unavailable', note: 'no compute-marketplace route is proxied into the main API; compute_networks_server.ts runs as a separate optional microservice behind infra\'s "full" profile — see readiness.computeMarketplace below' },
   { key: 'community', status: 'unavailable', note: 'no backend route found for community as of 2026-09-16' },
   { key: 'forecastStudio', status: 'unavailable', note: 'no dedicated route beyond the base forecast (/api/pythia, /api/weather) as of 2026-09-16' },
-  { key: 'notifications', status: 'unavailable', note: 'no backend route found for notifications as of 2026-09-16' },
+  { key: 'notifications', status: 'unavailable', note: 'Default-OFF payout notifications (/api/notifications, backend#389): wallet-login subscriptions delivered by Web Push or ntfy, no email or personal data; migration 0037. Needs PAYOUT_NOTIFY_ENABLED' },
   { key: 'leaderboard', status: 'operational', note: '/api/weather/leaderboard is mounted (weather-leaderboard-routes.ts, backend#695/#1131)' },
   { key: 'governanceAdvanced', status: 'operational', note: 'same backing as governance: /api/governance is mounted' },
   { key: 'realTime', status: 'operational', note: 'initializeRealtimeWebSocketServer(server) is real and called at startup' },
@@ -242,13 +243,13 @@ const FEATURE_SEEDS: FeatureSeed[] = [
   { key: 'marketplace', status: 'unavailable', note: 'DEFERRED, not mounted (marketplace-routes.ts): only unified_api_server.ts mounted it and that entrypoint never deploys (backend#1178)' },
   { key: 'academic', status: 'unavailable', note: 'DEFERRED, not mounted (academic-routes.ts): only unified_api_server.ts mounted it and that entrypoint never deploys (backend#1178)' },
   { key: 'subscription', status: 'unavailable', note: 'DEFERRED, not mounted (subscription-routes.ts): only the never-deployed unified_api_server.ts mounted it (backend#1178)' },
-  { key: 'webhooks', status: 'unavailable', note: 'DEFERRED, not mounted (webhook-routes.ts): only the never-deployed unified_api_server.ts mounted it (backend#1178)' },
+  { key: 'webhooks', status: 'unavailable', note: 'NOT mounted (webhook-routes.ts): user-registered URLs are an SSRF surface; payout notifications ship as /api/notifications (Web Push/ntfy, backend#389) instead' },
   { key: 'telemetry', status: 'unavailable', note: 'DEFERRED, not mounted (telemetry-routes.ts): only the never-deployed unified_api_server.ts mounted it (backend#1178)' },
   { key: 'contributorSummary', status: 'unavailable', note: 'DEFERRED, not mounted (contributor-summary-routes.ts): only the never-deployed unified_api_server.ts mounted it (backend#1178)' },
 ];
 
 /** Read features that are honestly `configured` (never operational without evidence) once their flags are on. */
-const FLAG_GATED_READS = new Set(['earningsRead', 'forecastersRead', 'proofCards', 'networkNodesRead', 'competitions']);
+const FLAG_GATED_READS = new Set(['earningsRead', 'forecastersRead', 'proofCards', 'networkNodesRead', 'competitions', 'notifications']);
 
 const DEFAULT_MAX_EVIDENCE_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_PROBE_TIMEOUT_MS = 2_000;
@@ -468,7 +469,8 @@ export function createCapabilitiesRouter(
       if ((seed.key === 'earningsRead' && !earningsEnabled()) || (seed.key === 'forecastersRead' && !forecastersEnabled())
         || (seed.key === 'proofCards' && !proofCardsEnabled())
         || (seed.key === 'networkNodesRead' && !networkNodesEnabled())
-        || (seed.key === 'competitions' && !competitionsEnabled())) {
+        || (seed.key === 'competitions' && !competitionsEnabled())
+        || (seed.key === 'notifications' && !payoutNotifyEnabled())) {
         features[seed.key] = { status: 'unavailable', reasonCode: 'not_wired' };
         continue;
       }
