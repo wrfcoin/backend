@@ -27,6 +27,9 @@ import { forecastersEnabled } from '../services/chain-rewards/forecaster-stats.j
 
 /** Same per-request flag proof-card-routes.ts reads. */
 const proofCardsEnabled = () => process.env.PROOF_CARDS_ENABLED === 'true';
+
+/** Same per-request flag network-nodes-routes.ts reads. */
+const networkNodesEnabled = () => process.env.NETWORK_NODES_READ_ENABLED === 'true';
 import type {
   CapabilityMode,
   CapabilityReadinessResult,
@@ -149,6 +152,7 @@ export interface CapabilitiesRouterOptions {
  */
 const FEATURE_SEEDS: FeatureSeed[] = [
   { key: 'earningsRead', status: 'unavailable', note: 'Default-OFF indexed producer/attester earnings; contribution and forecast coverage remain gated' },
+  { key: 'networkNodesRead', status: 'unavailable', note: 'Default-OFF (NETWORK_NODES_READ_ENABLED) /api/network/nodes (network-nodes-routes.ts): producers from core4\'s genesis roster with activity counted from block producer keys, bonded nodes found via settlement epochs and NETWORK_NODES_BOND_IDS then checked with /node/bonds, attesters from oracle status; core4 has no list route for producers or bonds' },
   { key: 'forecastersRead', status: 'unavailable', note: 'Default-OFF forecaster track record (/api/forecasters, core4#3604 A4) read from the chain-rewards indexer forecast rows; skill and per-forecaster paid totals are not yet exposed by the node' },
   { key: 'wallet', status: 'operational', note: '/api/wallet and /api/wallet-auth are mounted (wallet-routes.js, wallet-auth-legacy-routes.js)' },
   // backend#1167: sub-capability of wallet, not a frontend features.ts key.
@@ -458,13 +462,14 @@ export function createCapabilitiesRouter(
     const features: Record<string, FeatureStatusEntry> = {};
     for (const seed of FEATURE_SEEDS) {
       if ((seed.key === 'earningsRead' && !earningsEnabled()) || (seed.key === 'forecastersRead' && !forecastersEnabled())
-        || (seed.key === 'proofCards' && !proofCardsEnabled())) {
+        || (seed.key === 'proofCards' && !proofCardsEnabled())
+        || (seed.key === 'networkNodesRead' && !networkNodesEnabled())) {
         features[seed.key] = { status: 'unavailable', reasonCode: 'not_wired' };
         continue;
       }
       const observation = evidence[seed.key];
       features[seed.key] = evaluateFeature(
-        seed.key === 'earningsRead' || seed.key === 'forecastersRead' || seed.key === 'proofCards' ? { ...seed, status: 'configured' } : seed,
+        seed.key === 'earningsRead' || seed.key === 'forecastersRead' || seed.key === 'proofCards' || seed.key === 'networkNodesRead' ? { ...seed, status: 'configured' } : seed,
         observation?.capabilityId === seed.key ? observation : undefined,
         evaluatedAt,
         maxEvidenceAgeMs,

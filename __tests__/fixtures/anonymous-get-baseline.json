@@ -60,6 +60,7 @@
     "/api/iotex/devices",
     "/api/iotex/devices/:id",
     "/api/live",
+    "/api/network/nodes",
     "/api/operators/:walletAddress/og-meta",
     "/api/operators/:walletAddress/profile",
     "/api/proofs/:commitId",
