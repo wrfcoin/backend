@@ -28,6 +28,7 @@ import { competitionsEnabled } from '../services/chain-rewards/competition-stats
 import { payoutNotifyEnabled } from '../services/payout-notify/watcher.js';
 import { calibrationCertificatesEnabled } from '../services/calibration-certificates.js';
 import { forecastVerificationEnabled } from '../services/forecast-verification/observed-verification-job.js';
+import { friendChallengesEnabled } from '../services/friend-challenges.js';
 
 /** Same per-request flag proof-card-routes.ts reads. */
 const proofCardsEnabled = () => process.env.PROOF_CARDS_ENABLED === 'true';
@@ -240,8 +241,8 @@ const FEATURE_SEEDS: FeatureSeed[] = [
   // were only ever mounted in the never-deployed unified_api_server.ts. Like
   // wallet.history these are backend-side records, not features.ts keys.
   { key: 'duels', status: 'unavailable', note: 'DEFERRED, not mounted (duel-routes.ts): forecast_duels has no migration, no code ever sets winner/resolvedAt (no resolver), and nothing escrows stakeAmount — mounting would accept stakes that can never settle (backend#1178)' },
-  { key: 'challenges', status: 'unavailable', note: 'DEFERRED, not mounted (challenge-routes.ts): challenges/challenge_participants have no migration (backend#1178)' },
   { key: 'competitions', status: 'unavailable', note: 'Default-OFF weekly forecast competition (/api/competitions, backend#251), points only, computed from the forecast index rows /api/forecasters reads; finished weeks frozen by migration 0036. Needs CHAIN_REWARD_INDEX_ENABLED and FORECAST_COMPETITIONS_ENABLED' },
+  { key: 'challenges', status: 'unavailable', note: 'Default-OFF (FRIEND_CHALLENGES_ENABLED) /api/challenges (challenge-routes.ts, backend#249, migration 0040_friend_challenges): friend challenges for the phone screen (mobile#260) and the web board; create/join/read need a wallet JWT for the acting wallet, the board by invite code is public. Points only, nothing is paid. Counts are readings from stations the wallet owns that landed on chain in the window (node observation scan), never a count the phone reports' },
   { key: 'proofCards', status: 'unavailable', note: 'Default-OFF (PROOF_CARDS_ENABLED) /api/proofs/:commitId (proof-card-routes.ts, backend#229): one station reading and the block it landed in, read from the node (reward-evidence, observation scan, /chain/block); no backend table. A reveal outside the bounded scan is reported not_located, never guessed' },
   { key: 'forecastVerification', status: 'unavailable', note: 'Default-OFF (FORECAST_VERIFICATION_ENABLED) /api/forecast-verification (forecast-verification-routes.ts default export, backend PR#72 / #1494, migration 0039): on-chain forecasts whose forecaster hands in the commit record (sha3 must equal the chain commit id, node must report a revealed forecast for that station) are scored against the hourly mean of the chain\'s own readings for the station, and against NOAA\'s hourly forecast captured before the forecast was issued. No reading in the target hour => unavailable, never a guessed truth. Read-side only, never feeds rewards' },
   { key: 'marketplace', status: 'unavailable', note: 'DEFERRED, not mounted (marketplace-routes.ts): only unified_api_server.ts mounted it and that entrypoint never deploys (backend#1178)' },
@@ -253,7 +254,7 @@ const FEATURE_SEEDS: FeatureSeed[] = [
 ];
 
 /** Read features that are honestly `configured` (never operational without evidence) once their flags are on. */
-const FLAG_GATED_READS = new Set(['earningsRead', 'forecastersRead', 'proofCards', 'networkNodesRead', 'competitions', 'notifications', 'calibrationCertificates', 'forecastVerification']);
+const FLAG_GATED_READS = new Set(['earningsRead', 'forecastersRead', 'proofCards', 'networkNodesRead', 'competitions', 'notifications', 'calibrationCertificates', 'forecastVerification', 'challenges']);
 
 const DEFAULT_MAX_EVIDENCE_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_PROBE_TIMEOUT_MS = 2_000;
@@ -476,7 +477,8 @@ export function createCapabilitiesRouter(
         || (seed.key === 'competitions' && !competitionsEnabled())
         || (seed.key === 'notifications' && !payoutNotifyEnabled())
         || (seed.key === 'calibrationCertificates' && !calibrationCertificatesEnabled())
-        || (seed.key === 'forecastVerification' && !forecastVerificationEnabled())) {
+        || (seed.key === 'forecastVerification' && !forecastVerificationEnabled())
+        || (seed.key === 'challenges' && !friendChallengesEnabled())) {
         features[seed.key] = { status: 'unavailable', reasonCode: 'not_wired' };
         continue;
       }

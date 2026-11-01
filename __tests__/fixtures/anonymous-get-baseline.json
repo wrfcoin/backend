@@ -12,6 +12,8 @@
     "/api/build",
     "/api/calibration-certificates/station/:alias",
     "/api/capabilities",
+    "/api/challenges/",
+    "/api/challenges/code/:code",
     "/api/competitions/",
     "/api/competitions/:week",
     "/api/competitions/current",
