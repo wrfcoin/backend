@@ -288,6 +288,13 @@
       "when": 1792500000000,
       "tag": "0040_friend_challenges",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "5",
+      "when": 1792600000000,
+      "tag": "0041_forecast_duels",
+      "breakpoints": true
     }
   ]
 }

@@ -63,7 +63,8 @@ const reachedHeader = 'x-safe-mount-build-reached';
 // 66: core4#388/#435 mounts the default-OFF /api/calibration-certificates router.
 // 67: owner demo queue 2026-11-01 item 7 mounts the default-OFF /api/forecast-verification read.
 // 68: backend#249 mounts the default-OFF /api/challenges friend challenges (./routes/challenge-routes).
-const expectedMountCount = 68;
+// 69: backend#228 mounts the default-OFF free-play /api/duels (./routes/duel-routes).
+const expectedMountCount = 69;
 
 // Removed by #935/#937 — each of these now PASSES this gate, and the gate
 // itself instructed the removal ("known failures now pass; remove their
