@@ -1,4 +1,5 @@
 const { createHash } = require('crypto');
+const { parseSessionKeyAuth } = require('./session-key-contract');
 
 const U64_MAX = 18446744073709551615n;
 const TRANSPARENT_TRANSFER_AUTH_DOMAIN = Buffer.from('wrfcoin_transparent_transfer_auth_v2');
@@ -71,16 +72,8 @@ function transparentTransferMessage({ chainId, networkId, from, to, amount, nonc
   ]);
 }
 
-function parseSignedTransfer(body = {}) {
-  const from = body.from;
-  const to = body.to;
-  const authPubkey = body.authPubkey ?? body.auth_pubkey;
-  const authSignature = body.authSignature ?? body.auth_signature;
-  const missingSignature = !authPubkey || !authSignature || body.nonce === undefined;
-  if (missingSignature) {
-    return { ok: false, unsigned: true, code: 'SIGNED_TRANSFER_REQUIRED', message: 'unsigned transfers cannot settle; submit a client-signed transparent transfer (see SIGNED_TRANSFER_CONTRACT)' };
-  }
-  if (!isLaunchAddress(from) || !isLaunchAddress(to)) {
+function parseTransferFields(body) {
+  if (!isLaunchAddress(body.from) || !isLaunchAddress(body.to)) {
     return { ok: false, code: 'VALIDATION_ERROR', message: 'from and to must be core4 hex addresses' };
   }
   const amount = parseBaseUnits(body.amount);
@@ -91,6 +84,48 @@ function parseSignedTransfer(body = {}) {
   if (!/^\d{1,20}$/.test(nonce) || BigInt(nonce) > U64_MAX) {
     return { ok: false, code: 'VALIDATION_ERROR', message: 'nonce must be a decimal u64 string' };
   }
+  return { ok: true, amount, nonce };
+}
+
+function parseSessionKeySignedTransfer(body, rawSessionKeyAuth) {
+  if (body.nonce === undefined) {
+    return { ok: false, code: 'VALIDATION_ERROR', message: 'nonce must be a decimal u64 string' };
+  }
+  const common = parseTransferFields(body);
+  if (!common.ok) return common;
+  const sessionKeyAuth = parseSessionKeyAuth(rawSessionKeyAuth);
+  if (!sessionKeyAuth.ok) return { ok: false, code: 'VALIDATION_ERROR', message: sessionKeyAuth.message };
+  return {
+    ok: true,
+    value: { from: body.from, to: body.to, amount: common.amount, nonce: common.nonce, sessionKeyAuth: sessionKeyAuth.value },
+  };
+}
+
+/**
+ * A signed transfer is authorized EITHER by the owner's ed25519 key
+ * (auth_pubkey/auth_signature, unchanged) OR by a registered session key
+ * (session_key_auth: { session_public_key, signature }, core4 feature
+ * session_keys; see session-key-contract.js). Never both.
+ */
+function parseSignedTransfer(body = {}) {
+  const from = body.from;
+  const to = body.to;
+  const authPubkey = body.authPubkey ?? body.auth_pubkey;
+  const authSignature = body.authSignature ?? body.auth_signature;
+  const rawSessionKeyAuth = body.sessionKeyAuth ?? body.session_key_auth;
+  if (rawSessionKeyAuth !== undefined && rawSessionKeyAuth !== null) {
+    if (authPubkey || authSignature) {
+      return { ok: false, code: 'VALIDATION_ERROR', message: 'send either auth_pubkey/auth_signature or session_key_auth, not both' };
+    }
+    return parseSessionKeySignedTransfer(body, rawSessionKeyAuth);
+  }
+  const missingSignature = !authPubkey || !authSignature || body.nonce === undefined;
+  if (missingSignature) {
+    return { ok: false, unsigned: true, code: 'SIGNED_TRANSFER_REQUIRED', message: 'unsigned transfers cannot settle; submit a client-signed transparent transfer (see SIGNED_TRANSFER_CONTRACT)' };
+  }
+  const common = parseTransferFields(body);
+  if (!common.ok) return common;
+  const { amount, nonce } = common;
   if (!/^[0-9a-fA-F]{64}$/.test(authPubkey)) {
     return { ok: false, code: 'VALIDATION_ERROR', message: 'auth_pubkey must be a 32-byte ed25519 public key in hex' };
   }
