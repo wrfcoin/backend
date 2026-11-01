@@ -28,6 +28,8 @@
     "/api/earnings/leaderboard",
     "/api/explorer/summary",
     "/api/faucet/bond-grants",
+    "/api/forecast-verification/forecasts/:commitId",
+    "/api/forecast-verification/summary",
     "/api/forecasters/",
     "/api/forecasters/:keyOrAddress",
     "/api/governance/analytics/dashboard",

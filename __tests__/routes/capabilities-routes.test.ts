@@ -27,6 +27,8 @@ const EXPECTED_FEATURE_KEYS = [
   // backend#1178: deferred growth-cluster records (not features.ts keys).
   'duels', 'challenges', 'competitions', 'proofCards', 'marketplace',
   'academic', 'subscription', 'webhooks', 'telemetry', 'contributorSummary',
+  // Owner demo queue 2026-11-01 item 7: forecasts checked against station readings.
+  'forecastVerification',
 ];
 
 const VALID_STATUSES: FeatureStatus[] = [

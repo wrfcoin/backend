@@ -27,6 +27,7 @@ import { forecastersEnabled } from '../services/chain-rewards/forecaster-stats.j
 import { competitionsEnabled } from '../services/chain-rewards/competition-stats.js';
 import { payoutNotifyEnabled } from '../services/payout-notify/watcher.js';
 import { calibrationCertificatesEnabled } from '../services/calibration-certificates.js';
+import { forecastVerificationEnabled } from '../services/forecast-verification/observed-verification-job.js';
 
 /** Same per-request flag proof-card-routes.ts reads. */
 const proofCardsEnabled = () => process.env.PROOF_CARDS_ENABLED === 'true';
@@ -242,6 +243,7 @@ const FEATURE_SEEDS: FeatureSeed[] = [
   { key: 'challenges', status: 'unavailable', note: 'DEFERRED, not mounted (challenge-routes.ts): challenges/challenge_participants have no migration (backend#1178)' },
   { key: 'competitions', status: 'unavailable', note: 'Default-OFF weekly forecast competition (/api/competitions, backend#251), points only, computed from the forecast index rows /api/forecasters reads; finished weeks frozen by migration 0036. Needs CHAIN_REWARD_INDEX_ENABLED and FORECAST_COMPETITIONS_ENABLED' },
   { key: 'proofCards', status: 'unavailable', note: 'Default-OFF (PROOF_CARDS_ENABLED) /api/proofs/:commitId (proof-card-routes.ts, backend#229): one station reading and the block it landed in, read from the node (reward-evidence, observation scan, /chain/block); no backend table. A reveal outside the bounded scan is reported not_located, never guessed' },
+  { key: 'forecastVerification', status: 'unavailable', note: 'Default-OFF (FORECAST_VERIFICATION_ENABLED) /api/forecast-verification (forecast-verification-routes.ts default export, backend PR#72 / #1494, migration 0039): on-chain forecasts whose forecaster hands in the commit record (sha3 must equal the chain commit id, node must report a revealed forecast for that station) are scored against the hourly mean of the chain\'s own readings for the station, and against NOAA\'s hourly forecast captured before the forecast was issued. No reading in the target hour => unavailable, never a guessed truth. Read-side only, never feeds rewards' },
   { key: 'marketplace', status: 'unavailable', note: 'DEFERRED, not mounted (marketplace-routes.ts): only unified_api_server.ts mounted it and that entrypoint never deploys (backend#1178)' },
   { key: 'academic', status: 'unavailable', note: 'DEFERRED, not mounted (academic-routes.ts): only unified_api_server.ts mounted it and that entrypoint never deploys (backend#1178)' },
   { key: 'subscription', status: 'unavailable', note: 'DEFERRED, not mounted (subscription-routes.ts): only the never-deployed unified_api_server.ts mounted it (backend#1178)' },
@@ -251,7 +253,7 @@ const FEATURE_SEEDS: FeatureSeed[] = [
 ];
 
 /** Read features that are honestly `configured` (never operational without evidence) once their flags are on. */
-const FLAG_GATED_READS = new Set(['earningsRead', 'forecastersRead', 'proofCards', 'networkNodesRead', 'competitions', 'notifications', 'calibrationCertificates']);
+const FLAG_GATED_READS = new Set(['earningsRead', 'forecastersRead', 'proofCards', 'networkNodesRead', 'competitions', 'notifications', 'calibrationCertificates', 'forecastVerification']);
 
 const DEFAULT_MAX_EVIDENCE_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_PROBE_TIMEOUT_MS = 2_000;
@@ -473,7 +475,8 @@ export function createCapabilitiesRouter(
         || (seed.key === 'networkNodesRead' && !networkNodesEnabled())
         || (seed.key === 'competitions' && !competitionsEnabled())
         || (seed.key === 'notifications' && !payoutNotifyEnabled())
-        || (seed.key === 'calibrationCertificates' && !calibrationCertificatesEnabled())) {
+        || (seed.key === 'calibrationCertificates' && !calibrationCertificatesEnabled())
+        || (seed.key === 'forecastVerification' && !forecastVerificationEnabled())) {
         features[seed.key] = { status: 'unavailable', reasonCode: 'not_wired' };
         continue;
       }

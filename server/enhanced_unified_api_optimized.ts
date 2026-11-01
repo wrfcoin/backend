@@ -1637,6 +1637,9 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // Owner demo queue 2026-11-01 item 3: default-OFF public producers / bonded nodes / attesters read,
   // from the node (replaces the never-mounted validators.js table reads).
   safeMount('/api/network',                 './routes/network-nodes-routes');
+  // Owner demo queue 2026-11-01 item 7 (backend PR#72, #1494): default-OFF public read of on-chain
+  // forecasts scored against the chain's own station readings, next to NOAA's forecast for the same hour.
+  safeMount('/api/forecast-verification',   './routes/forecast-verification-routes');
   // backend#1178: referrals are the one growth-cluster router with shipping
   // callers (frontend useReferrals.js, mobile referral_service.dart). Mutators
   // need a wallet JWT for the acting wallet; activation pays nothing. Table:
@@ -1787,6 +1790,16 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
       });
     } catch {
       appLogger.warn('Payout notifier not started');
+    }
+    // Forecast verification against station readings (+ NOAA reference capture). OFF unless
+    // FORECAST_VERIFICATION_ENABLED=true; needs WRFCOIN_READER_TOKEN and migration 0039.
+    try {
+      const { startForecastVerificationJob } = require('./services/forecast-verification/observed-verification-job');
+      startForecastVerificationJob({ logger: appLogger }).catch(() => {
+        appLogger.warn('Forecast verification job not started');
+      });
+    } catch {
+      appLogger.warn('Forecast verification job not started');
     }
 
     // backend#1253: chain -> weather_stations sync so chain-registered stations
