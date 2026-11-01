@@ -1643,11 +1643,14 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // backend#249 (owner demo queue 2026-11-01 item 8): default-OFF friend challenges for the phone screen
   // (mobile#260) and the web board. Points only, wallet JWT for writes, counts from chain readings.
   safeMount('/api/challenges',              './routes/challenge-routes');
+  // backend#228/#1424 (owner demo queue 2026-11-01 item 10): default-OFF FREE-PLAY forecast duels.
+  // No stakes; the chain's finalized forecast rewards judge. Funded duels are a separate consensus feature.
+  safeMount('/api/duels',                   './routes/duel-routes');
   // backend#1178: referrals are the one growth-cluster router with shipping
   // callers (frontend useReferrals.js, mobile referral_service.dart). Mutators
   // need a wallet JWT for the acting wallet; activation pays nothing. Table:
   // 0023_referrals. DEFERRED and deliberately NOT mounted (see
-  // /api/capabilities and server/CLAUDE.md): duels,
+  // /api/capabilities and server/CLAUDE.md):
   // marketplace, academic, subscription, webhooks (superseded by
   // /api/notifications below: no user-supplied URLs), telemetry,
   // contributor summary.
@@ -1813,6 +1816,16 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
       });
     } catch {
       appLogger.warn('Friend challenges job not started');
+    }
+    // Free-play forecast duels resolver (backend#228). OFF unless FORECAST_DUELS_ENABLED=true; needs
+    // WRFCOIN_READER_TOKEN and migration 0041_forecast_duels.
+    try {
+      const { startForecastDuelsJob } = require('./services/forecast-duels-job');
+      startForecastDuelsJob({ logger: appLogger }).catch(() => {
+        appLogger.warn('Forecast duels job not started');
+      });
+    } catch {
+      appLogger.warn('Forecast duels job not started');
     }
 
     // backend#1253: chain -> weather_stations sync so chain-registered stations
