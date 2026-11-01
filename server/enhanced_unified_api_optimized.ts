@@ -1640,11 +1640,14 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // Owner demo queue 2026-11-01 item 7 (backend PR#72, #1494): default-OFF public read of on-chain
   // forecasts scored against the chain's own station readings, next to NOAA's forecast for the same hour.
   safeMount('/api/forecast-verification',   './routes/forecast-verification-routes');
+  // backend#249 (owner demo queue 2026-11-01 item 8): default-OFF friend challenges for the phone screen
+  // (mobile#260) and the web board. Points only, wallet JWT for writes, counts from chain readings.
+  safeMount('/api/challenges',              './routes/challenge-routes');
   // backend#1178: referrals are the one growth-cluster router with shipping
   // callers (frontend useReferrals.js, mobile referral_service.dart). Mutators
   // need a wallet JWT for the acting wallet; activation pays nothing. Table:
   // 0023_referrals. DEFERRED and deliberately NOT mounted (see
-  // /api/capabilities and server/CLAUDE.md): duels, challenges,
+  // /api/capabilities and server/CLAUDE.md): duels,
   // marketplace, academic, subscription, webhooks (superseded by
   // /api/notifications below: no user-supplied URLs), telemetry,
   // contributor summary.
@@ -1800,6 +1803,16 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
       });
     } catch {
       appLogger.warn('Forecast verification job not started');
+    }
+    // Friend challenges counting job (backend#249). OFF unless FRIEND_CHALLENGES_ENABLED=true; needs
+    // WRFCOIN_READER_TOKEN and migration 0040_friend_challenges.
+    try {
+      const { startFriendChallengesJob } = require('./services/friend-challenges-job');
+      startFriendChallengesJob({ logger: appLogger }).catch(() => {
+        appLogger.warn('Friend challenges job not started');
+      });
+    } catch {
+      appLogger.warn('Friend challenges job not started');
     }
 
     // backend#1253: chain -> weather_stations sync so chain-registered stations
