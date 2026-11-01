@@ -1698,6 +1698,9 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // backend#389: payout notifications (Web Push / ntfy, wallet-login subscriptions, no email or personal data).
   // OFF unless PAYOUT_NOTIFY_ENABLED=true (set only after migration 0037 is applied).
   safeMount('/api/notifications',           './routes/payout-notification-routes');
+  // core4#388/#435 + backend#931: station calibration certificates (default OFF, trust roots from
+  // CALIBRATION_TRUST_ROOTS_JSON). Public GET /station/:alias; signed POSTs reach it from the operator network.
+  safeMount('/api/calibration-certificates', './routes/calibration-certificate-routes');
 
   const mountSnapshot = safeMountReadinessSnapshot();
   appLogger.info('safeMount inventory', {

@@ -60,7 +60,8 @@ const reachedHeader = 'x-safe-mount-build-reached';
 // 63: owner ruling 2026-11-01 mounts the default-OFF bring-your-own-key Wolfram reading check.
 // 64: backend#251 mounts the default-OFF weekly forecast competition read (./routes/competition-routes).
 // 65: backend#389 mounts the default-OFF payout notifications (./routes/payout-notification-routes).
-const expectedMountCount = 65;
+// 66: core4#388/#435 mounts the default-OFF /api/calibration-certificates router.
+const expectedMountCount = 66;
 
 // Removed by #935/#937 — each of these now PASSES this gate, and the gate
 // itself instructed the removal ("known failures now pass; remove their

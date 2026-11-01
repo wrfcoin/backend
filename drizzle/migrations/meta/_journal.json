@@ -267,6 +267,13 @@
       "when": 1792200000000,
       "tag": "0037_payout_notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "5",
+      "when": 1792300000000,
+      "tag": "0038_calibration_certificates",
+      "breakpoints": true
     }
   ]
 }

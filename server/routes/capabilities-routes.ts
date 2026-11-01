@@ -26,6 +26,7 @@ import { earningsEnabled } from '../services/chain-rewards/earnings.js';
 import { forecastersEnabled } from '../services/chain-rewards/forecaster-stats.js';
 import { competitionsEnabled } from '../services/chain-rewards/competition-stats.js';
 import { payoutNotifyEnabled } from '../services/payout-notify/watcher.js';
+import { calibrationCertificatesEnabled } from '../services/calibration-certificates.js';
 
 /** Same per-request flag proof-card-routes.ts reads. */
 const proofCardsEnabled = () => process.env.PROOF_CARDS_ENABLED === 'true';
@@ -155,6 +156,7 @@ export interface CapabilitiesRouterOptions {
 const FEATURE_SEEDS: FeatureSeed[] = [
   { key: 'earningsRead', status: 'unavailable', note: 'Default-OFF indexed producer/attester earnings; contribution and forecast coverage remain gated' },
   { key: 'networkNodesRead', status: 'unavailable', note: 'Default-OFF (NETWORK_NODES_READ_ENABLED) /api/network/nodes (network-nodes-routes.ts): producers from core4\'s genesis roster with activity counted from block producer keys, bonded nodes found via settlement epochs and NETWORK_NODES_BOND_IDS then checked with /node/bonds, attesters from oracle status; core4 has no list route for producers or bonds' },
+  { key: 'calibrationCertificates', status: 'unavailable', note: 'Default-OFF station calibration certificates (/api/calibration-certificates, core4#388/#435, backend#931): trust-root-signed ed25519 certificates stored off chain (migration 0038, applied by hand on CT101) and re-verified on every public read; trust roots only from CALIBRATION_TRUST_ROOTS_JSON (owner decision pending; recommended: the owner key alone on testnet). Nothing is written to core4 calibration_attestations: no live transaction writes that state and it feeds reward weight (consensus change)' },
   { key: 'forecastersRead', status: 'unavailable', note: 'Default-OFF forecaster track record (/api/forecasters, core4#3604 A4) read from the chain-rewards indexer forecast rows; skill and per-forecaster paid totals are not yet exposed by the node' },
   { key: 'wallet', status: 'operational', note: '/api/wallet and /api/wallet-auth are mounted (wallet-routes.js, wallet-auth-legacy-routes.js)' },
   // backend#1167: sub-capability of wallet, not a frontend features.ts key.
@@ -249,7 +251,7 @@ const FEATURE_SEEDS: FeatureSeed[] = [
 ];
 
 /** Read features that are honestly `configured` (never operational without evidence) once their flags are on. */
-const FLAG_GATED_READS = new Set(['earningsRead', 'forecastersRead', 'proofCards', 'networkNodesRead', 'competitions', 'notifications']);
+const FLAG_GATED_READS = new Set(['earningsRead', 'forecastersRead', 'proofCards', 'networkNodesRead', 'competitions', 'notifications', 'calibrationCertificates']);
 
 const DEFAULT_MAX_EVIDENCE_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_PROBE_TIMEOUT_MS = 2_000;
@@ -470,7 +472,8 @@ export function createCapabilitiesRouter(
         || (seed.key === 'proofCards' && !proofCardsEnabled())
         || (seed.key === 'networkNodesRead' && !networkNodesEnabled())
         || (seed.key === 'competitions' && !competitionsEnabled())
-        || (seed.key === 'notifications' && !payoutNotifyEnabled())) {
+        || (seed.key === 'notifications' && !payoutNotifyEnabled())
+        || (seed.key === 'calibrationCertificates' && !calibrationCertificatesEnabled())) {
         features[seed.key] = { status: 'unavailable', reasonCode: 'not_wired' };
         continue;
       }
