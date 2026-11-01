@@ -13,6 +13,7 @@ These are source entrypoints and their documented default ports. Availability de
 | Leaderboard | main-api (`/api/weather/leaderboard`) | `routes/weather-leaderboard-routes.ts` |
 | Forecasters | main-api (`/api/forecasters`) | `routes/forecasters-routes.ts` |
 | Weekly forecast competition | main-api (`/api/competitions`) | `routes/competition-routes.ts` |
+| Payout notifications | main-api (`/api/notifications`) + watcher | `routes/payout-notification-routes.ts`, `services/payout-notify/` |
 | Cross-Chain Protocol | 3000 | `cross_chain_protocol_server.js` |
 | Cross-Chain API | main-api (`/api/cross-chain`) | `routes/cross-chain.ts` |
 | Compute Networks | 6000 | `compute_networks_server.ts` |
