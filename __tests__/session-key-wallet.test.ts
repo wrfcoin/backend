@@ -229,6 +229,22 @@ describe('session-key golden vectors (core4 wallet_client_golden_vectors)', () =
         grant: goldenGrant,
       }),
     ).toEqual(GOLDEN.register_body);
+    // Byte-exact: core4's REGISTER_BODY_JSON string, as serde writes it.
+    expect(
+      JSON.stringify(
+        registerBody({
+          owner: goldenOwner,
+          session: goldenSession,
+          chainId: G.chain_id,
+          nonce: 0,
+          grant: goldenGrant,
+        }),
+      ),
+    ).toBe(E.register_body_json);
+    // The relay re-serializes the parsed body; that round trip must not change a byte.
+    expect(
+      JSON.stringify({ action: JSON.parse(E.register_body_json).action }),
+    ).toBe(E.register_body_json);
     expect(contract.parseSessionKeyAction(GOLDEN.register_body)).toEqual({
       ok: true,
       owner: E.owner_address,
