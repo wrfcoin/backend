@@ -24,6 +24,7 @@
 import express, { Router } from 'express';
 import { earningsEnabled } from '../services/chain-rewards/earnings.js';
 import { forecastersEnabled } from '../services/chain-rewards/forecaster-stats.js';
+import { competitionsEnabled } from '../services/chain-rewards/competition-stats.js';
 
 /** Same per-request flag proof-card-routes.ts reads. */
 const proofCardsEnabled = () => process.env.PROOF_CARDS_ENABLED === 'true';
@@ -236,7 +237,7 @@ const FEATURE_SEEDS: FeatureSeed[] = [
   // wallet.history these are backend-side records, not features.ts keys.
   { key: 'duels', status: 'unavailable', note: 'DEFERRED, not mounted (duel-routes.ts): forecast_duels has no migration, no code ever sets winner/resolvedAt (no resolver), and nothing escrows stakeAmount — mounting would accept stakes that can never settle (backend#1178)' },
   { key: 'challenges', status: 'unavailable', note: 'DEFERRED, not mounted (challenge-routes.ts): challenges/challenge_participants have no migration (backend#1178)' },
-  { key: 'competitions', status: 'unavailable', note: 'DEFERRED, not mounted (competition-routes.ts): competitions/competition_scores have no migration (backend#1178)' },
+  { key: 'competitions', status: 'unavailable', note: 'Default-OFF weekly forecast competition (/api/competitions, backend#251), points only, computed from the forecast index rows /api/forecasters reads; finished weeks frozen by migration 0036. Needs CHAIN_REWARD_INDEX_ENABLED and FORECAST_COMPETITIONS_ENABLED' },
   { key: 'proofCards', status: 'unavailable', note: 'Default-OFF (PROOF_CARDS_ENABLED) /api/proofs/:commitId (proof-card-routes.ts, backend#229): one station reading and the block it landed in, read from the node (reward-evidence, observation scan, /chain/block); no backend table. A reveal outside the bounded scan is reported not_located, never guessed' },
   { key: 'marketplace', status: 'unavailable', note: 'DEFERRED, not mounted (marketplace-routes.ts): only unified_api_server.ts mounted it and that entrypoint never deploys (backend#1178)' },
   { key: 'academic', status: 'unavailable', note: 'DEFERRED, not mounted (academic-routes.ts): only unified_api_server.ts mounted it and that entrypoint never deploys (backend#1178)' },
@@ -245,6 +246,9 @@ const FEATURE_SEEDS: FeatureSeed[] = [
   { key: 'telemetry', status: 'unavailable', note: 'DEFERRED, not mounted (telemetry-routes.ts): only the never-deployed unified_api_server.ts mounted it (backend#1178)' },
   { key: 'contributorSummary', status: 'unavailable', note: 'DEFERRED, not mounted (contributor-summary-routes.ts): only the never-deployed unified_api_server.ts mounted it (backend#1178)' },
 ];
+
+/** Read features that are honestly `configured` (never operational without evidence) once their flags are on. */
+const FLAG_GATED_READS = new Set(['earningsRead', 'forecastersRead', 'proofCards', 'networkNodesRead', 'competitions']);
 
 const DEFAULT_MAX_EVIDENCE_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_PROBE_TIMEOUT_MS = 2_000;
@@ -463,13 +467,14 @@ export function createCapabilitiesRouter(
     for (const seed of FEATURE_SEEDS) {
       if ((seed.key === 'earningsRead' && !earningsEnabled()) || (seed.key === 'forecastersRead' && !forecastersEnabled())
         || (seed.key === 'proofCards' && !proofCardsEnabled())
-        || (seed.key === 'networkNodesRead' && !networkNodesEnabled())) {
+        || (seed.key === 'networkNodesRead' && !networkNodesEnabled())
+        || (seed.key === 'competitions' && !competitionsEnabled())) {
         features[seed.key] = { status: 'unavailable', reasonCode: 'not_wired' };
         continue;
       }
       const observation = evidence[seed.key];
       features[seed.key] = evaluateFeature(
-        seed.key === 'earningsRead' || seed.key === 'forecastersRead' || seed.key === 'proofCards' || seed.key === 'networkNodesRead' ? { ...seed, status: 'configured' } : seed,
+        FLAG_GATED_READS.has(seed.key) ? { ...seed, status: 'configured' } : seed,
         observation?.capabilityId === seed.key ? observation : undefined,
         evaluatedAt,
         maxEvidenceAgeMs,
