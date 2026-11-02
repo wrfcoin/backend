@@ -277,6 +277,8 @@
     "/api/wallet/:address/data",
     "/api/wallet/:address/nfts",
     "/api/wallet/:address/nonce",
+    "/api/wallet/:address/security-key",
+    "/api/wallet/:address/send-allowlist",
     "/api/wallet/:address/transactions",
     "/api/wallet/send-passkey/nonce/:address",
     "/api/weather/alerts/active",

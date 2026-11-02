@@ -17,7 +17,7 @@ const {
 } = require('../../middleware/rateLimiting');
 const { logger } = require('../utils/logger');
 const { notWiredEnvelope } = require('../middleware/require-wired-storage');
-const { core4ReaderHeaders } = require('../utils/core4-reader-credential');
+const { core4ReaderHeaders, core4PublicReadHeaders } = require('../utils/core4-reader-credential');
 const { core4ContributorHeaders, sendContributorCredentialUnavailable, CONTRIBUTOR_UNCONFIGURED } = require('../utils/core4-contributor-credential');
 const {
   isLaunchAddress,
@@ -25,9 +25,36 @@ const {
   parseSignedTransfer,
 } = require('./wallet-transfer-contract');
 const { parseSessionKeyAction } = require('./session-key-contract');
+const {
+  bodyTooLarge,
+  buildSendAllowlistTransaction,
+  parseSecurityKeyActionPayload,
+  parseSignedSendAllowlistAction,
+  sendAllowlistTransactionBody,
+} = require('./chain-protections-contract');
 
 // All wallet operations require authentication (#230)
 router.use(requireAuth);
+/**
+ * Account protections (core4 security_key_spend, send_allowlist). Dormant unless
+ * WALLET_CHAIN_PROTECTIONS_ENABLED=true (read per request): while off, these four
+ * paths are 404 for a logged-in caller, as if they did not exist. The gate sits after
+ * requireAuth so an anonymous caller gets the same 401 as on every wallet route
+ * (the H11 anonymous-GET ratchet classifies by that answer).
+ */
+const chainProtectionsEnabled = () => process.env.WALLET_CHAIN_PROTECTIONS_ENABLED === 'true';
+const CHAIN_PROTECTION_PATHS = [
+  /^\/[^/]+\/security-key$/,
+  /^\/[^/]+\/send-allowlist$/,
+  /^\/security-key\/actions$/,
+  /^\/send-allowlist\/actions$/,
+];
+router.use((req, res, next) => {
+  if (!chainProtectionsEnabled() && CHAIN_PROTECTION_PATHS.some((re) => re.test(req.path))) {
+    return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Not found' } });
+  }
+  return next();
+});
 // Rate limit all wallet routes; financial POST endpoints get tighter limits (#237)
 router.use(generalLimiter);
 const config = require('../../config');
@@ -546,7 +573,12 @@ function transferAuthorization(transfer) {
       },
     };
   }
-  return { auth_pubkey: transfer.authPubkey, auth_signature: transfer.authSignature };
+  return {
+    auth_pubkey: transfer.authPubkey,
+    auth_signature: transfer.authSignature,
+    // security_key_spend: the YubiKey's assertion goes WITH the ed25519 signature.
+    ...(transfer.securityKeyAuth ? { security_key_auth: transfer.securityKeyAuth } : {}),
+  };
 }
 
 async function submitSignedTransfer(req, res, expectedFrom) {
@@ -698,6 +730,171 @@ router.post('/session-keys', transferLimiter, async (req, res) => {
     const { sendCore4Unavailable } = await getCore4Client();
     logger.error('Session key action error:', error);
     return sendCore4Unavailable(res, error, 'Session key action failed');
+  }
+});
+
+/**
+ * Account protections (core4 security_key_spend and send_allowlist; dormant
+ * unless WALLET_CHAIN_PROTECTIONS_ENABLED=true, see the gate above). Every
+ * route is owner-bound to the JWT subject. While a feature is not active the
+ * reads say so (feature_active_*) and the node refuses actions with 503
+ * FEATURE_NOT_ACTIVE; both pass through unchanged.
+ */
+function rejectInvalidAddressParam(req, res) {
+  if (isLaunchAddress(req.params.address)) return false;
+  res.status(400).json({
+    success: false,
+    error: { code: 'INVALID_ADDRESS', message: 'Expected a core4 hex wallet address.' },
+  });
+  return true;
+}
+
+function rejectProtectionBody(req, res, parse) {
+  if (bodyTooLarge(req.body)) {
+    res.status(413).json({ success: false, error: { code: 'PAYLOAD_TOO_LARGE', message: 'action body is too large' } });
+    return null;
+  }
+  const parsed = parse(req.body);
+  if (!parsed.ok) {
+    res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message: parsed.message } });
+    return null;
+  }
+  const caller = req.user && req.user.sub;
+  if (!caller || typeof caller !== 'string') {
+    res.status(401).json({ error: 'Authenticated wallet address could not be determined' });
+    return null;
+  }
+  if (parsed.account !== caller.toLowerCase()) {
+    res.status(403).json({
+      success: false,
+      error: { code: 'FORBIDDEN', message: 'the action account must match the authenticated wallet' },
+    });
+    return null;
+  }
+  return parsed;
+}
+
+async function relayProtectionRead(req, res, path, headers, isExpectedShape, label) {
+  const { fetchCore4Json, extractCore4Data } = await getCore4Client();
+  const response = await fetchCore4Json(path, { headers });
+  if (!response.ok) return res.status(response.status || 502).json(response.payload);
+  const data = extractCore4Data(response.payload);
+  if (!data || typeof data !== 'object' || !isExpectedShape(data)) {
+    return res.status(502).json({
+      success: false,
+      error: { code: 'CORE4_BAD_RESPONSE', message: `core4 ${label} read had an unexpected shape` },
+    });
+  }
+  return res.json({ success: true, data });
+}
+
+function contributorHeadersOrSend(req, res) {
+  try {
+    return core4ContributorHeaders(req.headers);
+  } catch (error) {
+    if (error.code === CONTRIBUTOR_UNCONFIGURED) {
+      sendContributorCredentialUnavailable(res);
+      return null;
+    }
+    throw error;
+  }
+}
+
+// Public on the node; the backend still binds it to the caller.
+router.get('/:address/security-key', async (req, res) => {
+  try {
+    if (rejectInvalidAddressParam(req, res)) return undefined;
+    if (!requireOwnAddress(req, res)) return undefined;
+    return await relayProtectionRead(
+      req,
+      res,
+      `/accounts/${encodeURIComponent(req.params.address.toLowerCase())}/security-key`,
+      core4PublicReadHeaders(req.headers),
+      (d) => typeof d.feature_active_at_next_height === 'boolean' && Array.isArray(d.keys),
+      'security-key',
+    );
+  } catch (error) {
+    const { sendCore4Unavailable } = await getCore4Client();
+    return sendCore4Unavailable(res, error, 'Failed to read the security-key status');
+  }
+});
+
+// Reader-gated on the node.
+router.get('/:address/send-allowlist', async (req, res) => {
+  try {
+    if (rejectInvalidAddressParam(req, res)) return undefined;
+    if (!requireOwnAddress(req, res)) return undefined;
+    if (!requireReaderToken(res)) return undefined;
+    return await relayProtectionRead(
+      req,
+      res,
+      `/accounts/${encodeURIComponent(req.params.address.toLowerCase())}/send-allowlist`,
+      core4ReaderHeaders(req.headers),
+      (d) => typeof d.feature_active_next_height === 'boolean' && !!d.allowlist && typeof d.allowlist === 'object',
+      'send-allowlist',
+    );
+  } catch (error) {
+    const { sendCore4Unavailable } = await getCore4Client();
+    return sendCore4Unavailable(res, error, 'Failed to read the send allowlist');
+  }
+});
+
+// The node takes the signed SecurityKeyActionPayload directly and dry-runs it.
+router.post('/security-key/actions', transferLimiter, async (req, res) => {
+  try {
+    const parsed = rejectProtectionBody(req, res, parseSecurityKeyActionPayload);
+    if (!parsed) return undefined;
+    const headers = contributorHeadersOrSend(req, res);
+    if (!headers) return undefined;
+    const { fetchCore4Json, extractCore4Data } = await getCore4Client();
+    const response = await fetchCore4Json('/accounts/security-key/actions', {
+      method: 'POST',
+      headers,
+      body: parsed.value,
+    });
+    if (!response.ok) return res.status(response.status || 502).json(response.payload);
+    const result = extractCore4Data(response.payload) || {};
+    return res.status(response.status || 202).json({
+      hash: result.tx_id ?? null,
+      action: parsed.kind,
+      status: 'submitted',
+      settled: false,
+    });
+  } catch (error) {
+    const { sendCore4Unavailable } = await getCore4Client();
+    logger.error('Security-key action error:', error);
+    return sendCore4Unavailable(res, error, 'Security-key action failed');
+  }
+});
+
+// The node takes only a whole SendAllowlist Transaction: wrap the browser's
+// signed action exactly as the core4 CLI does (chain-protections-contract.js).
+// The wrapper adds no signature; the owner's signature inside it is the only one.
+router.post('/send-allowlist/actions', transferLimiter, async (req, res) => {
+  try {
+    const parsed = rejectProtectionBody(req, res, parseSignedSendAllowlistAction);
+    if (!parsed) return undefined;
+    const headers = contributorHeadersOrSend(req, res);
+    if (!headers) return undefined;
+    const built = buildSendAllowlistTransaction(parsed.value, Math.floor(Date.now() / 1000));
+    const { fetchCore4Json, extractCore4Data } = await getCore4Client();
+    const response = await fetchCore4Json('/accounts/send-allowlist/submit', {
+      method: 'POST',
+      headers,
+      body: sendAllowlistTransactionBody(built),
+    });
+    if (!response.ok) return res.status(response.status || 502).json(response.payload);
+    const result = extractCore4Data(response.payload) || {};
+    return res.status(response.status || 202).json({
+      hash: result.tx_id ?? built.txId,
+      action: parsed.kind,
+      status: 'submitted',
+      settled: false,
+    });
+  } catch (error) {
+    const { sendCore4Unavailable } = await getCore4Client();
+    logger.error('Send-allowlist action error:', error);
+    return sendCore4Unavailable(res, error, 'Send-allowlist action failed');
   }
 });
 
