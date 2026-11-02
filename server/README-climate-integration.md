@@ -35,11 +35,6 @@ exchange, format conversion, and blockchain provenance tracking.
    - Request validation and rate limiting
    - Performance metrics and health monitoring
 
-5. **API Routes** (`climate-model-routes.js`)
-   - Comprehensive REST API with full documentation
-   - Model execution, data retrieval, and format conversion endpoints
-   - System monitoring and health check endpoints
-
 ## Supported Climate Models
 
 ### GFS (Global Forecast System)
