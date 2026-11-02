@@ -488,7 +488,7 @@ async function runLeaderboardQuery(
         WHERE ws2.user_id = u.id AND (ws2.country IS NOT NULL OR ws2.city IS NOT NULL)
         ORDER BY ws2.submitted_at DESC LIMIT 1
       ) latest_geo ON TRUE
-      WHERE smc.created_at >= now() - ($2::text)::interval
+      WHERE smc.claimed_at >= now() - ($2::text)::interval
         ${existsFrag}
       GROUP BY u.wallet_address, u.display_name, latest_geo.country, latest_geo.city
       ORDER BY value DESC NULLS LAST
