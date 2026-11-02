@@ -19,7 +19,7 @@
  *      label rows of the old chain.
  *
  * Not touched: the chain reward index tables (chain_reward_index_state,
- * chain_reward_blocks, chain_role_payouts, chain_role_payees) are keyed by
+ * chain_reward_blocks, chain_role_payouts, chain_role_payees, chain_contribution_payees) are keyed by
  * (chain_id, genesis_hash), so the new chain gets its own rows as soon as
  * CHAIN_REWARD_INDEX_CHAIN_ID / CHAIN_REWARD_INDEX_GENESIS_HASH name it.
  * Users, wallets, weather_stations and weather observations are kept.

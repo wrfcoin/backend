@@ -178,14 +178,15 @@ const pgPort=process.env.CHAIN_REWARD_TEST_PORT;
   const pool=new PgPool({host:'127.0.0.1',port:Number(pgPort),user:'postgres',database:'postgres'});
   beforeAll(async()=>{
     await pool.query(readFileSync('drizzle/migrations/0031_chain_role_reward_index.sql','utf8'));
+    await pool.query(readFileSync('drizzle/migrations/0042_chain_contribution_payees.sql','utf8'));
     await pool.query(readFileSync('drizzle/migrations/0032_operator_role_labels.sql','utf8'));
     await pool.query(readFileSync('drizzle/migrations/0033_chain_role_payee_aliases.sql','utf8'));
     await pool.query(readFileSync('drizzle/migrations/0034_chain_reward_catchup_schedule.sql','utf8'));
     // The store also writes the forecast track-record rows (core4#3604 A4); the schema must carry their tables.
     await pool.query(readFileSync('drizzle/migrations/0035_chain_forecast_index.sql','utf8'));
   });
-  // Drop every object 0031-0035 create, so a second run on the same database starts clean.
-  afterAll(async()=>{await pool.query('DROP TABLE chain_forecast_decision_events,chain_forecast_block_stats,operator_role_labels,chain_role_payees,chain_role_payouts,chain_reward_blocks,chain_reward_index_state CASCADE; DROP FUNCTION register_chain_role_payee()');await pool.end();});
+  // Drop every object 0031-0035 and 0042 create, so a second run on the same database starts clean.
+  afterAll(async()=>{await pool.query('DROP TABLE chain_contribution_payees,chain_forecast_decision_events,chain_forecast_block_stats,operator_role_labels,chain_role_payees,chain_role_payouts,chain_reward_blocks,chain_reward_index_state CASCADE; DROP FUNCTION register_chain_role_payee()');await pool.end();});
   beforeEach(async()=>{await pool.query('TRUNCATE chain_reward_index_state CASCADE');});
   const dbPass = (get=read,tip=3) => withRewardStore(pool,'777',genesis,store=>pass(store,get,tip));
   const cool = () => pool.query("UPDATE chain_reward_index_state SET next_run_at='-infinity'");

@@ -109,6 +109,8 @@ export interface RewardBlock {
   height: number; hash: string; prevHash: string; timestamp: string; payouts: Payout[];
   /** Forecast track-record extraction from the same envelope (forecast-parser.ts); attached by the indexer, never by this parser. */
   forecast?: import('./forecast-parser.js').ForecastBlock;
+  /** Settled real weather contributions (contribution-parser.ts); attached by the indexer. */
+  contribution?: import('./contribution-parser.js').ContributionBlock;
 }
 export function parseRewardBlock(raw: string, expectedHeight: number): RewardBlock {
   const envelope = losslessJson(raw);

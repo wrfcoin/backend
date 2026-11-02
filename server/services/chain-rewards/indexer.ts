@@ -1,6 +1,7 @@
 import { nodeHttpFetch } from '../../../shared/core4-node-http.js';
 import { losslessJson, parseRewardBlock, RewardIndexError, type RewardBlock } from './parser.js';
 import { parseForecastBlock } from './forecast-parser.js';
+import { parseContributionBlock } from './contribution-parser.js';
 import { withRewardStore, type IndexStore, type Pool } from './store.js';
 
 import { MAX_BLOCK_READS, READ_PACE_MS, RUN_INTERVAL_MS, errorBackoffMs } from './scheduling.js';
@@ -59,7 +60,26 @@ export async function runRewardIndexOnce(options: {
     const block = parseRewardBlock(result.raw, h);
     // Forecast track record (core4#3604 A4) from the same read; tolerant, so it cannot fail this pass.
     block.forecast = parseForecastBlock(result.raw, h);
+    block.contribution = parseContributionBlock(result.raw, h);
     return block;
+  };
+  // Re-reads blocks indexed before chain_contribution_payees existed, only once at the tip and within
+  // this pass's budget. A block that will not parse stops the backfill, not the receipt index; the streak
+  // tab stays empty rather than short. Returns how many blocks are still waiting.
+  const backfillContributions = async (): Promise<number> => {
+    const { heights, remaining } = await store.unscannedContributionBlocks?.(MAX_BLOCK_READS - reads) ?? { heights: [], remaining: 0 };
+    let left = remaining;
+    try {
+      for (const height of heights) {
+        await store.scanContributionBlock!(await get(height));
+        left--;
+      }
+    } catch (error) {
+      const code = error instanceof RewardIndexError ? error.code : 'UPSTREAM';
+      if (code === 'RATE_LIMITED' || code === 'UPSTREAM') throw error;
+      return 0;
+    }
+    return left;
   };
   let status = 'ok', lag: number | null = null;
   try {
@@ -88,7 +108,9 @@ export async function runRewardIndexOnce(options: {
       if (block.prevHash !== cursorHash) throw new RewardIndexError('INVALID_BLOCK');
       await store.append(block); appended++; cursor = block.height; cursorHash = block.hash;
     }
-    lag = tip - cursor;
+    // A waiting backfill counts as lag so it runs at the catch-up pace instead of one pass per 5 minutes.
+    const backlog = cursor === tip ? await backfillContributions() : 0;
+    lag = Math.max(tip - cursor, backlog);
     status = cursor < tip ? 'budget' : 'ok';
   } catch (error) {
     const code = error instanceof RewardIndexError ? error.code : 'UPSTREAM';

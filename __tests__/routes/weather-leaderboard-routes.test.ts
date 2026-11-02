@@ -23,7 +23,7 @@ function makeDb(sequences: Array<{ rows: Row[] }>) {
 
 import { createWeatherLeaderboardRouter } from '../../server/routes/weather-leaderboard-routes.js';
 
-function makeApp(db: ReturnType<typeof makeDb>, cache: any = null) {
+function makeApp(db: ReturnType<typeof makeDb>, cache: any = null, extra: Record<string, unknown> = {}) {
   const app = express();
   app.use(express.json());
   app.use(
@@ -32,6 +32,7 @@ function makeApp(db: ReturnType<typeof makeDb>, cache: any = null) {
       db: { execute: db.execute } as any,
       cache,
       rateLimit: null,
+      ...extra,
     }),
   );
   return app;
@@ -251,39 +252,54 @@ describe('GET /api/weather/leaderboard — combined filters', () => {
   });
 });
 
-describe('GET /api/weather/leaderboard — streak metric with geo', () => {
-  it('filters on a column the streak table really has (claimed_at, per migration 0001)', async () => {
-    const { readFileSync } = await import('node:fs');
-    const ddl = readFileSync('drizzle/migrations/0001_streak_social_gas.sql', 'utf8');
-    const table = ddl.slice(0, ddl.indexOf(');'));
-    const columns = [...table.matchAll(/^\s*"([a-z_]+)"\s+\w+/gm)].map((m) => m[1]);
-    expect(columns).toContain('claimed_at');
+describe('GET /api/weather/leaderboard — streak metric', () => {
+  const chain = { chainId: '888', genesis: 'a'.repeat(64) };
+  const streakRow = { ...sampleRows()[0], value: 30 };
 
+  it('ranks from settled chain contributions, never the empty milestone table', async () => {
+    const db = makeDb([{ rows: [streakRow] }]);
+    const res = await request(makeApp(db, null, { rewardChain: () => chain })).get('/api/weather/leaderboard?metric=streak');
+    expect(res.status).toBe(200);
+    expect(res.body.entries[0]).toMatchObject({ value: 30, streak: 30 });
+    expect(db.calls[0].sql).toMatch(/FROM chain_contribution_payees/);
+    expect(db.calls[0].sql).not.toMatch(/streak_milestones_claimed/);
+    expect(db.calls[0].params).toEqual(expect.arrayContaining(['888', chain.genesis]));
+  });
+
+  it('bounds the scan however long the period is', async () => {
     const db = makeDb([{ rows: [] }]);
-    const app = makeApp(db);
-    await request(app).get('/api/weather/leaderboard?metric=streak');
-    const used = [...String(db.calls[0].sql).matchAll(/\bsmc\.([a-z_]+)/g)].map((m) => m[1]);
-    expect(used.length).toBeGreaterThan(0);
-    for (const column of used) expect(columns).toContain(column);
+    await request(makeApp(db, null, { rewardChain: () => chain })).get('/api/weather/leaderboard?metric=streak&period=all');
+    expect(db.calls[0].sql).toMatch(/interval '400 days'/);
   });
 
-  it('uses an EXISTS subquery against weather_submissions when geofilter is active', async () => {
-    const db = makeDb([{ rows: [{ ...sampleRows()[0], value: 30 }] }]);
-    const app = makeApp(db);
-    const res = await request(app).get('/api/weather/leaderboard?metric=streak&country=US');
+  it('applies geo through EXISTS on weather_submissions and numbers the chain params after the geo ones', async () => {
+    const db = makeDb([{ rows: [streakRow] }]);
+    const res = await request(makeApp(db, null, { rewardChain: () => chain })).get('/api/weather/leaderboard?metric=streak&country=US');
     expect(res.status).toBe(200);
-    expect(res.body.metric).toBe('streak');
-    expect(db.calls[0].sql).toMatch(/streak_milestones_claimed/);
     expect(db.calls[0].sql).toMatch(/EXISTS \(SELECT 1 FROM weather_submissions/);
-    expect(db.calls[0].sql).toMatch(/UPPER\(ws\.country\) = ANY/);
+    expect(db.calls[0].sql).toMatch(/UPPER\(ws\.country\) = ANY\(\$3::text\[\]\)/);
+    expect(db.calls[0].sql).toMatch(/chain_id = \$4 AND genesis_hash = \$5/);
+    expect(db.calls[0].params.slice(3)).toEqual(['888', chain.genesis]);
   });
 
-  it('skips the EXISTS subquery for the unfiltered streak leaderboard', async () => {
-    const db = makeDb([{ rows: [{ ...sampleRows()[0], value: 30 }] }]);
-    const app = makeApp(db);
-    const res = await request(app).get('/api/weather/leaderboard?metric=streak');
-    expect(res.status).toBe(200);
+  it('skips the EXISTS subquery for the unfiltered board', async () => {
+    const db = makeDb([{ rows: [streakRow] }]);
+    await request(makeApp(db, null, { rewardChain: () => chain })).get('/api/weather/leaderboard?metric=streak');
     expect(db.calls[0].sql).not.toMatch(/EXISTS \(SELECT 1 FROM weather_submissions/);
+  });
+
+  it('shortens addresses for anonymous callers', async () => {
+    const db = makeDb([{ rows: [streakRow] }]);
+    const res = await request(makeApp(db, null, { rewardChain: () => chain })).get('/api/weather/leaderboard?metric=streak');
+    expect(res.body.entries[0].walletAddress).toContain('…');
+  });
+
+  it('returns no rows and reads nothing when no reward index is configured', async () => {
+    const db = makeDb([]);
+    const res = await request(makeApp(db, null, { rewardChain: () => null })).get('/api/weather/leaderboard?metric=streak');
+    expect(res.status).toBe(200);
+    expect(res.body.entries).toEqual([]);
+    expect(db.calls).toHaveLength(0);
   });
 });
 
