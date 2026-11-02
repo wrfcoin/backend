@@ -252,6 +252,21 @@ describe('GET /api/weather/leaderboard — combined filters', () => {
 });
 
 describe('GET /api/weather/leaderboard — streak metric with geo', () => {
+  it('filters on a column the streak table really has (claimed_at, per migration 0001)', async () => {
+    const { readFileSync } = await import('node:fs');
+    const ddl = readFileSync('drizzle/migrations/0001_streak_social_gas.sql', 'utf8');
+    const table = ddl.slice(0, ddl.indexOf(');'));
+    const columns = [...table.matchAll(/^\s*"([a-z_]+)"\s+\w+/gm)].map((m) => m[1]);
+    expect(columns).toContain('claimed_at');
+
+    const db = makeDb([{ rows: [] }]);
+    const app = makeApp(db);
+    await request(app).get('/api/weather/leaderboard?metric=streak');
+    const used = [...String(db.calls[0].sql).matchAll(/\bsmc\.([a-z_]+)/g)].map((m) => m[1]);
+    expect(used.length).toBeGreaterThan(0);
+    for (const column of used) expect(columns).toContain(column);
+  });
+
   it('uses an EXISTS subquery against weather_submissions when geofilter is active', async () => {
     const db = makeDb([{ rows: [{ ...sampleRows()[0], value: 30 }] }]);
     const app = makeApp(db);
