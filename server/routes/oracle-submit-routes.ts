@@ -568,12 +568,12 @@ router.post('/submit-data', oracleSubmitLimiter, async (req: Request, res: Respo
         status: commitResponse.status,
         ...detail,
       });
-      if (commitResponse.status === 400 && isReplayRejection(commitResponse.payload)) {
-        // Terminal: this commit id is already on chain; retrying can never succeed.
-        sendErrorEnvelope(res, 409, 'COMMIT_ALREADY_SUBMITTED', 'This reading was already submitted');
-        return;
+      // A replayed commit is already queued, but an earlier attempt may have
+      // lost its reveal, so fall through and send it. Answering "already
+      // submitted" here would retire the reading with no reveal ever sent.
+      if (!(commitResponse.status === 400 && isReplayRejection(commitResponse.payload))) {
+        throw new Error(`core4 contribution commit failed (${commitResponse.status})`);
       }
-      throw new Error(`core4 contribution commit failed (${commitResponse.status})`);
     }
 
     const revealResponse = await fetchCore4Json('/transactions/contribution/reveal', {
@@ -594,6 +594,11 @@ router.post('/submit-data', oracleSubmitLimiter, async (req: Request, res: Respo
         status: revealResponse.status,
         ...core4ErrorDetail(revealResponse.payload),
       });
+      if (revealResponse.status === 400 && isReplayRejection(revealResponse.payload)) {
+        // Terminal: this reveal is already queued; retrying can never succeed.
+        sendErrorEnvelope(res, 409, 'COMMIT_ALREADY_SUBMITTED', 'This reading was already submitted');
+        return;
+      }
       throw new Error(`core4 contribution reveal failed (${revealResponse.status})`);
     }
 
@@ -612,7 +617,7 @@ router.post('/submit-data', oracleSubmitLimiter, async (req: Request, res: Respo
     const account = accountResponse.ok
       ? extractCore4Data(accountResponse.payload) || {}
       : {};
-    const commitData = extractCore4Data(commitResponse.payload) || {};
+    const commitData = commitResponse.ok ? extractCore4Data(commitResponse.payload) || {} : {};
     const revealData = extractCore4Data(revealResponse.payload) || {};
 
     res.json({
