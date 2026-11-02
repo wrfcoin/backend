@@ -40,7 +40,11 @@ type ServerModule = {
 };
 
 function resetMockRedisDefaults() {
-  Object.values(mockRedis).forEach(mockFn => mockFn.mockReset());
+  // Loading a server leaves a read-only, non-mock failureMode property on the
+  // shared client, so reset only the mock functions.
+  Object.values(mockRedis)
+    .filter(value => jest.isMockFunction(value))
+    .forEach(mockFn => mockFn.mockReset());
   mockRedis.get.mockResolvedValue(null);
   mockRedis.set.mockResolvedValue('OK');
   mockRedis.setex.mockResolvedValue('OK');
@@ -77,6 +81,9 @@ function loadServerModule(modulePath: string, envOverrides: Record<string, strin
     ...ORIGINAL_ENV,
     WS_DISABLE_AUTO_LISTEN: 'true',
     WS_DISABLE_BACKGROUND_TASKS: 'true',
+    // Both servers refuse to load under NODE_ENV=production without an explicit
+    // CORS allowlist; these cases exercise the upgrade path past that gate.
+    CORS_ORIGIN: 'https://testnet.example',
     ...envOverrides,
   };
   const loaded = require(modulePath) as ServerModule;
@@ -191,17 +198,25 @@ describe('WebSocket security hardening', () => {
     });
 
     it('returns 503 when auth module import fails in strict mode', async () => {
-      await expectUpgradeStatus(
-        modulePath,
-        {
-          NODE_ENV: 'production',
-          JWT_SECRET: 'unit-test-jwt-secret',
-          WRFCOIN_ENV: 'production',
-          WS_AUTH_MODULE_PATH: './does-not-exist.js',
-        },
-        requestUrl,
-        'HTTP/1.1 503 Service Unavailable'
-      );
+      // Fail the import both servers default to. WS_AUTH_MODULE_PATH would not do:
+      // only the secure messaging server reads it.
+      jest.doMock('../shared/websocket/index.js', () => {
+        throw new Error('auth module failed to load');
+      });
+      try {
+        await expectUpgradeStatus(
+          modulePath,
+          {
+            NODE_ENV: 'production',
+            JWT_SECRET: 'unit-test-jwt-secret',
+            WRFCOIN_ENV: 'production',
+          },
+          requestUrl,
+          'HTTP/1.1 503 Service Unavailable'
+        );
+      } finally {
+        jest.dontMock('../shared/websocket/index.js');
+      }
     });
 
     it('applies baseline 429 limiting even when auth is unavailable', async () => {

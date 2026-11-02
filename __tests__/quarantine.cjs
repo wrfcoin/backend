@@ -81,8 +81,6 @@ const QUARANTINE = [
   { pattern: "/__tests__/threshold-signatures\\.test\\.ts$", category: "esm-syntax", file: "__tests__/threshold-signatures.test.ts", signature: "SyntaxError: U" },
   { pattern: "/__tests__/weather-ingest-edge-cases\\.test\\.ts$", category: "assertion-drift", file: "__tests__/weather-ingest-edge-cases.test.ts", signature: "expect(received)" },
   { pattern: "/__tests__/weather-streak\\.test\\.ts$", category: "failing-on-main", file: "__tests__/weather-streak.test.ts", signature: "<no-signature>" },
-  { pattern: "/__tests__/websocket-auth\\.test\\.ts$", category: "failing-on-main", file: "__tests__/websocket-auth.test.ts", signature: "<no-signature>" },
-  { pattern: "/__tests__/websocket-security-hardening\\.test\\.ts$", category: "assertion-drift", file: "__tests__/websocket-security-hardening.test.ts", signature: "expect(received)" },
   { pattern: "/__tests__/wormhole-bridge\\.test\\.ts$", category: "stale-module-ref", file: "__tests__/wormhole-bridge.test.ts", signature: "Cannot find module '@solana/web3.js'" },
   { pattern: "/__tests__/wormhole-transfer-routes\\.test\\.ts$", category: "failing-on-main", file: "__tests__/wormhole-transfer-routes.test.ts", signature: "<no-signature>" },
 
