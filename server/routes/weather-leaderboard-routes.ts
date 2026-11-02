@@ -2,7 +2,8 @@
  * Weather-operator leaderboard — closes backend#384, extended by backend#693.
  *
  * Public, unauthenticated endpoint that ranks operators by submissions,
- * quality_score, or streak from PostgreSQL. #693 adds geographic filters
+ * quality_score, or streak (settled chain contributions, see runLeaderboardQuery)
+ * from PostgreSQL. #693 adds geographic filters
  * (`country`, `region`, `near`) plus `country`/`city` fields on response
  * rows so `frontend#151` can render region tabs. Response shape stays
  * additive — pre-filter clients keep parsing.
@@ -61,6 +62,16 @@ export interface LeaderboardDeps {
   fetchCore4Json?: Core4Fetch;
   readerToken?: () => string | undefined;
   now?: () => number;
+  /** The chain the reward index follows; null when it is not configured (tests inject it). */
+  rewardChain?: () => RewardChain | null;
+}
+
+type RewardChain = { chainId: string; genesis: string };
+
+function defaultRewardChain(): RewardChain | null {
+  const chainId = process.env.CHAIN_REWARD_INDEX_CHAIN_ID;
+  const genesis = process.env.CHAIN_REWARD_INDEX_GENESIS_HASH;
+  return chainId && genesis ? { chainId, genesis } : null;
 }
 
 function defaultDb(): DbExecutor {
@@ -116,6 +127,9 @@ const PERIOD_INTERVAL_MAP: Record<string, string> = {
 const COUNTRY_CODE_RE = /^[A-Za-z]{2}$/;
 
 const CACHE_TTL_SECONDS = 60;
+
+/** Bounds a public streak read whatever the period says; a streak tops out at this many days. */
+const STREAK_MAX_LOOKBACK_DAYS = 400;
 
 interface Viewer {
   /** Presented the configured operator bearer. */
@@ -365,7 +379,7 @@ export function createWeatherLeaderboardRouter(deps: LeaderboardDeps = {}): expr
         }
         return res.type('application/json').send(serialised);
       }
-      const rows = await runLeaderboardQuery(executor, metric, rawLimit, periodInterval, gf);
+      const rows = await runLeaderboardQuery(executor, metric, rawLimit, periodInterval, gf, (deps.rewardChain ?? defaultRewardChain)());
       const earned = await readEarnings(rows.map(row => String(row.wallet_address)));
       const body = buildResponse(metric, rawPeriod, countryFilter, regionFilter, nearFilter, rows, viewer, earned);
       const serialised = JSON.stringify(body);
@@ -460,41 +474,70 @@ async function runLeaderboardQuery(
   limit: number,
   periodInterval: string,
   gf: GeoFilter,
+  rewardChain: RewardChain | null,
 ): Promise<Record<string, unknown>[]> {
   // First 2 params are always [limit, periodInterval]; geo params start at $3.
   const base: unknown[] = [limit, periodInterval];
   const geo = buildGeoWhere(gf, 'ws', base.length + 1);
 
   if (metric === 'streak') {
-    // Geo filter is applied via an EXISTS on weather_submissions because
-    // streak_milestones_claimed itself has no geo columns. We also expose
-    // country/city from the submitter's most recent non-null submission via a
-    // LATERAL join so callers always get a value when one exists.
+    // The rank is the CURRENT streak: consecutive UTC days, ending today or yesterday, on which the chain
+    // settled a real weather contribution for the address. Yesterday still counts so that nobody drops
+    // to zero at midnight before that day's first reading settles. The period limits which days are
+    // counted, so a 7d board tops out at 7. No rows until the index has scanned every block: a partly
+    // scanned chain would show streaks that are too short.
+    if (!rewardChain) return [];
+    const chain = geo.nextParam;
+    const genesis = geo.nextParam + 1;
+    // Geo comes from the address's own submissions, reached by the indexed user_id.
     const existsFrag = gf.countries || gf.near
-      ? `AND EXISTS (SELECT 1 FROM weather_submissions ws WHERE ws.user_id = u.id ${geo.sql})`
+      ? `WHERE EXISTS (SELECT 1 FROM weather_submissions ws WHERE ws.user_id = u.id ${geo.sql})`
       : '';
     const sql = `
+      WITH days AS (
+        SELECT DISTINCT contributor_address, day
+        FROM chain_contribution_payees
+        WHERE chain_id = $${chain} AND genesis_hash = $${genesis}
+          AND day > (GREATEST(now() - ($2::text)::interval, now() - interval '${STREAK_MAX_LOOKBACK_DAYS} days') AT TIME ZONE 'UTC')::date
+          AND NOT EXISTS (
+            SELECT 1 FROM chain_reward_blocks b
+            WHERE b.chain_id = $${chain} AND b.genesis_hash = $${genesis} AND NOT b.contribution_scanned
+          )
+      ), runs AS (
+        SELECT contributor_address, COUNT(*) AS run, MAX(day) AS last_day
+        FROM (
+          SELECT contributor_address, day,
+            day - (ROW_NUMBER() OVER (PARTITION BY contributor_address ORDER BY day))::int AS island
+          FROM days
+        ) numbered
+        GROUP BY contributor_address, island
+      ), live AS (
+        SELECT contributor_address, run FROM runs
+        WHERE last_day >= (now() AT TIME ZONE 'UTC')::date - 1
+      )
       SELECT
-        u.wallet_address,
-        COALESCE(u.display_name, 'WeatherNode-' || UPPER(SUBSTRING(u.wallet_address, 3, 6))) AS display_name,
-        MAX(smc.milestone_days) AS value,
+        live.contributor_address AS wallet_address,
+        COALESCE(u.display_name, 'WeatherNode-' || UPPER(SUBSTRING(live.contributor_address, 3, 6))) AS display_name,
+        live.run AS value,
         latest_geo.country AS country,
         latest_geo.city AS city,
-        ROW_NUMBER() OVER (ORDER BY MAX(smc.milestone_days) DESC NULLS LAST) AS rank
-      FROM streak_milestones_claimed smc
-      JOIN users u ON u.wallet_address = smc.wallet_address
+        ROW_NUMBER() OVER (ORDER BY live.run DESC, live.contributor_address) AS rank
+      FROM live
+      LEFT JOIN LATERAL (
+        SELECT id, display_name FROM users
+        WHERE LOWER(wallet_address) = live.contributor_address
+        ORDER BY id LIMIT 1
+      ) u ON TRUE
       LEFT JOIN LATERAL (
         SELECT country, city FROM weather_submissions ws2
         WHERE ws2.user_id = u.id AND (ws2.country IS NOT NULL OR ws2.city IS NOT NULL)
         ORDER BY ws2.submitted_at DESC LIMIT 1
       ) latest_geo ON TRUE
-      WHERE smc.claimed_at >= now() - ($2::text)::interval
-        ${existsFrag}
-      GROUP BY u.wallet_address, u.display_name, latest_geo.country, latest_geo.city
-      ORDER BY value DESC NULLS LAST
+      ${existsFrag}
+      ORDER BY live.run DESC, live.contributor_address
       LIMIT $1
     `;
-    const result = await executor.execute(sql, [...base, ...geo.params]);
+    const result = await executor.execute(sql, [...base, ...geo.params, rewardChain.chainId, rewardChain.genesis]);
     return result.rows;
   }
 
@@ -626,7 +669,7 @@ function buildResponse(
         | 'gold'
         | 'silver'
         | 'bronze',
-      streak: null,
+      streak: metric === 'streak' ? value : null,
       country: toCountryCode(row.country),
       city: typeof row.city === 'string' && row.city.length > 0 ? row.city : null,
       earningsBaseUnits: paid,

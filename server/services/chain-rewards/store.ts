@@ -18,6 +18,9 @@ export interface IndexStore {
   rewind(height: number, hash: string | null): Promise<void>;
   append(block: RewardBlock): Promise<void>;
   status(status: string): Promise<void>;
+  /** Blocks not yet read for contribution payees, lowest first. Optional: test stores may omit it. */
+  unscannedContributionBlocks?(limit: number): Promise<{ heights: number[]; remaining: number }>;
+  scanContributionBlock?(block: RewardBlock): Promise<void>;
 }
 
 /** Called only under the chain/genesis session advisory lock. DB time and the
@@ -55,6 +58,17 @@ export async function withRewardStore<T>(pool: Pool, chainId: string, genesis: s
       await client.query('BEGIN');
       try { await fn(); await client.query('COMMIT'); }
       catch { await client.query('ROLLBACK'); throw new RewardIndexError('DB_ERROR'); }
+    };
+    // Migrations are applied by hand, so an image can start before 0042. Receipt indexing must carry on
+    // without it; those blocks stay unscanned and the backfill picks them up once the migration lands.
+    const payeesMigrated = (await client.query(`SELECT to_regclass('chain_contribution_payees') IS NOT NULL AS ok`)).rows[0]?.ok === true;
+    const recordContributionPayees = async (block: RewardBlock) => {
+      if (!payeesMigrated || !block.contribution) return;
+      for (const payee of block.contribution.payees) {
+        await client.query(`INSERT INTO chain_contribution_payees(chain_id,genesis_hash,height,block_hash,contributor_address,day)
+          VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, [...args, block.height, block.hash, payee, block.timestamp.slice(0, 10)]);
+      }
+      await client.query('UPDATE chain_reward_blocks SET contribution_scanned=true WHERE chain_id=$1 AND genesis_hash=$2 AND height=$3 AND block_hash=$4', [...args, block.height, block.hash]);
     };
     let startedAt = 0;
     const store: IndexStore = {
@@ -103,6 +117,7 @@ export async function withRewardStore<T>(pool: Pool, chainId: string, genesis: s
           const state = await store.state();
           if (block.height !== state.height + 1 || (state.hash !== null && block.prevHash !== state.hash)) throw new RewardIndexError('INVALID_BLOCK');
           await client.query('INSERT INTO chain_reward_blocks(chain_id,genesis_hash,height,block_hash,prev_hash,block_time,parser_version) VALUES ($1,$2,$3,$4,$5,$6,$7)', [...args, block.height, block.hash, block.prevHash, block.timestamp, PARSER_VERSION]);
+          await recordContributionPayees(block);
           for (const p of block.payouts) {
             await client.query('INSERT INTO chain_role_payouts(chain_id,genesis_hash,height,block_hash,role,event_id,payee_address,operator_identity,amount) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)', [...args, block.height, block.hash, p.role, p.eventId, p.payee, p.identity, p.amount]);
           }
@@ -122,6 +137,18 @@ export async function withRewardStore<T>(pool: Pool, chainId: string, genesis: s
         });
       },
       async status(status) { await client.query('UPDATE chain_reward_index_state SET status=$3,checked_at=now() WHERE chain_id=$1 AND genesis_hash=$2', [...args, status]); },
+      async unscannedContributionBlocks(limit) {
+        if (!payeesMigrated) return { heights: [], remaining: 0 };
+        const heights = (await client.query('SELECT height FROM chain_reward_blocks WHERE chain_id=$1 AND genesis_hash=$2 AND NOT contribution_scanned ORDER BY height LIMIT $3', [...args, Math.max(0, limit)])).rows.map(r => Number(r.height));
+        const remaining = (await client.query('SELECT count(*) AS n FROM chain_reward_blocks WHERE chain_id=$1 AND genesis_hash=$2 AND NOT contribution_scanned', args)).rows[0];
+        return { heights, remaining: Number(remaining.n) };
+      },
+      async scanContributionBlock(block) {
+        await transaction(async () => {
+          // The hash match leaves a block a reorg replaced to the next pass's rewind.
+          if ((await store.block(block.height))?.hash === block.hash) await recordContributionPayees(block);
+        });
+      },
     };
     await transaction(async () => { await refreshPayeeAliases(client, args); });
     return await fn(store);
