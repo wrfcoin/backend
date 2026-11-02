@@ -18,7 +18,7 @@ function display(amount: string) {
   const n = BigInt(amount); return `${n / 100000000n}.${(n % 100000000n).toString().padStart(8, '0')}`;
 }
 const unsupported = (role: Role) => ({ role, status: role === 'node' ? 'unsupported' : 'unavailable', complete: false,
-  paidBaseUnits: null, message: role === 'node' ? 'Node payments are not implemented yet' : 'Paid-event coverage unavailable' });
+  paidBaseUnits: null, message: role === 'node' ? 'Bonded nodes are paid. This list does not show node payments yet.' : 'Paid-event coverage unavailable' });
 
 export function createEarningsSource(pool: Pool, chain: string, genesis: string, clock = () => Date.now()): EarningsSource {
   const args = [chain, genesis];

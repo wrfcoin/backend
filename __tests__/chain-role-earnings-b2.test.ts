@@ -79,7 +79,7 @@ const port=process.env.CHAIN_REWARD_TEST_PORT;
   });
   test('proven empty is distinct from unsupported nodes and unproven forecast/contribution',async()=>{
     expect((await source.leaderboard('producer','all',30))).toMatchObject({status:'available',complete:true,rows:[]});
-    expect((await source.leaderboard('node','all',30))).toMatchObject({status:'unsupported',message:'Node payments are not implemented yet',paidBaseUnits:null,rows:[]});
+    expect((await source.leaderboard('node','all',30))).toMatchObject({status:'unsupported',message:'Bonded nodes are paid. This list does not show node payments yet.',paidBaseUnits:null,rows:[]});
     for(const role of ['forecast','contribution'] as const){const r=await source.leaderboard(role,'7d',30);expect(r.status).toBe('unavailable');expect(r.complete).toBe(false);expect(JSON.stringify(r)).not.toContain('No forecast payments observed');}
   });
   test('verified full-identity labels are effective-height scoped; renaming never changes amounts',async()=>{
