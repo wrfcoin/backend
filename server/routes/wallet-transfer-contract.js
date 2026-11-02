@@ -1,5 +1,6 @@
 const { createHash } = require('crypto');
 const { parseSessionKeyAuth } = require('./session-key-contract');
+const { parseSecurityKeyAssertion } = require('./chain-protections-contract');
 
 const U64_MAX = 18446744073709551615n;
 const TRANSPARENT_TRANSFER_AUTH_DOMAIN = Buffer.from('wrfcoin_transparent_transfer_auth_v2');
@@ -113,7 +114,13 @@ function parseSignedTransfer(body = {}) {
   const authPubkey = body.authPubkey ?? body.auth_pubkey;
   const authSignature = body.authSignature ?? body.auth_signature;
   const rawSessionKeyAuth = body.sessionKeyAuth ?? body.session_key_auth;
+  // security_key_spend: an optional WebAuthn assertion that goes WITH the owner's
+  // ed25519 signature (core4 ignores it for an account without the rule).
+  const rawSecurityKeyAuth = body.security_key_auth;
   if (rawSessionKeyAuth !== undefined && rawSessionKeyAuth !== null) {
+    if (rawSecurityKeyAuth !== undefined && rawSecurityKeyAuth !== null) {
+      return { ok: false, code: 'VALIDATION_ERROR', message: 'security_key_auth goes with auth_pubkey/auth_signature, not session_key_auth' };
+    }
     if (authPubkey || authSignature) {
       return { ok: false, code: 'VALIDATION_ERROR', message: 'send either auth_pubkey/auth_signature or session_key_auth, not both' };
     }
@@ -132,7 +139,16 @@ function parseSignedTransfer(body = {}) {
   if (!/^[0-9a-fA-F]{128}$/.test(authSignature)) {
     return { ok: false, code: 'VALIDATION_ERROR', message: 'auth_signature must be a 64-byte ed25519 signature in hex' };
   }
-  return { ok: true, value: { from, to, amount, nonce, authPubkey, authSignature } };
+  let securityKeyAuth = null;
+  if (rawSecurityKeyAuth !== undefined && rawSecurityKeyAuth !== null) {
+    const parsed = parseSecurityKeyAssertion(rawSecurityKeyAuth);
+    if (!parsed.ok) return { ok: false, code: 'VALIDATION_ERROR', message: parsed.message };
+    securityKeyAuth = parsed.value;
+  }
+  return {
+    ok: true,
+    value: { from, to, amount, nonce, authPubkey, authSignature, ...(securityKeyAuth ? { securityKeyAuth } : {}) },
+  };
 }
 
 module.exports = {
