@@ -51,32 +51,6 @@ const mockFetchCore4Json = jest.fn();
 const mockExtractCore4Data = jest.fn((payload: any) => payload);
 const mockForwardCore4Headers = jest.fn(() => ({}));
 
-const mockGovernanceController = {
-  submitComputationalNFTProposal: jest.fn((req: any, res: any) =>
-    res.status(201).json({
-      success: true,
-      proposer: req.user.id,
-    })
-  ),
-  listProposals: jest.fn((_req: any, res: any) => res.status(200).json({ success: true, proposals: [] })),
-  getProposal: jest.fn((_req: any, res: any) => res.status(200).json({ success: true })),
-  submitReview: jest.fn((_req: any, res: any) => res.status(200).json({ success: true })),
-  stakeForProposal: jest.fn((_req: any, res: any) => res.status(200).json({ success: true })),
-  reportComputationComplete: jest.fn((_req: any, res: any) => res.status(200).json({ success: true })),
-  getGovernanceStats: jest.fn((_req: any, res: any) => res.status(200).json({ success: true })),
-  calculateEpochRewards: jest.fn((req: any, res: any) =>
-    res.status(200).json({
-      success: true,
-      actor: req.user.id,
-    })
-  ),
-  recordSlashingEvent: jest.fn((_req: any, res: any) => res.status(200).json({ success: true })),
-  updateGovernanceParameters: jest.fn((_req: any, res: any) => res.status(200).json({ success: true })),
-  updateNodeTypeWeights: jest.fn((_req: any, res: any) => res.status(200).json({ success: true })),
-  getTransparencyReport: jest.fn((_req: any, res: any) => res.status(200).json({ success: true })),
-  getRewardGovernanceState: jest.fn((_req: any, res: any) => res.status(200).json({ success: true })),
-};
-
 jest.mock('../../server/middleware/authMiddleware', () => ({
   requireAuth: mockRequireAuth,
   requireAdmin: mockRequireAdmin,
@@ -126,18 +100,14 @@ jest.mock('../../shared/core4-route-client.js', () => ({
     }),
 }));
 
-jest.mock('../../server/controllers/governanceController', () => mockGovernanceController);
-
 const miningRoutes = require('../../server/routes/mining-routes.js');
 const nftRoutes = require('../../server/routes/nft-routes.js');
-const governanceRoutes = require('../../server/routes/governance.js');
 
 function createApp() {
   const app = express();
   app.use(express.json());
   app.use('/api/mining', miningRoutes);
   app.use('/api/nft', nftRoutes);
-  app.use('/api/governance', governanceRoutes);
   return app;
 }
 
@@ -203,46 +173,4 @@ describe('auth-enforcement', () => {
     }
   });
 
-
-  it('rejects unauthenticated legacy governance proposal creation', async () => {
-    const res = await request(createApp())
-      .post('/api/governance/computational-nft/proposals')
-      .send({ title: 'Test proposal' });
-
-    expect(res.status).toBe(401);
-    expect(mockGovernanceController.submitComputationalNFTProposal).not.toHaveBeenCalled();
-  });
-
-  it('allows authenticated legacy governance proposal creation', async () => {
-    const res = await request(createApp())
-      .post('/api/governance/computational-nft/proposals')
-      .set('Authorization', TEST_TOKEN)
-      .send({ title: 'Test proposal' });
-
-    expect(res.status).toBe(201);
-    expect(res.body.proposer).toBe(TEST_USER.id);
-    expect(mockGovernanceController.submitComputationalNFTProposal).toHaveBeenCalled();
-  });
-
-  it('blocks non-admin legacy governance reward actions', async () => {
-    const res = await request(createApp())
-      .post('/api/governance/rewards/calculate-epoch')
-      .set('Authorization', TEST_TOKEN)
-      .send({});
-
-    expect(res.status).toBe(403);
-    expect(mockGovernanceController.calculateEpochRewards).not.toHaveBeenCalled();
-  });
-
-  it('allows admin legacy governance reward actions', async () => {
-    const res = await request(createApp())
-      .post('/api/governance/rewards/calculate-epoch')
-      .set('Authorization', TEST_TOKEN)
-      .set('X-Test-Admin', 'true')
-      .send({});
-
-    expect(res.status).toBe(200);
-    expect(res.body.actor).toBe(TEST_USER.id);
-    expect(mockGovernanceController.calculateEpochRewards).toHaveBeenCalled();
-  });
 });

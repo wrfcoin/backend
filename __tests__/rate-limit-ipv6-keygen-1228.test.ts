@@ -99,13 +99,6 @@ describe('backend#1228: IP-based keyGenerators bucket IPv6 by subnet', () => {
     expect(custom[0].keyGenerator({ ...fakeRequest(V6_A), user: { id: 'user-1' } })).toBe('user-1');
   });
 
-  it('oauth initiation limiter', () => {
-    jest.isolateModules(() => { require('../server/routes/oauth-routes.ts'); });
-    const custom = mockCaptured.filter((options) => typeof options.keyGenerator === 'function');
-    expect(custom.length).toBeGreaterThanOrEqual(1);
-    custom.forEach((options) => expectSharedV6Bucket(options.keyGenerator));
-  });
-
   it('bridge rate limiter', () => {
     jest.isolateModules(() => { require('../server/middleware/bridge-security-middleware.ts'); });
     const custom = mockCaptured.filter((options) => typeof options.keyGenerator === 'function');

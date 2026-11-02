@@ -33,7 +33,7 @@ These are source entrypoints and their documented default ports. Availability de
 
 ## Unmounted by owner ruling
 
-Login is wallet-based. The following routers remain unmounted; a new owner decision is required before enabling them:
+Login is wallet-based. The following routers are not mounted and their files have been removed; a new owner decision is required before adding them back:
 
 - `mfa-routes`
 - `webauthn-routes`
