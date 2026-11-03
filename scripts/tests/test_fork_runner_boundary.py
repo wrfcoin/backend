@@ -1,4 +1,4 @@
-"""Public PR jobs are hosted; the persistent contract job is main/manual only."""
+"""Every job is GitHub-hosted; the contract job is main/manual only and holds no secrets."""
 from pathlib import Path
 import re
 import unittest
@@ -22,7 +22,9 @@ def audit(ci, contract):
     assert 'branches: [main]' in contract
     assert "if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'" in contract
     assert 'needs: changes' not in contract
-    assert 'runs-on: [self-hosted, ct102-backend]' in contract
+    assert 'runs-on: ubuntu-latest' in contract
+    assert 'self-hosted' not in contract
+    assert 'secrets.' not in contract
     assert 'WRFCOIN_REQUIRE_LIVE_CORE4: "1"' in contract
     for workflow in (ci, contract):
         assert 'permissions:\n  contents: read' in workflow
@@ -43,6 +45,10 @@ class ForkBoundary(unittest.TestCase):
     def test_contract_trigger_mutation(self):
         with self.assertRaises(AssertionError):
             audit(self.ci, self.contract.replace('on:\n', 'on:\n  pull_request:\n', 1))
+
+    def test_contract_secret_mutation(self):
+        with self.assertRaises(AssertionError):
+            audit(self.ci, self.contract.replace('run: npm ci', 'run: echo ${{ secrets.X }} && npm ci', 1))
 
     def test_contract_guard_mutation(self):
         with self.assertRaises(AssertionError):
