@@ -33,12 +33,12 @@ export async function insertCommitting(query: Query, s: CheckedSubmission, nowSe
   await query('DELETE FROM website_forecasts WHERE commit_id = $1 AND status = \'failed\'', [s.record.commitId]);
   const rows = (await query(`INSERT INTO website_forecasts
       (commit_id, forecaster, station_id, station_alias, variable, value, horizon_hours, issued_at, valid_at, forecast_day,
-       data, nonce, commit_timestamp, manifest, status, created_at, updated_at)
-    VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8), to_timestamp($9), $10::date, $11, $12, $13, $14, 'committing',
+       data, nonce, commit_timestamp, manifest, auth_pubkey, auth_signature, status, created_at, updated_at)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8), to_timestamp($9), $10::date, $11, $12, $13, $14, $16, $17, 'committing',
        to_timestamp($15), to_timestamp($15))
     ON CONFLICT DO NOTHING RETURNING commit_id`,
   [s.record.commitId, s.forecaster, s.record.stationId, s.record.stationAlias, s.variable, s.value, s.leadHours,
-    s.record.issuedAt, s.record.validAt, s.forecastDay, s.data, s.nonce, s.timestamp, JSON.stringify(s.manifest), nowSec])).rows;
+    s.record.issuedAt, s.record.validAt, s.forecastDay, s.data, s.nonce, s.timestamp, JSON.stringify(s.manifest), nowSec, s.authPubkey, s.authSignature])).rows;
   return rows.length === 1;
 }
 
@@ -73,7 +73,7 @@ export async function markRecordFiled(query: Query, nowSec: number, commitId: st
 
 export interface OpenRow {
   commit_id: string; forecaster: string; station_id: string; station_alias: string; variable: string; value: number;
-  horizon_hours: number; data: string; nonce: string; commit_timestamp: string | number; manifest: any; status: ForecastStatus;
+  horizon_hours: number; data: string; nonce: string; commit_timestamp: string | number; manifest: any; auth_pubkey: string; auth_signature: string; status: ForecastStatus;
   record_filed: boolean; reveal_attempts: number; created_at: Date | string; commit_seen_at: Date | string | null;
   reveal_sent_at: Date | string | null; issued_at: Date | string; valid_at: Date | string;
 }
@@ -81,7 +81,7 @@ export interface OpenRow {
 /** Rows the worker still has to move, oldest first, each at most once per `minIntervalS`. */
 export async function listOpen(query: Query, nowSec: number, minIntervalS: number, limit: number): Promise<OpenRow[]> {
   return (await query(`SELECT commit_id, forecaster, station_id, station_alias, variable, value, horizon_hours, data, nonce,
-      commit_timestamp, manifest, status, record_filed, reveal_attempts, created_at, commit_seen_at, reveal_sent_at, issued_at, valid_at
+      commit_timestamp, manifest, auth_pubkey, auth_signature, status, record_filed, reveal_attempts, created_at, commit_seen_at, reveal_sent_at, issued_at, valid_at
     FROM website_forecasts
     WHERE (status IN ('committing', 'committed', 'revealing') OR (status = 'revealed' AND NOT record_filed))
       AND (last_checked_at IS NULL OR last_checked_at <= to_timestamp($1) - make_interval(secs => $2))

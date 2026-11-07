@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS website_forecasts (
   nonce text NOT NULL CHECK (length(nonce) BETWEEN 1 AND 128),
   commit_timestamp bigint NOT NULL,
   manifest jsonb NOT NULL,
+  -- The commit's authorization; core4 #127 requires the same pair on the reveal.
+  auth_pubkey text NOT NULL CHECK (auth_pubkey ~ '^[0-9a-f]{64}$'),
+  auth_signature text NOT NULL CHECK (auth_signature ~ '^[0-9a-f]{128}$'),
   status text NOT NULL CHECK (status IN ('committing', 'committed', 'revealing', 'revealed', 'failed')),
   failure text CHECK (length(failure) <= 128),
   commit_tx_hash text CHECK (length(commit_tx_hash) <= 130),

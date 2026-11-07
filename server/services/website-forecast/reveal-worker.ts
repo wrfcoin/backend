@@ -107,6 +107,8 @@ async function step(deps: RevealWorkerDeps, row: OpenRow, nowSec: number, counts
     commit_hash: row.commit_id,
     timestamp: Number(row.commit_timestamp),
     manifest,
+    auth_pubkey: row.auth_pubkey,
+    auth_signature: row.auth_signature,
   });
   if (result.kind === 'accepted') {
     await setStatus(deps.query, nowSec, row.commit_id, ['committed'], 'revealing', {

@@ -1,14 +1,16 @@
 /**
  * The ONE place the website forecast relay talks to the node (website forecast design 2026-11-05, §3).
  *
- * NODE DEPENDENCY: core4 "forecast routes accept a key-bound relayed submission". Today's node takes
+ * NODE DEPENDENCY: core4 #127 (aa415d31b, merged) "forecast routes accept a key-bound relayed submission"; it
+ * reaches the live nodes with the next node release. Before that, the node takes
  * POST /transactions/forecast/commit and /reveal only from a Contributor bearer whose wallet claim equals
  * the forecaster (or an Operator bearer). The relay holds one shared Contributor token, so on today's node
  * every relayed forecast is refused (401/403). The core4 change accepts a commit on any Contributor bearer
  * when `forecaster == Address::from_public_key(auth_pubkey)` and the commit id re-derives, and a reveal only
- * when it names the same forecaster as its commit. The request bodies below are the node's existing
- * `ForecastCommitRequest` / `ForecastRevealRequest` (launch_api routes/transactions.rs); if the core4 PR
- * changes their shape, change it here and nowhere else.
+ * when it carries the commit's own auth_pubkey/auth_signature pair. The bodies below are core4's
+ * `ForecastCommitRequest` / `ForecastRevealRequest` after #127; if they change, change them here only.
+ * Refusals: 403 FORECASTER_BEARER_UNBOUND / FORECASTER_NOT_BOUND_TO_BEARER (key is not the forecaster),
+ * 422 INVALID_FORECAST_AUTHORIZATION (bad or missing signature), 422 reveal payload / commit_hash mismatch.
  *
  * Bearers: commit and reveal use the backend Contributor credential (WRFCOIN_CONTRIBUTOR_TOKEN), status
  * reads the Reader credential (WRFCOIN_READER_TOKEN). No caller header is forwarded. Nothing here logs.
@@ -44,6 +46,9 @@ export interface NodeRevealRequest {
   commit_hash: string;
   timestamp: number;
   manifest: ForecastManifest;
+  /** The commit's own authorization pair (core4 #127: a relayed reveal must carry it). */
+  auth_pubkey: string;
+  auth_signature: string;
 }
 
 export type NodeSubmitResult =
@@ -68,6 +73,8 @@ function unwrap(payload: any): Record<string, any> | null {
 
 const TX_HASH_RE = /^(0x)?[0-9a-fA-F]{16,128}$/;
 const CODE_RE = /^[A-Z0-9_]{1,64}$/;
+/** core4 #127 refusals: the signing key does not match the forecaster. */
+const FORECASTER_BINDING_CODES = new Set(['FORECASTER_BEARER_UNBOUND', 'FORECASTER_NOT_BOUND_TO_BEARER']);
 
 /** Map a node reply to accepted / refused / unavailable. Exported for tests. */
 export function classifyNodeReply(reply: Core4Response): NodeSubmitResult {
@@ -76,11 +83,13 @@ export function classifyNodeReply(reply: Core4Response): NodeSubmitResult {
     const hash = [data.tx_id, data.tx_hash, data.hash, data.transaction_hash].find((v) => typeof v === 'string' && TX_HASH_RE.test(v));
     return { kind: 'accepted', txHash: (hash as string | undefined) ?? null };
   }
-  const retryable = [401, 403, 408, 429].includes(reply.status) || reply.status >= 500;
-  if (retryable) return { kind: 'unavailable', status: reply.status };
   const body = reply.payload && typeof reply.payload === 'object' ? reply.payload : {};
   const err = (body as any).error && typeof (body as any).error === 'object' ? (body as any).error : body;
   const code = typeof err.code === 'string' && CODE_RE.test(err.code) ? err.code : null;
+  // A 403 naming the forecaster binding is a refusal of this forecast (key is not the forecaster), not an outage.
+  const bindingRefusal = reply.status === 403 && code !== null && FORECASTER_BINDING_CODES.has(code);
+  const retryable = !bindingRefusal && ([401, 403, 408, 429].includes(reply.status) || reply.status >= 500);
+  if (retryable) return { kind: 'unavailable', status: reply.status };
   // Node refusal text is ours (envelope_error literals) but is capped and reduced to printable ASCII.
   const message = typeof err.message === 'string' ? err.message.replace(/[^\x20-\x7e]/g, ' ').slice(0, 200) : null;
   return { kind: 'refused', status: reply.status, code, message };
@@ -107,6 +116,7 @@ export function createNodeForecastClient(deps: { post: Core4Post; get: Core4Get 
     submitReveal: (r) => submit(NODE_REVEAL_PATH, {
       forecaster: r.forecaster, station_id: r.station_id, payload: r.payload, nonce: r.nonce,
       commit_hash: r.commit_hash, timestamp: r.timestamp, manifest: r.manifest,
+      auth_pubkey: r.auth_pubkey, auth_signature: r.auth_signature,
     }),
     readStatus: async (commitId) => {
       const reply = await deps.get(nodeCommitStatusPath(commitId));

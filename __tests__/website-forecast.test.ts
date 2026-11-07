@@ -111,6 +111,11 @@ describe('node client (the one place the node request shape lives)', () => {
     expect(await client.submitCommit({ forecaster: '0x' + '1'.repeat(40), station_id: STATION, commit_hash: 'c'.repeat(64), auth_pubkey: 'a'.repeat(64), auth_signature: SIG }))
       .toEqual({ kind: 'accepted', txHash: 'aa'.repeat(32) });
     expect(calls[0]).toEqual([NODE_COMMIT_PATH, { forecaster: '0x' + '1'.repeat(40), station_id: STATION, commit_hash: 'c'.repeat(64), auth_pubkey: 'a'.repeat(64), auth_signature: SIG }]);
+    const manifest = buildManifest({ data: '{}', stationId: STATION, issuedAt: NOW, horizonHours: 6, variable: 'temperature_c' });
+    await client.submitReveal({ forecaster: '0x' + '1'.repeat(40), station_id: STATION, payload: { a: 1 }, nonce: 'n', commit_hash: 'c'.repeat(64),
+      timestamp: NOW, manifest, auth_pubkey: 'a'.repeat(64), auth_signature: SIG });
+    expect(calls[1]).toEqual([NODE_REVEAL_PATH, { forecaster: '0x' + '1'.repeat(40), station_id: STATION, payload: { a: 1 }, nonce: 'n',
+      commit_hash: 'c'.repeat(64), timestamp: NOW, manifest, auth_pubkey: 'a'.repeat(64), auth_signature: SIG }]);
     expect(await client.readStatus('c'.repeat(64))).toBeNull();
   });
 
@@ -118,6 +123,8 @@ describe('node client (the one place the node request shape lives)', () => {
     expect(classifyNodeReply({ ok: false, status: 422, payload: { ok: false, error: { code: 'INVALID_FORECAST_AUTHORIZATION', message: 'bad\nsig' } } }))
       .toEqual({ kind: 'refused', status: 422, code: 'INVALID_FORECAST_AUTHORIZATION', message: 'bad sig' });
     expect(classifyNodeReply({ ok: false, status: 403, payload: {} })).toEqual({ kind: 'unavailable', status: 403 });
+    expect(classifyNodeReply({ ok: false, status: 403, payload: { ok: false, error: { code: 'FORECASTER_BEARER_UNBOUND', message: 'm' } } }))
+      .toMatchObject({ kind: 'refused', status: 403, code: 'FORECASTER_BEARER_UNBOUND' });
     expect(classifyNodeReply({ ok: false, status: 503, payload: 'x' })).toEqual({ kind: 'unavailable', status: 503 });
   });
 });
@@ -215,6 +222,7 @@ const PG_URL = process.env.BACKFILL_TEST_PG_URL;
     clock += 80_000;
     expect(await tick()).toMatchObject({ revealSent: 1 });
     expect(node.reveals[0]).toMatchObject({ forecaster: w.address, station_id: STATION, nonce: d.nonce, commit_hash: d.commitId, timestamp: d.timestamp,
+      auth_pubkey: w.pubkey, auth_signature: SIG,
       payload: JSON.parse(d.data), manifest: { schema_version: 1, model_id: WEB_MODEL_ID, region: STATION, horizon_hours: 6, input_variables: ['temperature_c'] } });
     // The node rebuilds the commit id from the payload object: it must reproduce the commit hash.
     expect(forecastCommitId(canonicalJson(node.reveals[0].payload), d.nonce, STATION, d.timestamp)).toBe(d.commitId);
