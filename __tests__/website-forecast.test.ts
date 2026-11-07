@@ -204,7 +204,7 @@ const PG_URL = process.env.BACKFILL_TEST_PG_URL;
     const d = await signedDraft();
     const sub = await request(app()).post('/api/forecasts/submit').send(submitBody(d, w.pubkey));
     expect(sub.status).toBe(202);
-    expect(sub.body).toMatchObject({ commitId: d.commitId, status: 'committed', commitTxHash: 'aa'.repeat(32), stationAlias: ALIAS });
+    expect(sub.body).toEqual({ commitId: d.commitId, status: 'committed', commitTxHash: 'aa'.repeat(32), stationAlias: ALIAS, issuedAt: d.issuedAt, validAt: d.validAt });
     expect(node.commits[0]).toEqual({ forecaster: w.address, station_id: STATION, commit_hash: d.commitId, auth_pubkey: w.pubkey, auth_signature: SIG });
 
     // One per wallet, station, lead and day: the first one keeps the slot.

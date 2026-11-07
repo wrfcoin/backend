@@ -173,8 +173,9 @@ export function createWebsiteForecastRouter(deps: WebsiteForecastRouterDeps = {}
       status: result.kind === 'accepted' ? 'committed' : 'committing',
       commitTxHash: result.kind === 'accepted' ? result.txHash : null,
       stationAlias: s.record.stationAlias,
-      issuedAt: new Date(s.record.issuedAt * 1000).toISOString(),
-      validAt: new Date(s.record.validAt * 1000).toISOString(),
+      // Unix seconds, like the draft (the frontend computes with them); /mine rows use ISO strings.
+      issuedAt: s.record.issuedAt,
+      validAt: s.record.validAt,
     });
   }));
 
