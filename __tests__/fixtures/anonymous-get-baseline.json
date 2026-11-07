@@ -35,6 +35,8 @@
     "/api/faucet/bond-grants",
     "/api/forecast-verification/forecasts/:commitId",
     "/api/forecast-verification/summary",
+    "/api/forecasts/mine",
+    "/api/forecasts/status",
     "/api/forecasters/",
     "/api/forecasters/:keyOrAddress",
     "/api/governance/analytics/dashboard",

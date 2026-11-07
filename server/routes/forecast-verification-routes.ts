@@ -12,7 +12,7 @@ import {
   parseForecastRecord,
   type Core4Get,
 } from '../services/forecast-commit-record.js';
-import { readRecord, readSummary, type Query } from '../services/forecast-verification/observed-verification.js';
+import { insertVerificationRecord, readRecord, readSummary, type Query } from '../services/forecast-verification/observed-verification.js';
 import { defaultCore4Get, defaultQuery, forecastVerificationEnabled } from '../services/forecast-verification/observed-verification-job.js';
 
 const MAX_VERIFY_PAYLOAD_BYTES = 2 * 1024 * 1024;
@@ -214,12 +214,7 @@ export function createPublicForecastVerificationRouter(deps: PublicForecastVerif
       if (chain.code === 'UPSTREAM') return failWith(res, 502, 'UPSTREAM_ERROR', 'The chain node could not answer.');
       return failWith(res, chain.code === 'NOT_ON_CHAIN' ? 404 : 409, chain.code, chain.message);
     }
-    await query(`INSERT INTO forecast_verification_records
-        (commit_id, station_id, station_alias, model_id, issued_at, valid_at, horizon_hours, forecast_values, status, submitted_at)
-      VALUES ($1, $2, $3, $4, to_timestamp($5), to_timestamp($6), $7, $8, 'pending', to_timestamp($9))
-      ON CONFLICT (commit_id) DO NOTHING`,
-    [record.commitId, record.stationId, record.stationAlias, record.modelId, record.issuedAt, record.validAt, record.horizonHours,
-      JSON.stringify(record.values), Math.floor(at / 1000)]);
+    await insertVerificationRecord(query, record, Math.floor(at / 1000));
     summaryCache = null;
     return res.status(201).json(await readRecord(query, record.commitId));
   }));

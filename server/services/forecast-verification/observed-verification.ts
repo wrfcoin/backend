@@ -24,7 +24,7 @@
  *
  * The job is OFF unless FORECAST_VERIFICATION_ENABLED=true and reads the node with WRFCOIN_READER_TOKEN.
  */
-import { FORECAST_VARIABLES, type ForecastVariable, type Core4Get, type Core4Response } from '../forecast-commit-record.js';
+import { FORECAST_VARIABLES, type ForecastVariable, type Core4Get, type Core4Response, type ForecastRecord } from '../forecast-commit-record.js';
 
 export type Query = (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;
 
@@ -395,6 +395,19 @@ export function publicRecord(row: any) {
 
 const RECORD_COLUMNS = `commit_id, station_alias, model_id, issued_at, valid_at, horizon_hours, status, unavailable_reason,
   forecast_values, truth, scores, noaa_reference, noaa_reason, submitted_at, scored_at`;
+
+/**
+ * File a checked record (parseForecastRecord + checkForecastOnChain passed). Idempotent: a commit id
+ * already on file is left as it is. Used by the public hand-in route and the website forecast relay.
+ */
+export async function insertVerificationRecord(query: Query, record: ForecastRecord, submittedAtSec: number): Promise<void> {
+  await query(`INSERT INTO forecast_verification_records
+      (commit_id, station_id, station_alias, model_id, issued_at, valid_at, horizon_hours, forecast_values, status, submitted_at)
+    VALUES ($1, $2, $3, $4, to_timestamp($5), to_timestamp($6), $7, $8, 'pending', to_timestamp($9))
+    ON CONFLICT (commit_id) DO NOTHING`,
+  [record.commitId, record.stationId, record.stationAlias, record.modelId, record.issuedAt, record.validAt, record.horizonHours,
+    JSON.stringify(record.values), submittedAtSec]);
+}
 
 export async function readRecord(query: Query, commitId: string) {
   const row = (await query(`SELECT ${RECORD_COLUMNS} FROM forecast_verification_records WHERE commit_id = $1`, [commitId])).rows[0];

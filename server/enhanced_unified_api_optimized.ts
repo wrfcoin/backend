@@ -1640,6 +1640,7 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // Owner demo queue 2026-11-01 item 7 (backend PR#72, #1494): default-OFF public read of on-chain
   // forecasts scored against the chain's own station readings, next to NOAA's forecast for the same hour.
   safeMount('/api/forecast-verification',   './routes/forecast-verification-routes');
+  safeMount('/api/forecasts',               './routes/website-forecast-routes');
   // backend#249 (owner demo queue 2026-11-01 item 8): default-OFF friend challenges for the phone screen
   // (mobile#260) and the web board. Points only, wallet JWT for writes, counts from chain readings.
   safeMount('/api/challenges',              './routes/challenge-routes');
@@ -1806,6 +1807,16 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
       });
     } catch {
       appLogger.warn('Forecast verification job not started');
+    }
+    // Website forecast reveal worker (epic 7). OFF unless WEBSITE_FORECAST_ENABLED=true; needs migration
+    // 0043_website_forecasts, WRFCOIN_CONTRIBUTOR_TOKEN, WRFCOIN_READER_TOKEN and the key-bound node route.
+    try {
+      const { startWebsiteForecastWorker } = require('./services/website-forecast/reveal-worker');
+      startWebsiteForecastWorker({ logger: appLogger }).catch(() => {
+        appLogger.warn('Website forecast worker not started');
+      });
+    } catch {
+      appLogger.warn('Website forecast worker not started');
     }
     // Friend challenges counting job (backend#249). OFF unless FRIEND_CHALLENGES_ENABLED=true; needs
     // WRFCOIN_READER_TOKEN and migration 0040_friend_challenges.
