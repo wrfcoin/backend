@@ -298,7 +298,8 @@ describe('GET /api/blockchain/blocks/:height', () => {
 
   it('anonymous: reward_entries aggregated, no per-address amounts', async () => {
     const res = await request(app).get('/api/blockchain/blocks/7').expect(200);
-    expect(res.body.metadata).toEqual({ producer: 'p1', reward_entries_summary: { count: 2, total_amount: '50000' } });
+    // `producer` is not a reviewed key, so the allowlist projection drops it (block-page review 2026-11-08).
+    expect(res.body.metadata).toEqual({ reward_entries_summary: { count: 2, total_amount: '50000' } });
     expect(JSON.stringify(res.body)).not.toMatch(/wrfAlice|wrfBob/);
   });
 

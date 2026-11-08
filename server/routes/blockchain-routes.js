@@ -10,8 +10,8 @@ const router = express.Router();
 const { logger } = require('../utils/logger');
 const { hasOperatorToken, hasOperatorOrReaderToken } = require('../middleware/operator-token-auth');
 const {
+  projectAnonymousBlockMetadata,
   projectAnonymousBlockTransactions,
-  redactRewardEntriesMetadata,
 } = require('../utils/anonymous-projection');
 const { core4PublicReadHeaders } = require('../utils/core4-reader-credential');
 
@@ -287,11 +287,12 @@ router.get('/blocks/:height', async (req, res) => {
       stateRoot: null,
       receiptsRoot: null,
       extraData: null,
-      // backend#1222: per-address reward entries are aggregated for
-      // anonymous callers; the operator bearer sees the raw metadata.
+      // backend#1222 + block-page review 2026-11-08: anonymous callers get an allowlist
+      // projection (reviewed scalars by exact key; per-identity lists as counts and totals;
+      // unknown keys dropped). The operator bearer sees the raw metadata.
       metadata: hasOperatorToken(req)
         ? toNullable(block.metadata)
-        : toNullable(redactRewardEntriesMetadata(block.metadata)),
+        : projectAnonymousBlockMetadata(block.metadata),
       version: toNullable(block.version),
     });
   } catch (error) {
