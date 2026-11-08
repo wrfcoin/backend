@@ -24,6 +24,26 @@ const stationAlias = stationAliasImpl as (stationId: string) => string;
 
 export const websiteForecastEnabled = () => process.env.WEBSITE_FORECAST_ENABLED === 'true';
 
+/**
+ * Stations open for website forecasts: WEBSITE_FORECAST_STATIONS, a comma-separated list of station ids or their
+ * public aliases (st_ + 12 hex). Empty or unset means NO station is open (fail closed). Above h3000 the chain credits
+ * a forecast to the station's registered owner, so a station is opened only with its owner's agreement.
+ * Read per request, like the switch, so a change needs only a restart of the env, not a new image.
+ */
+export function websiteForecastStations(raw: string | undefined = process.env.WEBSITE_FORECAST_STATIONS): Set<string> {
+  return new Set((raw ?? '').split(',').map((s) => s.trim()).filter(Boolean));
+}
+
+/** Whether website forecasts may target this station (by raw id or by its public alias). */
+export function stationOpenForWebsite(stationId: string, open: Set<string> = websiteForecastStations()): boolean {
+  return open.has(stationId) || open.has(stationAlias(stationId));
+}
+
+/** The public aliases of the open stations (never raw ids), for the status read. */
+export function openStationAliases(open: Set<string> = websiteForecastStations()): string[] {
+  return [...new Set([...open].map((s) => (ALIAS_RE.test(s) ? s : stationAlias(s))))].sort();
+}
+
 export const WEB_MODEL_ID = 'website-manual/v1';
 export const LEAD_HOURS = [1, 6, 12, 24] as const;
 export type LeadHours = typeof LEAD_HOURS[number];

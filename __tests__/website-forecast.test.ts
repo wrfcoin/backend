@@ -140,6 +140,66 @@ describe('switch off', () => {
   });
 });
 
+describe('station allowlist (WEBSITE_FORECAST_STATIONS, fail closed)', () => {
+  const OTHER = 'PWS-TEST-OTHER-02';
+  const w = wallet();
+  const calls: string[] = [];
+  const fakeNode: NodeForecastClient = {
+    submitCommit: async () => { calls.push('commit'); return { kind: 'accepted', txHash: 'aa'.repeat(32) }; },
+    submitReveal: async () => { calls.push('reveal'); return { kind: 'accepted', txHash: 'bb'.repeat(32) }; },
+    readStatus: async () => null,
+  };
+  // Only the alias lookup returns a row (this station is registered); every other read is empty, every write succeeds.
+  const query: Query = async (text) => ({ rows: /FROM weather_stations/.test(text) ? [{ station_id: STATION }] : (/INSERT/.test(text) ? [{ commit_id: 'x' }] : []) });
+  const app = () => {
+    const a = express();
+    a.use('/api/forecasts', createWebsiteForecastRouter({
+      query, node: fakeNode, now: () => NOW * 1000, rateLimit: (_q, _s, n) => n(),
+      authenticate: (req: any, _res, next) => { req.user = { address: w.address }; next(); },
+    }));
+    return a;
+  };
+  const draft = () => request(app()).post('/api/forecasts/draft').send({ stationAlias: ALIAS, variable: 'temperature_c', leadHours: 6, value: 7.2 });
+  beforeEach(() => { process.env.WEBSITE_FORECAST_ENABLED = 'true'; calls.length = 0; });
+  afterAll(() => { delete process.env.WEBSITE_FORECAST_ENABLED; delete process.env.WEBSITE_FORECAST_STATIONS; });
+
+  it('opens no station while the list is unset or empty', async () => {
+    for (const v of [undefined, '', ' , ']) {
+      if (v === undefined) delete process.env.WEBSITE_FORECAST_STATIONS; else process.env.WEBSITE_FORECAST_STATIONS = v;
+      const res = await draft();
+      expect(res.status).toBe(403);
+      expect(res.body.error).toMatchObject({ code: 'STATION_NOT_OPEN', message: expect.stringContaining('not open for this station') });
+      expect((await request(app()).get('/api/forecasts/status')).body.stations).toEqual([]);
+    }
+  });
+
+  it('refuses a station that is not on the list', async () => {
+    process.env.WEBSITE_FORECAST_STATIONS = `${OTHER},st_000000000000`;
+    expect((await draft()).status).toBe(403);
+  });
+
+  it('takes a listed station by raw id or by alias; status shows aliases only', async () => {
+    for (const v of [STATION, ` ${ALIAS} `, `${OTHER},${STATION}`]) {
+      process.env.WEBSITE_FORECAST_STATIONS = v;
+      const res = await draft();
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ stationAlias: ALIAS, stationId: STATION });
+    }
+    process.env.WEBSITE_FORECAST_STATIONS = `${STATION},${ALIAS}`;
+    const status = await request(app()).get('/api/forecasts/status');
+    expect(status.body.stations).toEqual([ALIAS]);
+    expect(JSON.stringify(status.body)).not.toContain(STATION);
+  });
+
+  it('refuses a hand-made submit for a closed station before anything reaches the node', async () => {
+    process.env.WEBSITE_FORECAST_STATIONS = OTHER;
+    const res = await request(app()).post('/api/forecasts/submit').send(submitBody(draftFor(w.address, { nowSec: NOW }), w.pubkey));
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('STATION_NOT_OPEN');
+    expect(calls).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------------------------------
 // Real PostgreSQL: migrations 0039 + 0043 apply twice; draft -> submit -> worker reveal -> record filed.
 // ---------------------------------------------------------------------------------------------------
@@ -190,7 +250,7 @@ const PG_URL = process.env.BACKFILL_TEST_PG_URL;
     await sql.unsafe(`DROP SCHEMA ${schema} CASCADE`);
     await sql.end({ timeout: 5 });
   });
-  beforeEach(() => { process.env.WEBSITE_FORECAST_ENABLED = 'true'; });
+  beforeEach(() => { process.env.WEBSITE_FORECAST_ENABLED = 'true'; process.env.WEBSITE_FORECAST_STATIONS = ALIAS; });
 
   async function signedDraft(leadHours = 6) {
     const res = await request(app()).post('/api/forecasts/draft').send({ stationAlias: ALIAS, variable: 'temperature_c', leadHours, value: 7.25 });
@@ -200,7 +260,7 @@ const PG_URL = process.env.BACKFILL_TEST_PG_URL;
   }
 
   it('relays a commit, reveals in the next block, files the record, and lists it as the wallet\'s', async () => {
-    expect((await request(app()).get('/api/forecasts/status')).body).toEqual({ enabled: true, leads: [1, 6, 12, 24], variables: ['temperature_c', 'pressure_hpa'] });
+    expect((await request(app()).get('/api/forecasts/status')).body).toEqual({ enabled: true, leads: [1, 6, 12, 24], variables: ['temperature_c', 'pressure_hpa'], stations: [ALIAS] });
     const d = await signedDraft();
     const sub = await request(app()).post('/api/forecasts/submit').send(submitBody(d, w.pubkey));
     expect(sub.status).toBe(202);

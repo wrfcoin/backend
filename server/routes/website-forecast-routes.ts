@@ -9,6 +9,9 @@
  *                                reveal package; the reveal worker reveals in the next block
  *   GET  /api/forecasts/mine     wallet login. The wallet's forecasts, chain progress and practice score
  *
+ * Only stations listed in WEBSITE_FORECAST_STATIONS (ids or public aliases; empty = none) take a draft or a submit:
+ * any other answers 403 STATION_NOT_OPEN. GET /status lists the open stations' aliases.
+ *
  * OFF unless WEBSITE_FORECAST_ENABLED=true (read per request; every path answers 404 while off, and the
  * reveal worker does not start). Needs migration 0043_website_forecasts (applied by hand), the Contributor
  * and Reader node credentials, and a node with the key-bound relay route (see node-forecast-client.ts).
@@ -21,7 +24,8 @@ import { authenticateToken } from '../middleware/auth-middleware.js';
 import type { Query } from '../services/forecast-verification/observed-verification.js';
 import type { NodeForecastClient } from '../services/website-forecast/node-forecast-client.js';
 import {
-  LEAD_HOURS, WEB_VARIABLES, ADDRESS_RE, checkSubmission, makeDraft, parseDraftInput, utcDay, websiteForecastEnabled,
+  LEAD_HOURS, WEB_VARIABLES, ADDRESS_RE, checkSubmission, makeDraft, openStationAliases, parseDraftInput, stationOpenForWebsite, utcDay,
+  websiteForecastEnabled,
 } from '../services/website-forecast/website-forecast.js';
 import {
   findForecastForDay, insertCommitting, listMine, resolveRegisteredStation, setStatus,
@@ -29,6 +33,8 @@ import {
 
 export const WEBSITE_FORECAST_RATE_LIMIT = { windowMs: 60 * 1000, maxRequests: 30, keyPrefix: 'ratelimit:website-forecast' };
 export const WALLET_ACTIONS_PER_WINDOW = 10;
+const STATION_NOT_OPEN = 'STATION_NOT_OPEN';
+const STATION_NOT_OPEN_MESSAGE = 'Website forecasts are not open for this station yet. Pick another station.';
 const WALLET_WINDOW_MS = 10 * 60 * 1000;
 
 export interface WebsiteForecastRouterDeps {
@@ -112,7 +118,7 @@ export function createWebsiteForecastRouter(deps: WebsiteForecastRouterDeps = {}
   };
 
   router.get('/status', (_req, res) => {
-    res.json({ enabled: true, leads: LEAD_HOURS, variables: WEB_VARIABLES });
+    res.json({ enabled: true, leads: LEAD_HOURS, variables: WEB_VARIABLES, stations: openStationAliases() });
   });
 
   router.post('/draft', express.json({ limit: '2kb' }), authenticate, handle(async (req, res, query) => {
@@ -123,6 +129,7 @@ export function createWebsiteForecastRouter(deps: WebsiteForecastRouterDeps = {}
     if (!chargeWallet(forecaster)) return fail(res, 429, 'TOO_MANY_FORECASTS', 'Too many forecast attempts. Wait a few minutes.');
     const stationId = await resolveRegisteredStation(query, input.value.stationAlias);
     if (!stationId) return fail(res, 404, 'STATION_NOT_FOUND', 'No registered station has this alias.');
+    if (!stationOpenForWebsite(stationId)) return fail(res, 403, STATION_NOT_OPEN, STATION_NOT_OPEN_MESSAGE);
     const nowSec = Math.floor(now() / 1000);
     const existing = await findForecastForDay(query, forecaster, stationId, input.value.leadHours, utcDay(nowSec));
     if (existing) {
@@ -137,6 +144,8 @@ export function createWebsiteForecastRouter(deps: WebsiteForecastRouterDeps = {}
     const checked = checkSubmission(req.body ?? {}, forecaster, Math.floor(now() / 1000));
     if (checked.ok === false) return fail(res, checked.status, checked.code, checked.message);
     const s = checked.value;
+    // The draft refused it already; a hand-made submit must not get past either.
+    if (!stationOpenForWebsite(s.record.stationId)) return fail(res, 403, STATION_NOT_OPEN, STATION_NOT_OPEN_MESSAGE);
     if (!chargeWallet(forecaster)) return fail(res, 429, 'TOO_MANY_FORECASTS', 'Too many forecast attempts. Wait a few minutes.');
     // The station must still be registered (the draft resolved it; the alias is derived from the id).
     if (await resolveRegisteredStation(query, s.record.stationAlias) !== s.record.stationId) {
