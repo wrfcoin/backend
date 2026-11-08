@@ -312,12 +312,75 @@ router.get('/transactions', async (_req, res) => {
   );
 });
 
-router.get('/transactions/:hash', async (_req, res) => {
-  const { sendNotImplemented } = await getCore4Client();
-  return sendNotImplemented(
-    res,
-    'Transaction lookup by hash is not available from the core4 launch API.'
-  );
+const TX_HASH_RE = /^(?:0x)?([0-9a-fA-F]{64})$/;
+// core4's TransactionType is a fieldless enum; only these names pass through.
+const TX_TYPE_RE = /^[A-Za-z][A-Za-z0-9]{0,63}$/;
+const TX_STATUSES = new Set(['pending', 'included', 'unknown']);
+
+// Public lookup of one transaction by hash (the website's tx links). core4
+// GET /transactions/{tx_id}/status answers only status, block height and type
+// within the node's retained window; this route passes exactly those fields,
+// plus that block's timestamp from the light header. No sender, recipient,
+// amount, payload or station field crosses (none is in the upstream answer).
+router.get('/transactions/:hash', async (req, res) => {
+  const match = TX_HASH_RE.exec(String(req.params.hash ?? ''));
+  if (!match) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'VALIDATION_ERROR', message: 'A transaction hash is 64 hex characters' },
+    });
+  }
+  const txId = match[1].toLowerCase();
+
+  try {
+    const { extractCore4Data, fetchCore4Json, sendCore4Error } = await getCore4Client();
+    const headers = readerAuthHeaders(req.headers);
+    const response = await fetchCore4Json(`/transactions/${txId}/status`, { headers });
+    if (!response.ok) {
+      return sendCore4Error(res, response, 'Failed to look up transaction');
+    }
+    const data = extractCore4Data(response.payload) || {};
+    const status = TX_STATUSES.has(data.status) ? data.status : 'unknown';
+    const blockHeight =
+      status === 'included' && Number.isSafeInteger(data.block_height) && data.block_height >= 0
+        ? data.block_height
+        : null;
+    const txType =
+      status !== 'unknown' && typeof data.tx_type === 'string' && TX_TYPE_RE.test(data.tx_type)
+        ? data.tx_type
+        : null;
+
+    let timestamp = null;
+    if (blockHeight !== null) {
+      // Optional: a missing header must not fail the lookup.
+      const header = await fetchCore4Json(`/chain/header/${blockHeight}`, { headers }).catch(() => null);
+      const headerData = header?.ok ? extractCore4Data(header.payload) || {} : {};
+      // LightHeaderResponse { header: { timestamp: RFC 3339 } }
+      const raw = headerData.header?.timestamp;
+      const ms = typeof raw === 'string' ? Date.parse(raw) : Number.NaN;
+      if (Number.isFinite(ms)) timestamp = new Date(ms).toISOString();
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        hash: `0x${txId}`,
+        status,
+        blockHeight,
+        txType,
+        timestamp,
+        // The node only searches its retained blocks and mempool: "unknown"
+        // means "not found here", not "never existed".
+        windowLimited: true,
+      },
+    });
+  } catch (error) {
+    const { sendCore4Unavailable } = await getCore4Client();
+    logger.error('Error looking up transaction', {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return sendCore4Unavailable(res, error, 'Failed to look up transaction');
+  }
 });
 
 router.get('/validators', async (_req, res) => {

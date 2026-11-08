@@ -487,17 +487,106 @@ describe('blockchain-routes', () => {
     expect(res.body.pagination.hasNext).toBe(false);
   });
 
-  it('returns 501 for unsupported transaction lookup', async () => {
-    const res = mockRes();
-    const handler = getHandler(blockchainRoutes, '/transactions/:hash');
+  describe('GET /transactions/:hash (public tx lookup)', () => {
+    const HASH = 'AB'.repeat(32);
+    const lower = HASH.toLowerCase();
+    const handler = () => getHandler(blockchainRoutes, '/transactions/:hash');
+    const routeCore4 = (status: any, header: any = null) =>
+      mockFetchCore4Json.mockImplementation(async (path: any) => {
+        if (String(path).endsWith('/status')) return { ok: true, status: 200, payload: status };
+        if (String(path).startsWith('/chain/header/')) {
+          return header ? { ok: true, status: 200, payload: header } : { ok: false, status: 404, payload: null };
+        }
+        throw new Error(`unexpected path ${path}`);
+      });
 
-    await handler(
-      mockReq({ hash: '0x' + 'a'.repeat(64) }),
-      res
-    );
+    beforeEach(() => {
+      mockFetchCore4Json.mockReset();
+      delete process.env.WRFCOIN_READER_TOKEN;
+    });
 
-    expect(res.statusCode).toBe(501);
-    expect(res.body.error.code).toBe('NOT_IMPLEMENTED');
+    it('rejects a malformed hash without calling core4', async () => {
+      const res = mockRes();
+      await handler()(mockReq({ hash: 'zz' }), res);
+      expect(res.statusCode).toBe(400);
+      expect(mockFetchCore4Json).not.toHaveBeenCalled();
+    });
+
+    it('answers an included tx with only status, height, type and block time', async () => {
+      routeCore4(
+        {
+          tx_id: lower, status: 'included', block_height: 4321, tx_type: 'ForecastCommit', window_limited: true,
+          sender: '0x' + '1'.repeat(40), amount: '5',
+        },
+        { header: { height: 4321, timestamp: '2026-11-08T10:00:00Z', producer_pubkey: [1], metadata: { a: 'b' } } },
+      );
+      const res = mockRes();
+      await handler()(mockReq({ hash: `0x${HASH}` }), res);
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual({
+        success: true,
+        data: {
+          hash: `0x${lower}`,
+          status: 'included',
+          blockHeight: 4321,
+          txType: 'ForecastCommit',
+          timestamp: '2026-11-08T10:00:00.000Z',
+          windowLimited: true,
+        },
+      });
+      expect(mockFetchCore4Json).toHaveBeenCalledWith(`/transactions/${lower}/status`, { headers: {} });
+      expect(mockFetchCore4Json).toHaveBeenCalledWith('/chain/header/4321', { headers: {} });
+    });
+
+    it('still answers when the header read fails', async () => {
+      routeCore4({ status: 'included', block_height: 7, tx_type: 'Transfer' });
+      const res = mockRes();
+      await handler()(mockReq({ hash: HASH }), res);
+      expect(res.body.data).toMatchObject({ status: 'included', blockHeight: 7, timestamp: null });
+    });
+
+    it('answers pending and unknown without a height or header read', async () => {
+      routeCore4({ status: 'pending', tx_type: 'Transfer' });
+      const pending = mockRes();
+      await handler()(mockReq({ hash: HASH }), pending);
+      expect(pending.body.data).toMatchObject({ status: 'pending', blockHeight: null, txType: 'Transfer' });
+
+      routeCore4({ status: 'unknown' });
+      const unknown = mockRes();
+      await handler()(mockReq({ hash: HASH }), unknown);
+      expect(unknown.body.data).toMatchObject({ status: 'unknown', blockHeight: null, txType: null });
+      expect(mockFetchCore4Json).not.toHaveBeenCalledWith(expect.stringMatching(/^\/chain\/header/), expect.anything());
+    });
+
+    it('drops an unexpected status or a type that is not a bare enum name', async () => {
+      routeCore4({ status: 'weird', block_height: 1, tx_type: 'Transfer { to: 0x1 }' });
+      const res = mockRes();
+      await handler()(mockReq({ hash: HASH }), res);
+      expect(res.body.data).toMatchObject({ status: 'unknown', blockHeight: null, txType: null });
+    });
+
+    it('uses the server Reader token, never the caller Authorization', async () => {
+      process.env.WRFCOIN_READER_TOKEN = 'reader-test-token'; // pragma: allowlist secret
+      routeCore4({ status: 'unknown' });
+      const res = mockRes();
+      await handler()(mockReq({ hash: HASH }, {}, {}, { authorization: 'Bearer caller' }), res);
+      expect(mockFetchCore4Json).toHaveBeenCalledWith(`/transactions/${lower}/status`, {
+        headers: { authorization: 'Bearer reader-test-token' },
+      });
+      delete process.env.WRFCOIN_READER_TOKEN;
+    });
+
+    it('passes a core4 error through and 503s when core4 is down', async () => {
+      mockFetchCore4Json.mockResolvedValue({ ok: false, status: 401, payload: null });
+      const err = mockRes();
+      await handler()(mockReq({ hash: HASH }), err);
+      expect(err.statusCode).toBe(401);
+
+      mockFetchCore4Json.mockRejectedValue(new Error('connect ECONNREFUSED'));
+      const down = mockRes();
+      await handler()(mockReq({ hash: HASH }), down);
+      expect(down.statusCode).toBe(503);
+    });
   });
 
   it('returns 503 when core4 is unreachable', async () => {
