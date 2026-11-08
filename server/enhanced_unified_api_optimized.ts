@@ -1676,6 +1676,8 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   safeMount('/api/node-control',            './routes/node-control-routes');
   safeMount('/api/keys',                    './routes/key-manager-routes');
   safeMount('/api/kpi/alignment',           './routes/alignment-kpi-routes');
+  // Operator-only usage counts (wallets, phone stations, readings/day, weekly returners). Counts only.
+  safeMount('/api/admin/usage-counts',      './routes/usage-counts-routes');
   safeMount('/api/achievement',             './routes/achievementRoutes');
   // #215: mobile earn→claim loop. Mobile hits /api/v1/rewards/claim/:id and
   // /api/v1/rewards/history; these were implemented but never mounted live.
