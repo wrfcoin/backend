@@ -55,6 +55,37 @@ function readerAuthHeaders(requestHeaders) {
   return core4PublicReadHeaders(requestHeaders);
 }
 
+// core4 GET /network/upgrade (unauthenticated) describes what the chain has
+// scheduled: `scheduled.entries` is the effective feature schedule (genesis plus
+// applied schedule extensions), each with `active_at_next`; the top-level
+// `activation_height`/`blocks_remaining` mirror a governance-signed upgrade
+// notice, when one is installed. An upgrade is scheduled while either names a
+// height still ahead of the tip. With no answer from core4 the result is
+// unknown (null), not "no".
+function summarizeUpgrade(upgrade) {
+  if (!upgrade || typeof upgrade !== 'object') {
+    return { upgradeScheduled: null, nextUpgradeHeight: null };
+  }
+  const heights = [];
+  const entries = Array.isArray(upgrade.scheduled?.entries) ? upgrade.scheduled.entries : [];
+  for (const entry of entries) {
+    if (entry && entry.active_at_next === false && Number.isSafeInteger(entry.activation_height)) {
+      heights.push(entry.activation_height);
+    }
+  }
+  if (
+    Number.isSafeInteger(upgrade.activation_height) &&
+    Number.isSafeInteger(upgrade.blocks_remaining) &&
+    upgrade.blocks_remaining > 0
+  ) {
+    heights.push(upgrade.activation_height);
+  }
+  return {
+    upgradeScheduled: heights.length > 0,
+    nextUpgradeHeight: heights.length > 0 ? Math.min(...heights) : null,
+  };
+}
+
 router.get('/status', async (req, res) => {
   try {
     const {
@@ -65,12 +96,14 @@ router.get('/status', async (req, res) => {
       toNullable,
     } = await getCore4Client();
     const headers = readerAuthHeaders(req.headers);
-    const [blockchainResponse, networkResponse, miningResponse, stakeResponse] =
+    const [blockchainResponse, networkResponse, miningResponse, stakeResponse, upgradeResponse] =
       await Promise.all([
         fetchCore4Json('/blockchain', { headers }),
         fetchCore4Json('/network/info', { headers }),
         fetchCore4Json('/mining/stats', { headers }),
         fetchCore4Json('/transactions/stake/metrics', { headers }),
+        // Optional: a failure here must not fail the status read.
+        fetchCore4Json('/network/upgrade', { headers }).catch(() => null),
       ]);
 
     for (const [response, message] of [
@@ -89,6 +122,9 @@ router.get('/status', async (req, res) => {
     const stake = stakeResponse.ok
       ? extractCore4Data(stakeResponse.payload) || {}
       : {};
+    const upgrade = summarizeUpgrade(
+      upgradeResponse?.ok ? extractCore4Data(upgradeResponse.payload) : null,
+    );
 
     res.json({
       network: process.env.NETWORK_MODE || 'testnet',
@@ -102,7 +138,8 @@ router.get('/status', async (req, res) => {
       avgBlockSize: null,
       lastBlockTime: null,
       status: toNullable(network.sync_status ?? 'unknown'),
-      upgradeScheduled: false,
+      upgradeScheduled: upgrade.upgradeScheduled,
+      nextUpgradeHeight: upgrade.nextUpgradeHeight,
       lastUpdated: new Date().toISOString(),
       chainId: toNullable(network.chain_id),
       peerCount: toNullable(network.peer_count),

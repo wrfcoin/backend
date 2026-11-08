@@ -79,10 +79,13 @@ afterAll(() => {
 });
 
 describe('remaining core4 forwarding boundaries (#1321)', () => {
-  it.each(['/api/mining/stats', '/api/blockchain/status'])('uses server Reader for %s', async path => {
+  it.each([
+    ['/api/mining/stats', 4],
+    ['/api/blockchain/status', 5],
+  ])('uses server Reader for %s', async (path, calls) => {
     const res = await caller(request(app()).get(path));
     expect(res.status).toBe(200);
-    expect(mockFetch).toHaveBeenCalledTimes(4);
+    expect(mockFetch).toHaveBeenCalledTimes(calls);
     for (const [, options] of mockFetch.mock.calls) expect(options.headers)
       .toEqual({ authorization: `Bearer ${READER}`, ...tracing });
   });
