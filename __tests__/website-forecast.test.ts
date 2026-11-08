@@ -260,7 +260,7 @@ const PG_URL = process.env.BACKFILL_TEST_PG_URL;
   }
 
   it('relays a commit, reveals in the next block, files the record, and lists it as the wallet\'s', async () => {
-    expect((await request(app()).get('/api/forecasts/status')).body).toEqual({ enabled: true, leads: [1, 6, 12, 24], variables: ['temperature_c', 'pressure_hpa'] });
+    expect((await request(app()).get('/api/forecasts/status')).body).toEqual({ enabled: true, leads: [1, 6, 12, 24], variables: ['temperature_c', 'pressure_hpa'], stations: [ALIAS] });
     const d = await signedDraft();
     const sub = await request(app()).post('/api/forecasts/submit').send(submitBody(d, w.pubkey));
     expect(sub.status).toBe(202);
