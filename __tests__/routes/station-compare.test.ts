@@ -44,6 +44,7 @@ const STATIONS: RegisteredStation[] = [
   { stationId: 'near-1', latitude: 47.65432, longitude: -122.30001 },
   { stationId: 'near-2', latitude: 47.5, longitude: -122.2 },
   { stationId: 'near-3', latitude: 47.9, longitude: -122.6 },
+  { stationId: 'near-4', latitude: 47.71, longitude: -122.41 },
   { stationId: 'far', latitude: 45.5, longitude: -122.7 }, // ~235 km away
   { stationId: 'no-coords', latitude: null, longitude: null },
 ];
@@ -58,7 +59,8 @@ describe('station compare service', () => {
       me: { observedAt: NOW_S - 300, t: 12, h: 60, d: 4.4 },
       'near-1': { observedAt: NOW_S - 400, t: 10, h: 72, d: 5 },
       'near-2': { observedAt: NOW_S - 600, t: 11, h: 68, d: 5.2 },
-      'near-3': { observedAt: NOW_S - 9 * 3600 }, // too far apart in time: ignored
+      'near-3': { observedAt: NOW_S - 200, t: 13, h: 70, d: 6 },
+      'near-4': { observedAt: NOW_S - 9 * 3600, t: -40 }, // too far apart in time: ignored
       far: { observedAt: NOW_S - 100, t: 30, h: 10, d: -10 },
     });
     const nws = nwsOk();
@@ -66,10 +68,10 @@ describe('station compare service', () => {
     const r = await comparer.compare('me');
     expect(r.status).toBe('ok');
     if (r.status !== 'ok') return;
-    expect(r.nearby).toEqual({ stations: 2, radiusKm: 100, reason: null });
+    expect(r.nearby).toEqual({ stations: 3, radiusKm: 100, reason: null });
     const t = r.variables.find(v => v.variable === 'temperature_c')!;
     expect(t.mine).toBe(12);
-    expect(t.nearby).toEqual({ stations: 2, median: 10.5, lowest: 10, highest: 11, difference: 1.5, agreement: 'close' });
+    expect(t.nearby).toEqual({ stations: 3, median: 11, lowest: 10, highest: 13, difference: 1, agreement: 'close' });
     expect(t.nws).toEqual({ value: 11, difference: 1, agreement: 'close' });
     const h = r.variables.find(v => v.variable === 'humidity_pct')!;
     expect(h.nearby?.agreement).toBe('lower');
@@ -79,6 +81,36 @@ describe('station compare service', () => {
     // The far station is never even read; the NWS lookup gets the 0.1-degree cell, never the stored value.
     expect(chain.latest.mock.calls.map(c => c[0])).not.toContain('far');
     expect(nws.latest).toHaveBeenCalledWith(47.6, -122.3);
+  });
+
+  it('shows no nearby aggregate (not even a count) with fewer than 3 nearby stations', async () => {
+    const chain = tail({
+      me: { observedAt: NOW_S - 60, t: 12, h: 60 },
+      'near-1': { observedAt: NOW_S - 60, t: 10, h: 70 },
+      'near-2': { observedAt: NOW_S - 60, t: 11, h: 72 },
+    });
+    const comparer = createStationComparer({ listStations: async () => STATIONS, chainTail: chain as any, nws: nwsOk(), now });
+    const r = await comparer.compare('me');
+    if (r.status !== 'ok') throw new Error('expected ok');
+    expect(r.nearby.stations).toBe(0);
+    expect(r.nearby.reason).toMatch(/Not enough nearby stations/);
+    expect(r.variables.every(v => v.nearby === null)).toBe(true);
+    expect(r.variables.find(v => v.variable === 'temperature_c')?.nws?.value).toBe(11); // NWS still shown
+    expect(JSON.stringify(r)).not.toMatch(/"(10|72|70)"|median/);
+  });
+
+  it('applies the floor per variable', async () => {
+    const chain = tail({
+      me: { observedAt: NOW_S - 60, t: 12, h: 60 },
+      'near-1': { observedAt: NOW_S - 60, t: 10, h: 70 },
+      'near-2': { observedAt: NOW_S - 60, t: 11, h: 72 },
+      'near-3': { observedAt: NOW_S - 60, t: 13 }, // no humidity
+    });
+    const comparer = createStationComparer({ listStations: async () => STATIONS, chainTail: chain as any, nws: nwsOk(), now });
+    const r = await comparer.compare('me');
+    if (r.status !== 'ok') throw new Error('expected ok');
+    expect(r.variables.find(v => v.variable === 'temperature_c')?.nearby?.stations).toBe(3);
+    expect(r.variables.find(v => v.variable === 'humidity_pct')?.nearby).toBeNull();
   });
 
   it('never returns another station\'s id, alias or coordinates', async () => {
@@ -113,7 +145,7 @@ describe('station compare service', () => {
     const r = await comparer.compare('me');
     expect(r).toMatchObject({ status: 'ok', nearby: { stations: 0 }, nws: { stationIdentifier: null } });
     if (r.status !== 'ok') return;
-    expect(r.nearby.reason).toMatch(/No other registered station/);
+    expect(r.nearby.reason).toMatch(/Not enough nearby stations/);
     expect(r.nws.reason).toMatch(/US only/);
     expect(r.variables.every(v => v.nearby === null && v.nws === null)).toBe(true);
   });

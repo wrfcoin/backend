@@ -10,6 +10,10 @@
  *  - nws: the nearest NOAA/NWS observation station's latest observation for
  *    this station's 0.1-degree cell (US only; elsewhere it is `unavailable`).
  *
+ * Privacy floor: the nearby aggregate is shown only when at least
+ * MIN_NEARBY_STATIONS (3) other stations contribute to it, per variable;
+ * otherwise it is null with a reason, and the station count reads 0.
+ *
  * Privacy (owner ruling 2026-10-01 / 2026-11-05): every coordinate this module
  * uses, including the distance test and the NWS lookup, is first rounded to
  * 0.1 degree, and no coordinate leaves it. Every station is treated the same.
@@ -29,6 +33,12 @@ import type { ChainTailReader } from './chain-station-tail.js';
 
 export const NEARBY_RADIUS_KM = 100;
 export const MAX_NEARBY_STATIONS = 10;
+/**
+ * Privacy floor (lead ruling 2026-11-08): a nearby median is shown only when at least this many
+ * other stations contribute to it. With one or two neighbours the "median" is, or nearly is, one
+ * identifiable station's reading.
+ */
+export const MIN_NEARBY_STATIONS = 3;
 /** A nearby reading counts only if it was taken within this long of ours. */
 export const NEARBY_MAX_SKEW_S = 2 * 3600;
 /** Our own reading must be at most this old to be compared at all. */
@@ -231,8 +241,11 @@ export function createStationComparer(deps: {
           nearbyReadings.push(r.reading.values);
         }
       }
-      if (candidates.length === 0) nearbyReason = `No other registered station is within ${NEARBY_RADIUS_KM} km.`;
-      else if (nearbyReadings.length === 0) nearbyReason = 'No nearby station has a reading from about the same time.';
+      if (nearbyReadings.length < MIN_NEARBY_STATIONS) {
+        // Below the floor nothing about the neighbours is returned, not even how many there are.
+        nearbyReadings.length = 0;
+        nearbyReason = `Not enough nearby stations: a nearby comparison needs at least ${MIN_NEARBY_STATIONS} other stations within ${NEARBY_RADIUS_KM} km with a reading from about the same time.`;
+      }
     }
 
     // NWS: the nearest official observation to this station's cell.
@@ -252,7 +265,7 @@ export function createStationComparer(deps: {
       const within = CLOSE_WITHIN[variable];
       const others = nearbyReadings.map(v => v[variable]).filter((v): v is number => typeof v === 'number');
       let nearby: VariableComparison['nearby'] = null;
-      if (mineValue !== null && others.length > 0) {
+      if (mineValue !== null && others.length >= MIN_NEARBY_STATIONS) {
         const m = median(others);
         const difference = round2(mineValue - m);
         nearby = {
