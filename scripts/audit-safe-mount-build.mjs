@@ -66,7 +66,8 @@ const reachedHeader = 'x-safe-mount-build-reached';
 // 69: backend#228 mounts the default-OFF free-play /api/duels (./routes/duel-routes).
 // 70: epic 7 mounts the default-OFF website forecast relay /api/forecasts (./routes/website-forecast-routes).
 // 71: operator-only usage counts /api/admin/usage-counts (./routes/usage-counts-routes).
-const expectedMountCount = 71;
+// 72: default-OFF bond admission proxy /api/bond-admission (./routes/bond-admission-routes).
+const expectedMountCount = 72;
 
 // Removed by #935/#937 — each of these now PASSES this gate, and the gate
 // itself instructed the removal ("known failures now pass; remove their
