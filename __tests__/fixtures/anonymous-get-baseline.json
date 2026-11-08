@@ -86,6 +86,7 @@
     "/api/pythia/verdicts/:requestId",
     "/api/ready",
     "/api/referrals/stats/:walletAddress",
+    "/api/stations/:stationId/compare",
     "/api/stations/:stationId/earnings",
     "/api/stations/:stationId/observations",
     "/api/stations/:stationId/ownership",
