@@ -1629,6 +1629,9 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // the #869 mount in unified_api_server.ts never reached production).
   safeMount('/api/onboarding',              './routes/onboarding-routes');
   safeMount('/api/faucet',                  './routes/faucet-bond-routes');
+  // Epic 6 self-serve bonding: default-OFF proxy to the bond admission service (infra bond-admission),
+  // BOND_ADMISSION_PROXY_ENABLED=true + BOND_ADMISSION_URL. No credential; the service applies the rules.
+  safeMount('/api/bond-admission',          './routes/bond-admission-routes');
   // Owner ruling 2026-10-28 (b): passkey wallets have no JWT; default-OFF public balance read (3 fields).
   safeMount('/api/public/balance',          './routes/public-balance-routes');
   // backend#229 (owner demo queue 2026-11-01): default-OFF public proof card for one station reading,

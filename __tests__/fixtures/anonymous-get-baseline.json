@@ -8,6 +8,7 @@
     "/api/blockchain/transactions/:hash",
     "/api/blockchain/validators",
     "/api/blockchain/validators/:address",
+    "/api/bond-admission/recent",
     "/api/bridges/capabilities/readiness",
     "/api/build",
     "/api/calibration-certificates/station/:alias",
