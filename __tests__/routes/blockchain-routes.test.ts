@@ -186,6 +186,69 @@ describe('blockchain-routes', () => {
     expect(res.body.chainId).toBe('wrfcoin-mainnet');
   });
 
+  describe('upgradeScheduled (from core4 /network/upgrade)', () => {
+    function mockWithUpgrade(upgrade: any) {
+      mockFetchCore4Json.mockImplementation(async (path: string) => {
+        if (path === '/blockchain') return { ok: true, status: 200, payload: { height: 100 } };
+        if (path === '/network/info') return { ok: true, status: 200, payload: { sync_status: 'synced' } };
+        if (path === '/mining/stats') return { ok: true, status: 200, payload: { chain_height: 100 } };
+        if (path === '/network/upgrade') {
+          if (upgrade instanceof Error) throw upgrade;
+          return upgrade;
+        }
+        return { ok: true, status: 200, payload: {} };
+      });
+    }
+    async function status() {
+      const res = mockRes();
+      await getHandler(blockchainRoutes, '/status')(mockReq(), res);
+      expect(res.statusCode).toBe(200);
+      return res.body;
+    }
+    const entry = (activation_height: number, active_at_next: boolean) => ({
+      feature: 'f' + activation_height, activation_height, active_at_next, known: true,
+    });
+
+    it('is true with the nearest height while a scheduled feature is not active yet', async () => {
+      mockWithUpgrade({ ok: true, status: 200, payload: {
+        status: 'none', tip_height: 100,
+        scheduled: { entries: [entry(50, true), entry(400, false), entry(250, false)] },
+      } });
+      const body = await status();
+      expect(body.upgradeScheduled).toBe(true);
+      expect(body.nextUpgradeHeight).toBe(250);
+    });
+
+    it('is true for a signed notice whose activation is still ahead', async () => {
+      mockWithUpgrade({ ok: true, status: 200, payload: {
+        status: 'upgrade_required', tip_height: 100, activation_height: 180, blocks_remaining: 80,
+        scheduled: { entries: [entry(50, true)] },
+      } });
+      const body = await status();
+      expect(body.upgradeScheduled).toBe(true);
+      expect(body.nextUpgradeHeight).toBe(180);
+    });
+
+    it('is false when every feature is active and no notice is ahead', async () => {
+      mockWithUpgrade({ ok: true, status: 200, payload: {
+        status: 'ready', tip_height: 100, activation_height: 90, blocks_remaining: 0,
+        scheduled: { entries: [entry(50, true), entry(101, true)] },
+      } });
+      const body = await status();
+      expect(body.upgradeScheduled).toBe(false);
+      expect(body.nextUpgradeHeight).toBeNull();
+    });
+
+    it('is null (unknown), not false, when core4 does not answer, and the status still loads', async () => {
+      mockWithUpgrade({ ok: false, status: 503, payload: {} });
+      expect((await status()).upgradeScheduled).toBeNull();
+      mockWithUpgrade(new Error('connect ECONNREFUSED'));
+      const body = await status();
+      expect(body.upgradeScheduled).toBeNull();
+      expect(body.blockHeight).toBe(100);
+    });
+  });
+
   // audit/api-report-2026-09-09.md P2: core4's /transactions/stake/metrics is
   // now Reader-gated. This call is a server-side aggregate-dashboard read —
   // it must use a server-owned WRFCOIN_READER_TOKEN, never the inbound
