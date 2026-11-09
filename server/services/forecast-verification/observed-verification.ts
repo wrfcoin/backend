@@ -53,6 +53,8 @@ export interface ChainReading {
   observedAt: number;
   values: Partial<Record<ForecastVariable, number>>;
   provenanceClass: string | null;
+  /** The node reports this reading's attestations reached the oracle quorum. */
+  hasQuorum: boolean;
 }
 
 export interface Truth {
@@ -156,7 +158,7 @@ export async function stationReadings(get: Core4Get, stationId: string, fromHeig
         const v = finite(item.values?.[field]);
         if (v !== null) values[variable] = v;
       }
-      out.push({ commitId: item.commit_id, height, observedAt, values, provenanceClass: typeof item.provenance_class === 'string' ? item.provenance_class : null });
+      out.push({ commitId: item.commit_id, height, observedAt, values, provenanceClass: typeof item.provenance_class === 'string' ? item.provenance_class : null, hasQuorum: item.attestation?.has_quorum === true });
     }
     const nextAfter = safeInt(data.next_after);
     const nextOffset = safeInt(data.next_offset);

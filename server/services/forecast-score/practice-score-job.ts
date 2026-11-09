@@ -5,8 +5,10 @@
  *   - target time = the commit block's time + the lead (what the chain will use), or the draft's own target
  *     time when the commit height is not known;
  *   - truth = the station's chain reading nearest the target time, at most 15 minutes away
- *     (core4 GET /transactions/contributions/{station}/observations, Reader bearer; synthetic readings never count);
+ *     (core4 GET /transactions/contributions/{station}/observations, Reader bearer);
  *   - reference = from the station's own hourly readings over the 24 hours before the commit;
+ *   - only readings that reached the oracle attestation quorum count, for the truth and for the reference
+ *     (what the chain will use); synthetic readings never count;
  *   - score = practice-score.ts (integers only), stored in website_forecast_scores (migration 0044).
  *
  * Also recorded when available: how NOAA's National Weather Service forecast for the same station and hour,
@@ -16,6 +18,10 @@
  * Honest by construction: no reading within 15 minutes => stays pending and is retried until 24 hours after
  * the target time, then `unscored: no_reading`. Fewer than two hourly readings before the commit =>
  * `unscored: no_baseline`. Nothing is filled in, and nothing here is paid or feeds rewards.
+ *
+ * Node reads are paced: at most WEBSITE_FORECAST_SCORE_READS_PER_MIN (default 20, 1 to 60) a minute, because the
+ * node's read limiter is shared with the backend's other reads. Blocks and 64-height reading chunks are read once
+ * per pass and shared between forecasts. A 429 from the node stops the pass; the next interval resumes.
  *
  * OFF unless WEBSITE_FORECAST_ENABLED=true and WEBSITE_FORECAST_SCORE_ENABLED=true. Needs WRFCOIN_READER_TOKEN.
  * Logs carry counts only, never addresses, stations, coordinates or values.
@@ -39,12 +45,47 @@ export const GIVE_UP_S = 24 * HOUR_S;
 const RETRY_S = 30 * 60;
 /** Forecasts scored per pass. One forecast costs about 60 node reads (24 hours of blocks, 64 heights per call). */
 export const PRACTICE_SCORE_BATCH = 3;
-const WINDOW_OBS_CALLS = 40;
-const TRUTH_OBS_CALLS = 4;
+/** core4 get_station_observations walks at most 64 heights per call: readings are read and shared in chunks of that size. */
+const CHUNK_HEIGHTS = 64;
+const CHUNK_OBS_CALLS = 4;
+export const DEFAULT_READS_PER_MIN = 20;
+
+export function readsPerMinute(raw: string | undefined = process.env.WEBSITE_FORECAST_SCORE_READS_PER_MIN): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= 60 ? n : DEFAULT_READS_PER_MIN;
+}
+
+/** Shared between passes, so the ceiling also holds across the end of one pass and the start of the next. */
+export interface PaceState { nextReadAt: number }
+class NodeBusy extends Error { constructor() { super('node read limit'); } }
+
+/**
+ * At most `perMin` node reads a minute: reads are spaced 60 s / perMin apart. After a 429 every further read
+ * in this pass is refused without reaching the node.
+ */
+function paced(get: Core4Get, perMin: number, state: PaceState, now: () => number, sleep: (ms: number) => Promise<void>) {
+  const gapMs = Math.ceil(60_000 / perMin);
+  const status = { limited: false, reads: 0 };
+  const pacedGet: Core4Get = async (path, query) => {
+    if (status.limited) throw new NodeBusy();
+    const wait = state.nextReadAt - now();
+    if (wait > 0) await sleep(wait);
+    state.nextReadAt = Math.max(now(), state.nextReadAt) + gapMs;
+    status.reads += 1;
+    const reply = await get(path, query);
+    if (reply.status === 429) { status.limited = true; throw new NodeBusy(); }
+    return reply;
+  };
+  return { get: pacedGet, status };
+}
 export const PRACTICE_NOTE = 'Practice score. Nothing is paid yet: pay starts when skill pay is switched on.';
 
-export interface PracticeScoreDeps { query: Query; get: Core4Get; nowSec: number }
-export interface PassCounts { scored: number; unscored: number; waiting: number; retry: number }
+export interface PracticeScoreDeps {
+  query: Query; get: Core4Get; nowSec: number;
+  /** Pacing (defaults: the env ceiling, a fresh state, the real clock and timer). */
+  readsPerMin?: number; pace?: PaceState; now?: () => number; sleep?: (ms: number) => Promise<void>;
+}
+export interface PassCounts { scored: number; unscored: number; waiting: number; retry: number; nodeReads: number; nodeBusy: boolean }
 
 /** Block reads repeat inside one pass (every search starts from the same tip): read each height once. */
 function memoBlocks(get: Core4Get): Core4Get {
@@ -60,18 +101,39 @@ function memoBlocks(get: Core4Get): Core4Get {
 const toReadings = (rows: ChainReading[], variable: ScoredVariable): Reading[] => {
   const out: Reading[] = [];
   for (const r of rows) {
-    if (r.provenanceClass === 'synthetic') continue;
+    if (r.provenanceClass === 'synthetic' || !r.hasQuorum) continue;
     const value = numberToFixedPoint(r.values[variable]);
     if (value !== null) out.push({ observedAt: r.observedAt, value, id: r.commitId });
   }
   return out;
 };
 
-async function readingsBetween(get: Core4Get, stationId: string, tip: { height: number; time: number }, fromTime: number, toTime: number, maxCalls: number) {
+type ChunkCache = Map<string, Promise<ChainReading[]>>;
+
+/**
+ * The station's readings landed in blocks [from, to], read in fixed 64-height chunks so forecasts for the same
+ * station share them within a pass (their 24-hour windows overlap). A chunk that reaches past the tip is not kept.
+ */
+async function readingsInHeights(get: Core4Get, chunks: ChunkCache, stationId: string, tipHeight: number, from: number, to: number): Promise<ChainReading[]> {
+  const out: ChainReading[] = [];
+  for (let base = Math.floor((from - 1) / CHUNK_HEIGHTS) * CHUNK_HEIGHTS; base < to; base += CHUNK_HEIGHTS) {
+    const end = Math.min(base + CHUNK_HEIGHTS, tipHeight);
+    const key = `${stationId}|${base}`;
+    let chunk = chunks.get(key);
+    if (!chunk) {
+      chunk = stationReadings(get, stationId, base + 1, end, CHUNK_OBS_CALLS);
+      if (base + CHUNK_HEIGHTS <= tipHeight) { chunks.set(key, chunk); chunk.catch(() => chunks.delete(key)); }
+    }
+    for (const r of await chunk) if (r.height >= from && r.height <= to) out.push(r);
+  }
+  return out;
+}
+
+async function readingsBetween(get: Core4Get, chunks: ChunkCache, stationId: string, tip: { height: number; time: number }, fromTime: number, toTime: number) {
   const from = await firstHeightAtOrAfter(get, fromTime, tip);
   // A reading lands a few blocks after it is observed: read SCORE_DELAY_S of blocks past the window.
   const to = Math.min(tip.height, (await firstHeightAtOrAfter(get, toTime + SCORE_DELAY_S, tip)) - 1);
-  return from > to ? [] : stationReadings(get, stationId, from, to, maxCalls);
+  return from > to ? [] : readingsInHeights(get, chunks, stationId, tip.height, from, to);
 }
 
 const PENDING_SQL = `SELECT w.commit_id, w.station_id, w.variable, w.value, w.horizon_hours, w.committed_at_height,
@@ -112,14 +174,19 @@ async function save(query: Query, commitId: string, unit: string, validAt: numbe
 }
 
 /** One scoring pass. A node failure leaves the forecast pending for a later pass. */
-export async function scoreWebsiteForecasts({ query, get: rawGet, nowSec }: PracticeScoreDeps): Promise<PassCounts> {
-  const counts: PassCounts = { scored: 0, unscored: 0, waiting: 0, retry: 0 };
+export async function scoreWebsiteForecasts(deps: PracticeScoreDeps): Promise<PassCounts> {
+  const { query, nowSec } = deps;
+  const counts: PassCounts = { scored: 0, unscored: 0, waiting: 0, retry: 0, nodeReads: 0, nodeBusy: false };
   const rows = (await query(PENDING_SQL, [nowSec, SCORE_DELAY_S, RETRY_S, PRACTICE_SCORE_BATCH])).rows;
   if (rows.length === 0) return counts;
-  const get = memoBlocks(rawGet);
+  const pacer = paced(deps.get, deps.readsPerMin ?? readsPerMinute(), deps.pace ?? { nextReadAt: 0 }, deps.now ?? Date.now,
+    deps.sleep ?? ((ms) => new Promise<void>((resolve) => { setTimeout(resolve, ms); })));
+  const get = memoBlocks(pacer.get);
+  const chunks: ChunkCache = new Map();
+  const done = () => { counts.nodeReads = pacer.status.reads; counts.nodeBusy = pacer.status.limited; return counts; };
   let tip: { height: number; time: number };
-  try { tip = await chainTip(get); } catch { counts.retry = rows.length; return counts; }
-  for (const row of rows) {
+  try { tip = await chainTip(get); } catch { counts.retry = rows.length; return done(); }
+  for (const [index, row] of rows.entries()) {
     const variable = row.variable as ScoredVariable;
     const unit = FIXED_POINT_UNITS[variable];
     const forecast = numberToFixedPoint(Number(row.value));
@@ -134,7 +201,7 @@ export async function scoreWebsiteForecasts({ query, get: rawGet, nowSec }: Prac
       const source = fromChain ? 'chain' : 'draft';
       if (nowSec < validAt + SCORE_DELAY_S || tip.time < validAt + SCORE_DELAY_S) { counts.waiting += 1; continue; }
 
-      const near = toReadings(await readingsBetween(get, row.station_id, tip, validAt - TRUTH_MAX_DISTANCE_S, validAt + TRUTH_MAX_DISTANCE_S, TRUTH_OBS_CALLS), variable);
+      const near = toReadings(await readingsBetween(get, chunks, row.station_id, tip, validAt - TRUTH_MAX_DISTANCE_S, validAt + TRUTH_MAX_DISTANCE_S), variable);
       const truth = nearestReading(near, validAt);
       if (!truth) {
         const gaveUp = nowSec - validAt > GIVE_UP_S;
@@ -142,7 +209,7 @@ export async function scoreWebsiteForecasts({ query, get: rawGet, nowSec }: Prac
         if (gaveUp) counts.unscored += 1; else counts.waiting += 1;
         continue;
       }
-      const before = toReadings(await readingsBetween(get, row.station_id, tip, committedAt - WINDOW_HOURS * HOUR_S, committedAt, WINDOW_OBS_CALLS), variable);
+      const before = toReadings(await readingsBetween(get, chunks, row.station_id, tip, committedAt - WINDOW_HOURS * HOUR_S, committedAt), variable);
       const reference = referenceFromWindow(hourlyWindow(before, committedAt), lead);
       const last = lastReadingBefore(before, committedAt);
       if (!reference || !last) {
@@ -170,12 +237,17 @@ export async function scoreWebsiteForecasts({ query, get: rawGet, nowSec }: Prac
       await save(query, row.commit_id, unit, validAt, source, nowSec, result);
       counts.scored += 1;
     } catch {
+      if (pacer.status.limited) {
+        // The node said "too many requests": stop here and leave the rest for the next interval, unmarked.
+        counts.retry += rows.length - index;
+        break;
+      }
       // The node could not answer: note the attempt, so one unreadable forecast never blocks the others.
       counts.retry += 1;
       try { await save(query, row.commit_id, unit, Number(row.valid), 'draft', nowSec, { status: 'pending', forecast }); } catch { /* next pass */ }
     }
   }
-  return counts;
+  return done();
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -254,12 +326,13 @@ export async function startWebsiteForecastScoreJob(deps: { query?: Query; get?: 
   const query = deps.query ?? await job.defaultQuery();
   const get = deps.get ?? await job.defaultCore4Get();
   const now = deps.now ?? Date.now;
+  const pace: PaceState = { nextReadAt: 0 };
   let running = false;
   const tick = () => {
     if (running || !websiteForecastScoreEnabled()) return;
     running = true;
-    scoreWebsiteForecasts({ query, get, nowSec: Math.floor(now() / 1000) })
-      .then((c) => { if (c.scored + c.unscored + c.retry > 0) deps.logger?.info('website forecast: practice score pass', c); })
+    scoreWebsiteForecasts({ query, get, nowSec: Math.floor(now() / 1000), pace, now })
+      .then((c) => { if (c.scored + c.unscored + c.retry > 0 || c.nodeBusy) deps.logger?.info('website forecast: practice score pass', c); })
       .catch(() => deps.logger?.warn('website forecast: practice score pass failed (details withheld)'))
       .finally(() => { running = false; });
   };
