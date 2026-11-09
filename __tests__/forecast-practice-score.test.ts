@@ -387,9 +387,10 @@ const PG_URL = process.env.BACKFILL_TEST_PG_URL;
   async function insertForecast(commitId: string, over: { value?: number; variable?: string; day?: string; status?: string; height?: number | null } = {}) {
     await sql.unsafe(`INSERT INTO website_forecasts (commit_id, forecaster, station_id, station_alias, variable, value, horizon_hours, issued_at, valid_at,
         forecast_day, data, nonce, commit_timestamp, manifest, auth_pubkey, auth_signature, status, committed_at_height, record_filed)
-      VALUES ($1, $2, $3, 'st_0123456789ab', $4, $5, $6, to_timestamp($7), to_timestamp($8), $9::date, '{}', 'n', $7, '{}', $10, $11, $12, $13, true)`,
+      VALUES ($1, $2, $3, 'st_0123456789ab', $4, $5, $6, to_timestamp($7), to_timestamp($8), $9::date, '{}', 'n', $14, '{}', $10, $11, $12, $13, true)`,
     [commitId, WALLET, STATION, over.variable ?? 'temperature_c', over.value ?? 18.1, LEAD, COMMITTED_AT - 120, COMMITTED_AT - 120 + LEAD * 3600,
-      over.day ?? '2027-01-15', 'ab'.repeat(32), 'cd'.repeat(64), over.status ?? 'revealed', over.height === undefined ? COMMIT_HEIGHT : over.height]);
+      over.day ?? '2027-01-15', 'ab'.repeat(32), 'cd'.repeat(64), over.status ?? 'revealed', over.height === undefined ? COMMIT_HEIGHT : over.height,
+      COMMITTED_AT - 120]);
   }
   const practice = async (rows: any[]) => {
     const scores = await readPracticeScores(query, rows.map((r) => r.commit_id));
@@ -460,6 +461,7 @@ const PG_URL = process.env.BACKFILL_TEST_PG_URL;
     await scoreWebsiteForecasts({ query, get: fakeNode(tipAt(NOW), gap).get, nowSec: NOW });
     expect(await scoreWebsiteForecasts({ query, get: fakeNode(tipAt(NOW + 3600), ramp()).get, nowSec: NOW + 3600 })).toMatchObject({ scored: 1 });
     const rows = await sql.unsafe('SELECT commit_id, status, attempts, skill FROM website_forecast_scores');
-    expect(rows).toEqual([expect.objectContaining({ commit_id: COMMIT_ID, status: 'scored', attempts: 2, skill: 500000 })]);
+    expect(rows.length).toBe(1);
+    expect(rows[0]).toMatchObject({ commit_id: COMMIT_ID, status: 'scored', attempts: 2, skill: 500000 });
   });
 });
