@@ -64,7 +64,9 @@ async function step(deps: RevealWorkerDeps, row: OpenRow, nowSec: number, counts
     }
     return;
   }
-  if (status.contribution_type !== undefined && status.contribution_type !== 'forecast') {
+  // After the reveal lands the node prunes the commit record and reports contribution_type (and committed_at) as
+  // null, so null means "no longer known", not "not a forecast".
+  if (status.contribution_type != null && status.contribution_type !== 'forecast') {
     await setStatus(deps.query, nowSec, row.commit_id, [row.status], 'failed', { failure: 'not_a_forecast' });
     counts.failed += 1;
     return;
