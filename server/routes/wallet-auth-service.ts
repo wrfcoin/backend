@@ -3,6 +3,10 @@ import jwt from 'jsonwebtoken';
 import { JWT_ISSUER, JWT_AUDIENCE } from '../auth/jwt-constants.js';
 import { appLogger } from '../utils/logger.js';
 import Redis from 'ioredis';
+import {
+  parsePasskeyAuth, passkeyAuthAddress, sha256 as passkeySha256, sha3 as passkeySha3, framed as passkeyFramed,
+  verifyPasskeyAssertion, type PasskeyAuth,
+} from '../services/passkey/webauthn.js';
 
 type QueryResult = { rows: Record<string, unknown>[] };
 
@@ -19,8 +23,10 @@ type DbExecutor = {
  * 'session_key' is a device key the owner registered on chain with limits
  * (core4 feature session_keys); it signs in for the OWNER (JWT sub = owner
  * address) only while core4 lists it as active with the wallet_login method.
+ * 'passkey' is a P-256 WebAuthn passkey wallet (core4 accounts/passkey.rs); its JWT sub is the passkey
+ * address, derived from the credential's key and RP ID hash. Off unless PASSKEY_LOGIN_ENABLED=true.
  */
-export type WalletLoginScheme = 'evm' | 'ed25519' | 'session_key';
+export type WalletLoginScheme = 'evm' | 'ed25519' | 'session_key' | 'passkey';
 
 interface WalletLoginRequest {
   address: string;
@@ -28,6 +34,8 @@ interface WalletLoginRequest {
   nonce: string;
   scheme?: string;
   pubkey?: string;
+  /** scheme 'passkey' only: the WebAuthn assertion (services/passkey/webauthn.ts PasskeyAuth). */
+  passkey_auth?: unknown;
 }
 
 interface RefreshRequest {
@@ -108,6 +116,12 @@ interface CreateWalletAuthServiceOptions {
   walletAuthNetwork?: string;
   now?: () => Date;
   sessionKeyLookup?: SessionKeyLookup;
+  /** Passkey login switch. Default: PASSKEY_LOGIN_ENABLED === 'true'. */
+  passkeyLoginEnabled?: boolean;
+  /** The one RP ID a login passkey may belong to. Default: PASSKEY_LOGIN_RP_ID, else the auth origin's host. */
+  passkeyRpId?: string;
+  /** Exact clientDataJSON origins accepted. Default: PASSKEY_LOGIN_ALLOWED_ORIGINS, else the auth origin (+ www). */
+  passkeyAllowedOrigins?: string[];
 }
 
 export class WalletNonceRateLimitError extends Error {
@@ -228,6 +242,7 @@ export function parseWalletLoginScheme(raw: unknown): WalletLoginScheme {
   if (scheme === 'evm' || scheme === 'secp256k1') return 'evm';
   if (scheme === 'ed25519') return 'ed25519';
   if (scheme === 'session_key') return 'session_key';
+  if (scheme === 'passkey') return 'passkey';
   throw new Error('unsupported wallet login scheme');
 }
 
@@ -322,6 +337,71 @@ export function buildWalletLoginMessage(input: WalletLoginMessageInput): string 
 export function buildEd25519WalletLoginMessage(input: Ed25519WalletLoginMessageInput): string {
   const domain = new URL(input.origin).host;
   return `${ED25519_WALLET_LOGIN_DOMAIN}\n${domain} wants you to sign in with your WRFCoin ed25519 account:\n${input.address.toLowerCase()}\n\nSign in to WRFCoin Testnet.\n\nURI: ${input.origin}\nVersion: 1\nScheme: ed25519\nChain ID: ${input.chainId}\nNetwork: ${input.network}\nNonce: ${input.nonce}\nIssued At: ${input.issuedAt}\nExpiration Time: ${input.expirationTime}`;
+}
+
+/**
+ * Versioned domain tag of the passkey login challenge. Distinct from every other passkey tag (transfer,
+ * payout notify, bond payout), so a login assertion never authorizes anything else and the reverse.
+ */
+export const PASSKEY_WALLET_LOGIN_DOMAIN = 'wrfcoin_wallet_login_passkey_v1';
+
+/**
+ * Passkey login message: the tag, then u32le-length-framed UTF-8 fields (the framing every passkey
+ * message uses): origin, chain id (decimal), network, address (lowercase 0x hex), nonce, issued-at and
+ * expiry (ISO 8601). The WebAuthn challenge is SHA3-256 of these bytes ({@link passkeyWalletLoginChallenge}).
+ */
+export function buildPasskeyWalletLoginMessage(input: Ed25519WalletLoginMessageInput): Buffer {
+  return Buffer.concat([
+    Buffer.from(PASSKEY_WALLET_LOGIN_DOMAIN, 'utf8'),
+    passkeyFramed(input.origin), passkeyFramed(String(input.chainId)), passkeyFramed(input.network),
+    passkeyFramed(input.address.toLowerCase()), passkeyFramed(input.nonce),
+    passkeyFramed(input.issuedAt), passkeyFramed(input.expirationTime),
+  ]);
+}
+
+/** The 32 bytes a passkey signs in for: SHA3-256 of {@link buildPasskeyWalletLoginMessage}. */
+export const passkeyWalletLoginChallenge = (input: Ed25519WalletLoginMessageInput): Buffer =>
+  passkeySha3(buildPasskeyWalletLoginMessage(input));
+
+/** Lowercase RP ID: a DNS name (or localhost) without scheme, port or path. */
+function resolvePasskeyRpId(explicit: string | undefined, authOrigin: string): string {
+  const raw = (explicit ?? process.env.PASSKEY_LOGIN_RP_ID ?? new URL(authOrigin).hostname).trim().toLowerCase();
+  if (!/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$/.test(raw)) {
+    throw new Error('passkey login RP ID must be a bare host name');
+  }
+  return raw;
+}
+
+/** Exact origins whose host is the RP ID or a subdomain of it (the WebAuthn rule, enforced at startup too). */
+function resolvePasskeyAllowedOrigins(explicit: string[] | undefined, authOrigin: string, rpId: string): string[] {
+  let list = explicit;
+  if (!list) {
+    const env = (process.env.PASSKEY_LOGIN_ALLOWED_ORIGINS ?? '').trim();
+    if (env) {
+      list = env.split(',').map((o) => o.trim()).filter(Boolean);
+    } else {
+      const base = new URL(authOrigin);
+      list = [base.origin];
+      if (base.protocol === 'https:' && !base.hostname.startsWith('www.')) {
+        list.push(`https://www.${base.host}`);
+      }
+    }
+  }
+  return list.map((raw) => {
+    let parsed: URL;
+    try { parsed = new URL(raw); } catch { throw new Error('passkey login origin must be a valid absolute URL'); }
+    if (parsed.origin !== raw.replace(/\/$/, '') || !['https:', 'http:'].includes(parsed.protocol)) {
+      throw new Error('passkey login origin must be an exact origin');
+    }
+    if (process.env.NODE_ENV === 'production' && parsed.protocol !== 'https:') {
+      throw new Error('passkey login origin must use HTTPS in production');
+    }
+    const host = parsed.hostname.toLowerCase();
+    if (host !== rpId && !host.endsWith(`.${rpId}`)) {
+      throw new Error('passkey login origin must be the RP ID or a subdomain of it');
+    }
+    return parsed.origin;
+  });
 }
 
 /**
@@ -448,6 +528,16 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
   const walletAuthNetwork = resolveWalletAuthNetwork(options.walletAuthNetwork);
   const now = options.now ?? (() => new Date());
   const sessionKeyLookup = options.sessionKeyLookup ?? defaultSessionKeyLookup();
+  const passkeyLoginEnabled = options.passkeyLoginEnabled ?? process.env.PASSKEY_LOGIN_ENABLED === 'true';
+  const passkeyRpId = passkeyLoginEnabled ? resolvePasskeyRpId(options.passkeyRpId, walletAuthOrigin) : '';
+  const passkeyRpIdHash = passkeyLoginEnabled ? passkeySha256(Buffer.from(passkeyRpId, 'utf8')) : Buffer.alloc(0);
+  const passkeyAllowedOrigins = passkeyLoginEnabled
+    ? resolvePasskeyAllowedOrigins(options.passkeyAllowedOrigins, walletAuthOrigin, passkeyRpId)
+    : [];
+
+  function assertPasskeyLoginEnabled(): void {
+    if (!passkeyLoginEnabled) throw new Error('passkey login is not enabled');
+  }
   let _redis: Redis | null = options.redis ?? null;
 
   function getRedis(): Redis {
@@ -485,6 +575,10 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
     if (scheme === 'session_key') {
       return buildSessionKeyWalletLoginMessage({ ...input, network: walletAuthNetwork, sessionPublicKey });
     }
+    if (scheme === 'passkey') {
+      // Stored and returned as hex; the passkey signs SHA3-256 of these bytes.
+      return buildPasskeyWalletLoginMessage({ ...input, network: walletAuthNetwork }).toString('hex');
+    }
     return scheme === 'ed25519'
       ? buildEd25519WalletLoginMessage({ ...input, network: walletAuthNetwork })
       : buildWalletLoginMessage(input);
@@ -520,11 +614,17 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
     address: string,
     rawScheme?: unknown,
     rawSessionPublicKey?: unknown,
-  ): Promise<WalletLoginChallenge & { scheme?: WalletLoginScheme; network?: string; sessionPublicKey?: string }> {
+  ): Promise<WalletLoginChallenge & {
+    scheme?: WalletLoginScheme; network?: string; sessionPublicKey?: string;
+    chainId?: number; origin?: string; challenge?: string;
+  }> {
     const scheme = parseWalletLoginScheme(rawScheme);
+    if (scheme === 'passkey') assertPasskeyLoginEnabled();
     if (!isEvmAddress(address)) {
       throw new Error('invalid address format');
     }
+    // Passkey addresses are lowercase hex (core4 passkey_account_address); key the nonce on that form.
+    if (scheme === 'passkey') address = address.toLowerCase();
     const sessionPublicKey = scheme === 'session_key' ? parseSessionPublicKey(rawSessionPublicKey) : '';
     const nonce = crypto.randomBytes(32).toString('hex');
     const issuedAtMs = now().getTime();
@@ -545,7 +645,7 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
       expirationTime,
       origin: walletAuthOrigin,
       chainId: walletAuthChainId,
-      ...(scheme === 'ed25519' ? { scheme, network: walletAuthNetwork } : {}),
+      ...(scheme === 'ed25519' || scheme === 'passkey' ? { scheme, network: walletAuthNetwork } : {}),
       ...(scheme === 'session_key' ? { scheme, network: walletAuthNetwork, sessionPublicKey } : {}),
     };
     const result = await getRedis().eval(ISSUE_NONCE, 2,
@@ -564,6 +664,14 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
     }
     if (scheme === 'session_key') {
       return { nonce, message, issuedAt, expirationTime, scheme, network: walletAuthNetwork, sessionPublicKey };
+    }
+    if (scheme === 'passkey') {
+      // The client rebuilds the message from these fields and checks it before prompting for the passkey.
+      return {
+        nonce, message, issuedAt, expirationTime, scheme, network: walletAuthNetwork,
+        chainId: walletAuthChainId, origin: walletAuthOrigin,
+        challenge: passkeySha3(Buffer.from(message, 'hex')).toString('base64url'),
+      };
     }
     return { nonce, message, issuedAt, expirationTime };
   }
@@ -587,6 +695,7 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
         // EVM tokens keep their original claim set.
         ...(walletScheme === 'ed25519' ? { wallet_scheme: 'ed25519' } : {}),
         ...(walletScheme === 'session_key' ? { wallet_scheme: 'session_key' } : {}),
+        ...(walletScheme === 'passkey' ? { wallet_scheme: 'passkey' } : {}),
       },
       secret,
       {
@@ -605,7 +714,7 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
       JSON.stringify({
         address,
         expiresAtMs: (Math.floor(Date.now() / 1000) + rTtlSec) * 1000,
-        ...(walletScheme === 'ed25519' ? { walletScheme } : {}),
+        ...(walletScheme === 'ed25519' || walletScheme === 'passkey' ? { walletScheme } : {}),
         ...(walletScheme === 'session_key' ? { walletScheme, sessionPublicKey } : {}),
       }),
       'EX',
@@ -621,12 +730,17 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
 
   async function walletLogin(payload: WalletLoginRequest): Promise<AuthTokenResponse> {
     const scheme = parseWalletLoginScheme(payload.scheme);
-    if (!payload.address || !payload.signature || !payload.nonce) {
-      throw new Error('address, signature, and nonce are required');
+    if (scheme === 'passkey') assertPasskeyLoginEnabled();
+    if (
+      typeof payload.address !== 'string' || !payload.address ||
+      typeof payload.nonce !== 'string' || !payload.nonce ||
+      (scheme !== 'passkey' && (typeof payload.signature !== 'string' || !payload.signature))
+    ) {
+      throw new Error(scheme === 'passkey' ? 'address, passkey_auth, and nonce are required' : 'address, signature, and nonce are required');
     }
 
     let address = payload.address.trim();
-    const signature = payload.signature.trim();
+    const signature = typeof payload.signature === 'string' ? payload.signature.trim() : '';
     const nonce = payload.nonce.trim();
     if (!nonce || nonce.length > 128) throw new Error('invalid nonce');
     if (!isEvmAddress(address)) {
@@ -666,6 +780,29 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
         throw new Error('signature must be a 64-byte ed25519 signature in hex');
       }
       address = address.toLowerCase();
+    }
+    let passkeyAuth: PasskeyAuth | null = null;
+    if (scheme === 'passkey') {
+      const parsed = parsePasskeyAuth(payload.passkey_auth);
+      if (typeof parsed === 'string') throw new Error(parsed);
+      // All bound before the challenge is touched, so a mismatched attempt never consumes the owner's nonce:
+      // the credential belongs to the one pinned RP ID, it derives to the claimed address, and the browser
+      // says the ceremony ran on an allowed origin, same-origin.
+      if (!Buffer.from(parsed.rp_id_hash, 'hex').equals(passkeyRpIdHash)) {
+        throw new Error('passkey belongs to a different RP ID');
+      }
+      const derivedAddress = passkeyAuthAddress(parsed);
+      if (derivedAddress !== address.toLowerCase()) {
+        throw new Error('address does not match the passkey');
+      }
+      let clientData: { origin?: unknown; crossOrigin?: unknown } | null = null;
+      try { clientData = JSON.parse(Buffer.from(parsed.client_data_json, 'hex').toString('utf8')); } catch { clientData = null; }
+      if (!clientData || typeof clientData !== 'object' || typeof clientData.origin !== 'string' ||
+        !passkeyAllowedOrigins.includes(clientData.origin) || clientData.crossOrigin === true) {
+        throw new Error('passkey assertion came from an origin that is not allowed');
+      }
+      address = derivedAddress;
+      passkeyAuth = parsed;
     }
 
     // Validate nonce against Redis (single-use)
@@ -744,7 +881,9 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
     }
 
     const isValid =
-      scheme === 'ed25519'
+      scheme === 'passkey'
+        ? passkeyAuth !== null && verifyPasskeyAssertion(passkeyAuth, passkeySha3(Buffer.from(challenge.message, 'hex'))) === null
+        : scheme === 'ed25519'
         ? verifyEd25519Signature(ed25519PublicKey, stripHexPrefix(signature), challenge.message)
         : scheme === 'session_key'
           ? verifyEd25519Signature(sessionPublicKey, stripHexPrefix(signature), challenge.message)
@@ -798,6 +937,9 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
     // Rotate: delete old token before issuing new one
     await getRedis().del(redisKey);
 
+    // Switching passkey login off also stops passkey sessions from refreshing.
+    if (existing.walletScheme === 'passkey') assertPasskeyLoginEnabled();
+
     // A device key that was revoked (or expired) since sign-in stops
     // refreshing: re-check it before minting a new token.
     if (existing.walletScheme === 'session_key') {
@@ -810,7 +952,9 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
       jwtSecret,
       accessTokenTtlSec,
       refreshTokenTtlSec,
-      existing.walletScheme === 'ed25519' || existing.walletScheme === 'session_key' ? existing.walletScheme : 'evm',
+      existing.walletScheme === 'ed25519' || existing.walletScheme === 'session_key' || existing.walletScheme === 'passkey'
+        ? existing.walletScheme
+        : 'evm',
       existing.walletScheme === 'session_key' ? existing.sessionPublicKey : '',
     );
   }
