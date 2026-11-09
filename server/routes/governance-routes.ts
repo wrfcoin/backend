@@ -59,6 +59,12 @@ import { treasuryAmountUnits } from '../../shared/amount-unit-contract.js';
 
 import { core4OperatorHeaders, configuredAddress, adminBodyOrConfig, auditedAdminWrite, sendAdminPolicyError } from '../utils/core4-admin-policy.js';
 import { core4ContributorHeaders, sendContributorCredentialUnavailable, CONTRIBUTOR_UNCONFIGURED } from '../utils/core4-contributor-credential.js';
+import { core4ReaderHeaders } from '../utils/core4-reader-credential.js';
+import {
+  MAX_ADVISORY_BODY_BYTES,
+  buildAdvisoryTransaction,
+  parseSignedAdvisoryAction,
+} from '../utils/advisory-governance-relay.js';
 import { verifiedGovernanceVote } from '../utils/governance-vote-signature.js';
 
 const router = Router();
@@ -371,6 +377,136 @@ router.get('/advisory/proposals/:id', governanceGetLimiter, async (req: Request,
   } catch (error) {
     logger.error(`Error retrieving advisory proposal ${id}`, { error });
     return sendCore4Unavailable(res, error, 'Failed to retrieve advisory proposal');
+  }
+});
+
+// ── Advisory governance relay (website propose/vote) ───────────────────────
+// Owner decision 2026-11-09: a wallet (12-word OR passkey) proposes and votes from the website, and the
+// backend relays its signed action to the node, the same pattern as the passkey send and send-allowlist
+// relays. No login: a passkey wallet cannot get a wallet JWT, and the action proves itself (core4
+// verifies the signature, the nonce and the electorate). The backend checks shape, text rules and that
+// the key derives the account, wraps the action exactly as the core4 CLI does, and relays it with the
+// server Contributor token to POST /governance/advisory/submit. Nothing but a signed advisory action is
+// accepted: the body is never a transaction. Dormant unless ADVISORY_GOVERNANCE_RELAY_ENABLED=true
+// (read per request): off, all three paths are 404. The node also refuses every action until
+// advisory_governance is scheduled (503 FEATURE_NOT_ACTIVE, passed through).
+const advisoryRelayEnabled = () => process.env.ADVISORY_GOVERNANCE_RELAY_ENABLED === 'true';
+const advisoryRelayGate = (_req: Request, res: Response, next: () => void) =>
+  advisoryRelayEnabled() ? next() : res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Not found' } });
+
+/** Writes: 20 per 15 min per IP, and 10 per 15 min per signing account (a proposal or a vote each). */
+const advisoryRelayIpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => ipKeyGenerator(req.ip || 'unknown'),
+  message: { success: false, error: { code: 'RATE_LIMITED', message: 'Too many requests, please try again later' } },
+});
+const advisoryRelayAccountLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => {
+    const account = (req.body as { account?: unknown } | undefined)?.account;
+    return Array.isArray(account) && account.length === 20 ? `adv:${account.join(',')}` : `adv-ip:${ipKeyGenerator(req.ip || 'unknown')}`;
+  },
+  message: { success: false, error: { code: 'RATE_LIMITED', message: 'Too many requests, please try again later' } },
+});
+/** Reads (nonce, eligibility): same budget as the other governance reads. */
+const advisoryReadLimiter = governanceGetLimiter;
+
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+/** The node refuses on the merits with these; they pass through. 401/403/429/5xx become a generic 502. */
+const isNodeContractStatus = (status: number) => status === 503 || (status >= 400 && status < 500 && ![401, 403, 429].includes(status));
+const sendGenericUpstream = (res: Response) =>
+  res.status(502).json({ success: false, error: { code: 'UPSTREAM_ERROR', message: 'Upstream node request failed' } });
+const advisoryInvalid = (res: Response, message: string) =>
+  res.status(400).json({ success: false, error: { code: 'VALIDATION_ERROR', message } });
+
+router.post('/advisory/actions', advisoryRelayGate, advisoryRelayIpLimiter, advisoryRelayAccountLimiter, async (req: Request, res: Response) => {
+  try {
+    if (Buffer.byteLength(JSON.stringify(req.body ?? null)) > MAX_ADVISORY_BODY_BYTES) {
+      return res.status(413).json({ success: false, error: { code: 'PAYLOAD_TOO_LARGE', message: `body exceeds ${MAX_ADVISORY_BODY_BYTES} bytes` } });
+    }
+    const parsed = parseSignedAdvisoryAction(req.body);
+    if (parsed.ok === false) return advisoryInvalid(res, parsed.message);
+    let headers: Record<string, string>;
+    try {
+      headers = core4ContributorHeaders(req.headers);
+    } catch (error) {
+      if ((error as { code?: string }).code === CONTRIBUTOR_UNCONFIGURED) return sendContributorCredentialUnavailable(res);
+      throw error;
+    }
+    const built = buildAdvisoryTransaction(parsed.value, Math.floor(Date.now() / 1000));
+    const response = await fetchCore4Json('/governance/advisory/submit', { method: 'POST', headers, body: built.body });
+    if (!response.ok) {
+      return isNodeContractStatus(response.status) ? res.status(response.status).json(response.payload) : sendGenericUpstream(res);
+    }
+    const data = (extractCore4Data(response.payload) || {}) as Record<string, unknown>;
+    // "Submitted" is not "counted": the client shows it pending until the proposal or vote appears.
+    return res.status(202).json({
+      success: true,
+      txId: typeof data.tx_id === 'string' ? data.tx_id : built.txId,
+      proposalId: typeof data.proposal_id === 'string' ? data.proposal_id : null,
+      account: parsed.account,
+      nonce: parsed.value.nonce,
+      action: parsed.kind,
+      signer: parsed.signer,
+      status: 'submitted',
+      included: false,
+    });
+  } catch (error) {
+    // Never log the body: it holds a signature or an assertion.
+    logger.error('Advisory governance relay failed', { error: (error as Error)?.message });
+    return sendCore4Unavailable(res, error, 'Advisory governance action failed');
+  }
+});
+
+// The signer needs its account nonce; a passkey wallet holds no JWT. Public chain data, nonce only.
+router.get('/advisory/accounts/:address/nonce', advisoryRelayGate, advisoryReadLimiter, async (req: Request, res: Response) => {
+  try {
+    if (!ADDRESS_RE.test(req.params.address)) return advisoryInvalid(res, 'Expected a core4 hex wallet address.');
+    const address = req.params.address.toLowerCase();
+    const response = await fetchCore4Json(`/addresses/${encodeURIComponent(address)}`, { headers: core4ReaderHeaders(req.headers) });
+    if (response.status === 404) return res.json({ success: true, address, nonce: 0 });
+    if (!response.ok) return sendGenericUpstream(res);
+    const account = (extractCore4Data(response.payload) || {}) as Record<string, unknown>;
+    const nonce = Number(account.nonce ?? 0);
+    if (!Number.isSafeInteger(nonce) || nonce < 0) return sendGenericUpstream(res);
+    return res.json({ success: true, address, nonce });
+  } catch (error) {
+    return sendCore4Unavailable(res, error, 'Failed to retrieve account nonce');
+  }
+});
+
+// Whether a wallet may vote on a proposal (snapshot membership, already voted, open) and its nonce.
+router.get('/advisory/proposals/:id/eligibility', advisoryRelayGate, advisoryReadLimiter, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    if (!ADVISORY_ID_RE.test(id)) return advisoryInvalid(res, 'Invalid advisory proposal id');
+    const address = typeof req.query.address === 'string' ? req.query.address : '';
+    if (!ADDRESS_RE.test(address)) return advisoryInvalid(res, 'Expected a core4 hex wallet address.');
+    const response = await fetchCore4Json(`/governance/advisory/proposals/${id}/eligibility`, { query: { address: address.toLowerCase() } });
+    if (!response.ok) {
+      return isNodeContractStatus(response.status) ? res.status(response.status).json(response.payload) : sendGenericUpstream(res);
+    }
+    const d = (extractCore4Data(response.payload) || {}) as Record<string, unknown>;
+    return res.json({
+      success: true,
+      proposalId: toNullable(d.proposal_id),
+      address: toNullable(d.address),
+      observedAtHeight: toNullable(d.observed_at_height),
+      votingOpen: d.voting_open === true,
+      eligible: d.eligible === true,
+      voted: d.voted === 'for' || d.voted === 'against' ? d.voted : null,
+      canVote: d.can_vote === true,
+      reason: typeof d.reason === 'string' ? d.reason : null,
+      nextNonce: Number.isSafeInteger(d.next_nonce) ? d.next_nonce : null,
+    });
+  } catch (error) {
+    return sendCore4Unavailable(res, error, 'Failed to retrieve advisory eligibility');
   }
 });
 

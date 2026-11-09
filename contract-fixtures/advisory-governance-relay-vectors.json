@@ -1,0 +1,704 @@
+{
+  "cases": [
+    {
+      "account": "0xa307fb31c7585b6ccb5dc3ddc844e22b14b7aa0d",
+      "chain_id": "888",
+      "data": "{\"account\":[163,7,251,49,199,88,91,108,203,93,195,221,200,68,226,43,20,183,170,13],\"action\":{\"propose\":{\"title\":\"Welcome, café 🌧\",\"summary\":\"Line one.\\nLine two.\"}},\"nonce\":0,\"public_key\":\"2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12\",\"signature\":\"1a5a998cbc04000eb5431790b68d5ef0c9ff578203de3fc7fd7537bc458fbc2e09519774dd5e3c66792118afcf65ac82b3ec5391d6404bc3a6f5f8d88d801307\"}",
+      "message_hex": "2500000000000000777266636f696e2e61647669736f72795f676f7665726e616e63655f616374696f6e2e763103000000000000003838380700000000000000746573746e65741400000000000000a307fb31c7585b6ccb5dc3ddc844e22b14b7aa0d370000000000000001130000000000000057656c636f6d652c20636166c3a920f09f8ca713000000000000004c696e65206f6e652e0a4c696e652074776f2e08000000000000000000000000000000",
+      "name": "ed25519_propose",
+      "network_id": "testnet",
+      "passkey_challenge_hex": "44a33ad630b485e4837c109f7d2aa617b15e35a3742eebc305f67a5b3957e913",
+      "signed": {
+        "account": [
+          163,
+          7,
+          251,
+          49,
+          199,
+          88,
+          91,
+          108,
+          203,
+          93,
+          195,
+          221,
+          200,
+          68,
+          226,
+          43,
+          20,
+          183,
+          170,
+          13
+        ],
+        "action": {
+          "propose": {
+            "summary": "Line one.\nLine two.",
+            "title": "Welcome, café 🌧"
+          }
+        },
+        "nonce": 0,
+        "public_key": "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12",
+        "signature": "1a5a998cbc04000eb5431790b68d5ef0c9ff578203de3fc7fd7537bc458fbc2e09519774dd5e3c66792118afcf65ac82b3ec5391d6404bc3a6f5f8d88d801307"
+      },
+      "submitted_at": 1800000000,
+      "transaction": {
+        "amount": 0,
+        "data": "{\"account\":[163,7,251,49,199,88,91,108,203,93,195,221,200,68,226,43,20,183,170,13],\"action\":{\"propose\":{\"title\":\"Welcome, café 🌧\",\"summary\":\"Line one.\\nLine two.\"}},\"nonce\":0,\"public_key\":\"2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12\",\"signature\":\"1a5a998cbc04000eb5431790b68d5ef0c9ff578203de3fc7fd7537bc458fbc2e09519774dd5e3c66792118afcf65ac82b3ec5391d6404bc3a6f5f8d88d801307\"}",
+        "fee": 0,
+        "id": {
+          "bytes": [
+            13,
+            107,
+            158,
+            126,
+            192,
+            186,
+            231,
+            95,
+            32,
+            52,
+            89,
+            2,
+            66,
+            49,
+            211,
+            169,
+            118,
+            26,
+            129,
+            182,
+            214,
+            154,
+            232,
+            126,
+            206,
+            210,
+            169,
+            145,
+            202,
+            43,
+            243,
+            214
+          ],
+          "hash_type": "Sha3"
+        },
+        "inputs": [
+          {
+            "coinbase_data": null,
+            "public_key": "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12",
+            "signature": null,
+            "txid": {
+              "bytes": [
+                64,
+                219,
+                80,
+                57,
+                3,
+                228,
+                48,
+                43,
+                235,
+                240,
+                84,
+                9,
+                107,
+                39,
+                115,
+                123,
+                87,
+                88,
+                221,
+                118,
+                134,
+                60,
+                15,
+                26,
+                102,
+                204,
+                142,
+                105,
+                87,
+                40,
+                221,
+                230
+              ],
+              "hash_type": "Sha3"
+            },
+            "vout": 0
+          }
+        ],
+        "lock_time": null,
+        "nonce": 0,
+        "operation": {
+          "Transfer": {
+            "amount": 0
+          }
+        },
+        "outputs": [
+          {
+            "address": "0xa307fb31c7585b6ccb5dc3ddc844e22b14b7aa0d",
+            "amount": 0,
+            "nft_data": null,
+            "script": "OP_TRUE"
+          }
+        ],
+        "recipient_address": null,
+        "sender_address": [
+          163,
+          7,
+          251,
+          49,
+          199,
+          88,
+          91,
+          108,
+          203,
+          93,
+          195,
+          221,
+          200,
+          68,
+          226,
+          43,
+          20,
+          183,
+          170,
+          13
+        ],
+        "timestamp": "2027-01-15T08:00:00Z",
+        "tx_type": "AdvisoryGovernance",
+        "version": 1
+      },
+      "tx_id_hex": "0d6b9e7ec0bae75f203459024231d3a9761a81b6d69ae87eced2a991ca2bf3d6"
+    },
+    {
+      "account": "0xa307fb31c7585b6ccb5dc3ddc844e22b14b7aa0d",
+      "chain_id": "888",
+      "data": "{\"account\":[163,7,251,49,199,88,91,108,203,93,195,221,200,68,226,43,20,183,170,13],\"action\":{\"vote\":{\"proposal_id\":\"adv-bb41213ed8b391ca\",\"approve\":false}},\"nonce\":7,\"public_key\":\"2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12\",\"signature\":\"1388d2c924d0a33b3a74ff0c5b9897ac44a6bc5291eb4422b97690a5305fdd57064ce9032af4dcb2be9fa870648b4fb824bcc3cab6db04d4225e93d08a713202\"}",
+      "message_hex": "2500000000000000777266636f696e2e61647669736f72795f676f7665726e616e63655f616374696f6e2e763103000000000000003838380700000000000000746573746e65741400000000000000a307fb31c7585b6ccb5dc3ddc844e22b14b7aa0d1e000000000000000214000000000000006164762d626234313231336564386233393163610008000000000000000700000000000000",
+      "name": "ed25519_vote",
+      "network_id": "testnet",
+      "passkey_challenge_hex": "291bc29292335e07ac84419e5970f607b1b3a9418a2c9461d8125af9bf7a77a3",
+      "signed": {
+        "account": [
+          163,
+          7,
+          251,
+          49,
+          199,
+          88,
+          91,
+          108,
+          203,
+          93,
+          195,
+          221,
+          200,
+          68,
+          226,
+          43,
+          20,
+          183,
+          170,
+          13
+        ],
+        "action": {
+          "vote": {
+            "approve": false,
+            "proposal_id": "adv-bb41213ed8b391ca"
+          }
+        },
+        "nonce": 7,
+        "public_key": "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12",
+        "signature": "1388d2c924d0a33b3a74ff0c5b9897ac44a6bc5291eb4422b97690a5305fdd57064ce9032af4dcb2be9fa870648b4fb824bcc3cab6db04d4225e93d08a713202"
+      },
+      "submitted_at": 1800000123,
+      "transaction": {
+        "amount": 0,
+        "data": "{\"account\":[163,7,251,49,199,88,91,108,203,93,195,221,200,68,226,43,20,183,170,13],\"action\":{\"vote\":{\"proposal_id\":\"adv-bb41213ed8b391ca\",\"approve\":false}},\"nonce\":7,\"public_key\":\"2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12\",\"signature\":\"1388d2c924d0a33b3a74ff0c5b9897ac44a6bc5291eb4422b97690a5305fdd57064ce9032af4dcb2be9fa870648b4fb824bcc3cab6db04d4225e93d08a713202\"}",
+        "fee": 0,
+        "id": {
+          "bytes": [
+            178,
+            223,
+            190,
+            55,
+            109,
+            12,
+            7,
+            28,
+            182,
+            65,
+            27,
+            35,
+            139,
+            153,
+            26,
+            215,
+            234,
+            164,
+            50,
+            39,
+            19,
+            80,
+            248,
+            94,
+            150,
+            89,
+            238,
+            56,
+            148,
+            17,
+            74,
+            135
+          ],
+          "hash_type": "Sha3"
+        },
+        "inputs": [
+          {
+            "coinbase_data": null,
+            "public_key": "2152f8d19b791d24453242e15f2eab6cb7cffa7b6a5ed30097960e069881db12",
+            "signature": null,
+            "txid": {
+              "bytes": [
+                47,
+                139,
+                15,
+                58,
+                108,
+                168,
+                211,
+                248,
+                16,
+                207,
+                180,
+                187,
+                250,
+                66,
+                76,
+                217,
+                237,
+                238,
+                209,
+                220,
+                32,
+                120,
+                84,
+                232,
+                27,
+                179,
+                75,
+                159,
+                90,
+                129,
+                153,
+                196
+              ],
+              "hash_type": "Sha3"
+            },
+            "vout": 0
+          }
+        ],
+        "lock_time": null,
+        "nonce": 7,
+        "operation": {
+          "Transfer": {
+            "amount": 0
+          }
+        },
+        "outputs": [
+          {
+            "address": "0xa307fb31c7585b6ccb5dc3ddc844e22b14b7aa0d",
+            "amount": 0,
+            "nft_data": null,
+            "script": "OP_TRUE"
+          }
+        ],
+        "recipient_address": null,
+        "sender_address": [
+          163,
+          7,
+          251,
+          49,
+          199,
+          88,
+          91,
+          108,
+          203,
+          93,
+          195,
+          221,
+          200,
+          68,
+          226,
+          43,
+          20,
+          183,
+          170,
+          13
+        ],
+        "timestamp": "2027-01-15T08:02:03Z",
+        "tx_type": "AdvisoryGovernance",
+        "version": 1
+      },
+      "tx_id_hex": "b2dfbe376d0c071cb6411b238b991ad7eaa432271350f85e9659ee3894114a87"
+    },
+    {
+      "account": "0x3b66f99ad0082c8606a9a22a1e92b2ce099a7565",
+      "chain_id": "888",
+      "data": "{\"account\":[59,102,249,154,208,8,44,134,6,169,162,42,30,146,178,206,9,154,117,101],\"action\":{\"propose\":{\"title\":\"Passkey title\",\"summary\":\"Passkey summary.\"}},\"nonce\":0,\"passkey\":{\"public_key_p256\":\"0c901d423c831ca85e27c73c263ba132721bb9d7a84c4f0380b2a6756fd601331c8870234dec878504c174144fa4b14b66a651691606d8173e55bd37e381569e\",\"rp_id_hash\":\"e84bf1fccf67e1933f3626a8ee2669d969a7ae253c9348600392d89e6700574e\",\"authenticator_data\":\"e84bf1fccf67e1933f3626a8ee2669d969a7ae253c9348600392d89e6700574e0500000001\",\"client_data_json\":\"7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a226d6f6a36756564704c587532554a5374484e3459375f74454f58797a6e6f64324562736f6e647858684167222c226f726967696e223a2268747470733a2f2f777266636f696e2e636f6d222c2263726f73734f726967696e223a66616c73657d\",\"signature\":\"304502210091b9f40d71b4abb20ec3b75e0d715701fd0cca33316e23b11800f2439854e0b202207ecbe72327eb3401c5a270b6d52109ee3ad887a10f2642f6d5bcc5b3b2833e8a\"}}",
+      "message_hex": "2500000000000000777266636f696e2e61647669736f72795f676f7665726e616e63655f616374696f6e2e763103000000000000003838380700000000000000746573746e657414000000000000003b66f99ad0082c8606a9a22a1e92b2ce099a75652e00000000000000010d00000000000000506173736b6579207469746c651000000000000000506173736b65792073756d6d6172792e08000000000000000000000000000000",
+      "name": "passkey_propose",
+      "network_id": "testnet",
+      "passkey_challenge_hex": "9a88fab9e7692d7bb65094ad1cde18effb44397cb39e877611bb289ddc578408",
+      "signed": {
+        "account": [
+          59,
+          102,
+          249,
+          154,
+          208,
+          8,
+          44,
+          134,
+          6,
+          169,
+          162,
+          42,
+          30,
+          146,
+          178,
+          206,
+          9,
+          154,
+          117,
+          101
+        ],
+        "action": {
+          "propose": {
+            "summary": "Passkey summary.",
+            "title": "Passkey title"
+          }
+        },
+        "nonce": 0,
+        "passkey": {
+          "authenticator_data": "e84bf1fccf67e1933f3626a8ee2669d969a7ae253c9348600392d89e6700574e0500000001",
+          "client_data_json": "7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a226d6f6a36756564704c587532554a5374484e3459375f74454f58797a6e6f64324562736f6e647858684167222c226f726967696e223a2268747470733a2f2f777266636f696e2e636f6d222c2263726f73734f726967696e223a66616c73657d",
+          "public_key_p256": "0c901d423c831ca85e27c73c263ba132721bb9d7a84c4f0380b2a6756fd601331c8870234dec878504c174144fa4b14b66a651691606d8173e55bd37e381569e",
+          "rp_id_hash": "e84bf1fccf67e1933f3626a8ee2669d969a7ae253c9348600392d89e6700574e",
+          "signature": "304502210091b9f40d71b4abb20ec3b75e0d715701fd0cca33316e23b11800f2439854e0b202207ecbe72327eb3401c5a270b6d52109ee3ad887a10f2642f6d5bcc5b3b2833e8a"
+        }
+      },
+      "submitted_at": 1800000200,
+      "transaction": {
+        "amount": 0,
+        "data": "{\"account\":[59,102,249,154,208,8,44,134,6,169,162,42,30,146,178,206,9,154,117,101],\"action\":{\"propose\":{\"title\":\"Passkey title\",\"summary\":\"Passkey summary.\"}},\"nonce\":0,\"passkey\":{\"public_key_p256\":\"0c901d423c831ca85e27c73c263ba132721bb9d7a84c4f0380b2a6756fd601331c8870234dec878504c174144fa4b14b66a651691606d8173e55bd37e381569e\",\"rp_id_hash\":\"e84bf1fccf67e1933f3626a8ee2669d969a7ae253c9348600392d89e6700574e\",\"authenticator_data\":\"e84bf1fccf67e1933f3626a8ee2669d969a7ae253c9348600392d89e6700574e0500000001\",\"client_data_json\":\"7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a226d6f6a36756564704c587532554a5374484e3459375f74454f58797a6e6f64324562736f6e647858684167222c226f726967696e223a2268747470733a2f2f777266636f696e2e636f6d222c2263726f73734f726967696e223a66616c73657d\",\"signature\":\"304502210091b9f40d71b4abb20ec3b75e0d715701fd0cca33316e23b11800f2439854e0b202207ecbe72327eb3401c5a270b6d52109ee3ad887a10f2642f6d5bcc5b3b2833e8a\"}}",
+        "fee": 0,
+        "id": {
+          "bytes": [
+            6,
+            106,
+            238,
+            138,
+            28,
+            176,
+            96,
+            125,
+            226,
+            135,
+            107,
+            52,
+            104,
+            102,
+            129,
+            136,
+            115,
+            131,
+            81,
+            148,
+            158,
+            27,
+            34,
+            255,
+            147,
+            228,
+            9,
+            136,
+            237,
+            4,
+            74,
+            112
+          ],
+          "hash_type": "Sha3"
+        },
+        "inputs": [
+          {
+            "coinbase_data": null,
+            "public_key": null,
+            "signature": null,
+            "txid": {
+              "bytes": [
+                0,
+                34,
+                91,
+                75,
+                183,
+                206,
+                4,
+                6,
+                229,
+                114,
+                78,
+                210,
+                91,
+                95,
+                54,
+                248,
+                24,
+                47,
+                13,
+                54,
+                71,
+                107,
+                20,
+                170,
+                137,
+                98,
+                222,
+                159,
+                1,
+                179,
+                155,
+                38
+              ],
+              "hash_type": "Sha3"
+            },
+            "vout": 0
+          }
+        ],
+        "lock_time": null,
+        "nonce": 0,
+        "operation": {
+          "Transfer": {
+            "amount": 0
+          }
+        },
+        "outputs": [
+          {
+            "address": "0x3b66f99ad0082c8606a9a22a1e92b2ce099a7565",
+            "amount": 0,
+            "nft_data": null,
+            "script": "OP_TRUE"
+          }
+        ],
+        "recipient_address": null,
+        "sender_address": [
+          59,
+          102,
+          249,
+          154,
+          208,
+          8,
+          44,
+          134,
+          6,
+          169,
+          162,
+          42,
+          30,
+          146,
+          178,
+          206,
+          9,
+          154,
+          117,
+          101
+        ],
+        "timestamp": "2027-01-15T08:03:20Z",
+        "tx_type": "AdvisoryGovernance",
+        "version": 1
+      },
+      "tx_id_hex": "066aee8a1cb0607de2876b3468668188738351949e1b22ff93e40988ed044a70"
+    },
+    {
+      "account": "0x3b66f99ad0082c8606a9a22a1e92b2ce099a7565",
+      "chain_id": "888",
+      "data": "{\"account\":[59,102,249,154,208,8,44,134,6,169,162,42,30,146,178,206,9,154,117,101],\"action\":{\"vote\":{\"proposal_id\":\"adv-bb41213ed8b391ca\",\"approve\":true}},\"nonce\":1,\"passkey\":{\"public_key_p256\":\"0c901d423c831ca85e27c73c263ba132721bb9d7a84c4f0380b2a6756fd601331c8870234dec878504c174144fa4b14b66a651691606d8173e55bd37e381569e\",\"rp_id_hash\":\"e84bf1fccf67e1933f3626a8ee2669d969a7ae253c9348600392d89e6700574e\",\"authenticator_data\":\"e84bf1fccf67e1933f3626a8ee2669d969a7ae253c9348600392d89e6700574e0500000001\",\"client_data_json\":\"7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a22796f315f6a53764f6e474464434f70304334386a4663794947435f5270786b326a64586852686b4634366b222c226f726967696e223a2268747470733a2f2f777266636f696e2e636f6d222c2263726f73734f726967696e223a66616c73657d\",\"signature\":\"3045022100c98efed8d6b768405b545781e1647f6cb9ccbdd9fdeb5ffea77763b0c778d4ab0220374c3cfe2670d06e2acff410ec338b16f40a69eb2cd7f470637c19a3c7afb05c\"}}",
+      "message_hex": "2500000000000000777266636f696e2e61647669736f72795f676f7665726e616e63655f616374696f6e2e763103000000000000003838380700000000000000746573746e657414000000000000003b66f99ad0082c8606a9a22a1e92b2ce099a75651e000000000000000214000000000000006164762d626234313231336564386233393163610108000000000000000100000000000000",
+      "name": "passkey_vote",
+      "network_id": "testnet",
+      "passkey_challenge_hex": "ca8d7f8d2bce9c60dd08ea740b8f2315cc88182fd1a719368dd5e1461905e3a9",
+      "signed": {
+        "account": [
+          59,
+          102,
+          249,
+          154,
+          208,
+          8,
+          44,
+          134,
+          6,
+          169,
+          162,
+          42,
+          30,
+          146,
+          178,
+          206,
+          9,
+          154,
+          117,
+          101
+        ],
+        "action": {
+          "vote": {
+            "approve": true,
+            "proposal_id": "adv-bb41213ed8b391ca"
+          }
+        },
+        "nonce": 1,
+        "passkey": {
+          "authenticator_data": "e84bf1fccf67e1933f3626a8ee2669d969a7ae253c9348600392d89e6700574e0500000001",
+          "client_data_json": "7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a22796f315f6a53764f6e474464434f70304334386a4663794947435f5270786b326a64586852686b4634366b222c226f726967696e223a2268747470733a2f2f777266636f696e2e636f6d222c2263726f73734f726967696e223a66616c73657d",
+          "public_key_p256": "0c901d423c831ca85e27c73c263ba132721bb9d7a84c4f0380b2a6756fd601331c8870234dec878504c174144fa4b14b66a651691606d8173e55bd37e381569e",
+          "rp_id_hash": "e84bf1fccf67e1933f3626a8ee2669d969a7ae253c9348600392d89e6700574e",
+          "signature": "3045022100c98efed8d6b768405b545781e1647f6cb9ccbdd9fdeb5ffea77763b0c778d4ab0220374c3cfe2670d06e2acff410ec338b16f40a69eb2cd7f470637c19a3c7afb05c"
+        }
+      },
+      "submitted_at": 1800000300,
+      "transaction": {
+        "amount": 0,
+        "data": "{\"account\":[59,102,249,154,208,8,44,134,6,169,162,42,30,146,178,206,9,154,117,101],\"action\":{\"vote\":{\"proposal_id\":\"adv-bb41213ed8b391ca\",\"approve\":true}},\"nonce\":1,\"passkey\":{\"public_key_p256\":\"0c901d423c831ca85e27c73c263ba132721bb9d7a84c4f0380b2a6756fd601331c8870234dec878504c174144fa4b14b66a651691606d8173e55bd37e381569e\",\"rp_id_hash\":\"e84bf1fccf67e1933f3626a8ee2669d969a7ae253c9348600392d89e6700574e\",\"authenticator_data\":\"e84bf1fccf67e1933f3626a8ee2669d969a7ae253c9348600392d89e6700574e0500000001\",\"client_data_json\":\"7b2274797065223a22776562617574686e2e676574222c226368616c6c656e6765223a22796f315f6a53764f6e474464434f70304334386a4663794947435f5270786b326a64586852686b4634366b222c226f726967696e223a2268747470733a2f2f777266636f696e2e636f6d222c2263726f73734f726967696e223a66616c73657d\",\"signature\":\"3045022100c98efed8d6b768405b545781e1647f6cb9ccbdd9fdeb5ffea77763b0c778d4ab0220374c3cfe2670d06e2acff410ec338b16f40a69eb2cd7f470637c19a3c7afb05c\"}}",
+        "fee": 0,
+        "id": {
+          "bytes": [
+            74,
+            207,
+            217,
+            155,
+            119,
+            191,
+            8,
+            156,
+            14,
+            136,
+            173,
+            221,
+            178,
+            55,
+            177,
+            147,
+            78,
+            118,
+            235,
+            59,
+            26,
+            177,
+            70,
+            138,
+            129,
+            11,
+            88,
+            227,
+            143,
+            220,
+            235,
+            112
+          ],
+          "hash_type": "Sha3"
+        },
+        "inputs": [
+          {
+            "coinbase_data": null,
+            "public_key": null,
+            "signature": null,
+            "txid": {
+              "bytes": [
+                169,
+                203,
+                50,
+                247,
+                24,
+                1,
+                131,
+                100,
+                109,
+                94,
+                193,
+                220,
+                8,
+                91,
+                6,
+                136,
+                183,
+                173,
+                143,
+                108,
+                51,
+                96,
+                205,
+                123,
+                157,
+                244,
+                165,
+                229,
+                240,
+                78,
+                81,
+                223
+              ],
+              "hash_type": "Sha3"
+            },
+            "vout": 0
+          }
+        ],
+        "lock_time": null,
+        "nonce": 1,
+        "operation": {
+          "Transfer": {
+            "amount": 0
+          }
+        },
+        "outputs": [
+          {
+            "address": "0x3b66f99ad0082c8606a9a22a1e92b2ce099a7565",
+            "amount": 0,
+            "nft_data": null,
+            "script": "OP_TRUE"
+          }
+        ],
+        "recipient_address": null,
+        "sender_address": [
+          59,
+          102,
+          249,
+          154,
+          208,
+          8,
+          44,
+          134,
+          6,
+          169,
+          162,
+          42,
+          30,
+          146,
+          178,
+          206,
+          9,
+          154,
+          117,
+          101
+        ],
+        "timestamp": "2027-01-15T08:05:00Z",
+        "tx_type": "AdvisoryGovernance",
+        "version": 1
+      },
+      "tx_id_hex": "4acfd99b77bf089c0e88adddb237b1934e76eb3b1ab1468a810b58e38fdceb70"
+    }
+  ],
+  "generated_by": "core4 feat/advisory-governance-passkey (#146) shared-protocol, CLI build_transaction shape",
+  "note": "Generated by core4 shared-protocol (feat/advisory-governance-passkey, core4#146) with the CLI build_transaction shape; ed25519 cases from a fixed test key, passkey cases from the SoftwareAuthenticator test fixture (rp_id wrfcoin.com). Public test material only."
+}
