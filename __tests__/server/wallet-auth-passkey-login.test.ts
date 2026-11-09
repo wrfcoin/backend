@@ -133,6 +133,17 @@ describe('passkey wallet login', () => {
     expect(claims.role).toBe('wallet');
   });
 
+  it('frames the message byte for byte as the frontend does (shared vector, frontend walletAuthService.passkey.test.ts)', () => {
+    const fields = {
+      origin: 'https://wrfcoin.com', chainId: 888, network: 'testnet', address: '0x1212121212121212121212121212121212121212',
+      nonce: 'ab'.repeat(32), issuedAt: '2026-11-09T12:00:00.000Z', expirationTime: '2026-11-09T12:05:00.000Z',
+    };
+    expect(buildPasskeyWalletLoginMessage(fields).toString('hex')).toBe(
+      '777266636f696e5f77616c6c65745f6c6f67696e5f706173736b65795f76311300000068747470733a2f2f777266636f696e2e636f6d0300000038383807000000746573746e65742a000000307831323132313231323132313231323132313231323132313231323132313231323132313231323132400000006162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616218000000323032362d31312d30395431323a30303a30302e3030305a18000000323032362d31312d30395431323a30353a30302e3030305a',
+    );
+    expect(passkeyWalletLoginChallenge(fields).toString('hex')).toBe('bf5daead2f05fee595873066a9175e24bfe5dd7f4265dcd440382388926a2080');
+  });
+
   it('accepts the www origin by default', async () => {
     const { service } = makeService();
     const key = new Authenticator();
