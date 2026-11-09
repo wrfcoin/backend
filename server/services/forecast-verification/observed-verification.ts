@@ -139,12 +139,12 @@ export async function firstHeightAtOrAfter(get: Core4Get, target: number, tip: {
 }
 
 /** The chain's readings for one station whose landing block lies in [fromHeight, toHeight]. */
-export async function stationReadings(get: Core4Get, stationId: string, fromHeight: number, toHeight: number): Promise<ChainReading[]> {
+export async function stationReadings(get: Core4Get, stationId: string, fromHeight: number, toHeight: number, maxCalls = MAX_OBS_CALLS): Promise<ChainReading[]> {
   const out: ChainReading[] = [];
   let after = Math.max(0, fromHeight - 1);
   let offset = 0;
   for (let calls = 0; after < toHeight; calls += 1) {
-    if (calls >= MAX_OBS_CALLS) throw new ChainReadError();
+    if (calls >= maxCalls) throw new ChainReadError();
     const data = await must(get, `/transactions/contributions/${encodeURIComponent(stationId)}/observations`, { after, offset, limit: 100 });
     if (!Array.isArray(data.items)) throw new ChainReadError();
     for (const item of data.items) {

@@ -1,0 +1,1791 @@
+{
+ "schema": "wrfcoin-forecast-skill-vectors/v1",
+ "about": "Shared vectors for the integer forecast skill rule. Every number is an integer; all divisions truncate toward zero; isqrt is the floor square root. A second implementation passes when it reproduces every 'expect' exactly.",
+ "units": {
+  "temperature_c": "0.01 degC (temp_c_centi)",
+  "pressure_hpa": "Pa (0.01 hPa)",
+  "skill": "millionths, 0..=1000000"
+ },
+ "precision": 1000000,
+ "default_tol": 5,
+ "skill": [
+  {
+   "name": "perfect forecast",
+   "forecast": 2137,
+   "truth": 2137,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": false,
+    "skill": 1000000,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "half the reference error",
+   "forecast": 2137,
+   "truth": 2012,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 5,
+   "expect": {
+    "err": 125,
+    "copy": false,
+    "skill": 500000,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "error equals the reference: zero",
+   "forecast": 2137,
+   "truth": 1887,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 5,
+   "expect": {
+    "err": 250,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "error one unit under the reference: smallest win",
+   "forecast": 2137,
+   "truth": 1888,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 5,
+   "expect": {
+    "err": 249,
+    "copy": false,
+    "skill": 4000,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "error above the reference: clamped to zero",
+   "forecast": 2137,
+   "truth": 1500,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 5,
+   "expect": {
+    "err": 637,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "integer division truncates (1/3)",
+   "forecast": 1001,
+   "truth": 1000,
+   "reference": 3,
+   "mean24": 0,
+   "last": 0,
+   "tol": 5,
+   "expect": {
+    "err": 1,
+    "copy": false,
+    "skill": 666667,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "integer division truncates (2/3)",
+   "forecast": 1002,
+   "truth": 1000,
+   "reference": 3,
+   "mean24": 0,
+   "last": 0,
+   "tol": 5,
+   "expect": {
+    "err": 2,
+    "copy": false,
+    "skill": 333334,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "copy of the 24 h mean, exactly",
+   "forecast": 1800,
+   "truth": 1800,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1500,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": true,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "copy of the 24 h mean, at the tolerance",
+   "forecast": 1805,
+   "truth": 1805,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1500,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": true,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "one past the tolerance of the mean: scored",
+   "forecast": 1806,
+   "truth": 1806,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1500,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": false,
+    "skill": 1000000,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "copy of the last reading, at the tolerance below",
+   "forecast": 1495,
+   "truth": 1495,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1500,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": true,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "one past the tolerance of the last reading: scored",
+   "forecast": 1494,
+   "truth": 1494,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1500,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": false,
+    "skill": 1000000,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "zero reference: zero even when perfect",
+   "forecast": 2137,
+   "truth": 2137,
+   "reference": 0,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "zero tolerance still catches an exact copy",
+   "forecast": 1900,
+   "truth": 1900,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 0,
+   "expect": {
+    "err": 0,
+    "copy": true,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "zero tolerance, one unit off the last reading",
+   "forecast": 1901,
+   "truth": 1900,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 0,
+   "expect": {
+    "err": 1,
+    "copy": false,
+    "skill": 996000,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "negative temperatures",
+   "forecast": -1250,
+   "truth": -1180,
+   "reference": 300,
+   "mean24": -900,
+   "last": -1000,
+   "tol": 5,
+   "expect": {
+    "err": 70,
+    "copy": false,
+    "skill": 766667,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "forecast and truth on either side of zero",
+   "forecast": -40,
+   "truth": 35,
+   "reference": 400,
+   "mean24": 300,
+   "last": 250,
+   "tol": 5,
+   "expect": {
+    "err": 75,
+    "copy": false,
+    "skill": 812500,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "pressure in Pa",
+   "forecast": 101325,
+   "truth": 101290,
+   "reference": 180,
+   "mean24": 101000,
+   "last": 101100,
+   "tol": 5,
+   "expect": {
+    "err": 35,
+    "copy": false,
+    "skill": 805556,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "pressure in Pa, large miss",
+   "forecast": 98000,
+   "truth": 101290,
+   "reference": 180,
+   "mean24": 101000,
+   "last": 101100,
+   "tol": 5,
+   "expect": {
+    "err": 3290,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "reference of one unit, error zero",
+   "forecast": 500,
+   "truth": 500,
+   "reference": 1,
+   "mean24": 0,
+   "last": 0,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": false,
+    "skill": 1000000,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "reference of one unit, error one",
+   "forecast": 501,
+   "truth": 500,
+   "reference": 1,
+   "mean24": 0,
+   "last": 0,
+   "tol": 5,
+   "expect": {
+    "err": 1,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "large values stay exact",
+   "forecast": 2000000000,
+   "truth": -2000000000,
+   "reference": 2147483647,
+   "mean24": 0,
+   "last": 0,
+   "tol": 5,
+   "expect": {
+    "err": 4000000000,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "random 00",
+   "forecast": -4692,
+   "truth": -4650,
+   "reference": 597,
+   "mean24": 1292,
+   "last": 2136,
+   "tol": 0,
+   "expect": {
+    "err": 42,
+    "copy": false,
+    "skill": 929649,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 01",
+   "forecast": 4319,
+   "truth": 4302,
+   "reference": 554,
+   "mean24": 853,
+   "last": -3183,
+   "tol": 0,
+   "expect": {
+    "err": 17,
+    "copy": false,
+    "skill": 969315,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 02",
+   "forecast": 5714,
+   "truth": 5700,
+   "reference": 442,
+   "mean24": -1521,
+   "last": 166,
+   "tol": 10,
+   "expect": {
+    "err": 14,
+    "copy": false,
+    "skill": 968326,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 03",
+   "forecast": -5825,
+   "truth": -5631,
+   "reference": 541,
+   "mean24": 4447,
+   "last": 97,
+   "tol": 0,
+   "expect": {
+    "err": 194,
+    "copy": false,
+    "skill": 641405,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 04",
+   "forecast": -2042,
+   "truth": -2121,
+   "reference": 269,
+   "mean24": -2293,
+   "last": -4176,
+   "tol": 10,
+   "expect": {
+    "err": 79,
+    "copy": false,
+    "skill": 706320,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 05",
+   "forecast": -1019,
+   "truth": -1128,
+   "reference": 168,
+   "mean24": 5505,
+   "last": 1511,
+   "tol": 5,
+   "expect": {
+    "err": 109,
+    "copy": false,
+    "skill": 351191,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 06",
+   "forecast": -2732,
+   "truth": -2511,
+   "reference": 234,
+   "mean24": 5387,
+   "last": -5317,
+   "tol": 10,
+   "expect": {
+    "err": 221,
+    "copy": false,
+    "skill": 55556,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 07",
+   "forecast": -2577,
+   "truth": -2447,
+   "reference": 496,
+   "mean24": -5778,
+   "last": -4735,
+   "tol": 0,
+   "expect": {
+    "err": 130,
+    "copy": false,
+    "skill": 737904,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 08",
+   "forecast": 1155,
+   "truth": 1085,
+   "reference": 526,
+   "mean24": -841,
+   "last": -1530,
+   "tol": 5,
+   "expect": {
+    "err": 70,
+    "copy": false,
+    "skill": 866921,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 09",
+   "forecast": 2438,
+   "truth": 2192,
+   "reference": 38,
+   "mean24": -2377,
+   "last": -177,
+   "tol": 0,
+   "expect": {
+    "err": 246,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "random 10",
+   "forecast": 301,
+   "truth": 407,
+   "reference": 215,
+   "mean24": -2422,
+   "last": 2702,
+   "tol": 5,
+   "expect": {
+    "err": 106,
+    "copy": false,
+    "skill": 506977,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 11",
+   "forecast": -1398,
+   "truth": -1668,
+   "reference": 64,
+   "mean24": -498,
+   "last": -4184,
+   "tol": 10,
+   "expect": {
+    "err": 270,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "random 12",
+   "forecast": 2164,
+   "truth": 2366,
+   "reference": 242,
+   "mean24": -5325,
+   "last": -5780,
+   "tol": 10,
+   "expect": {
+    "err": 202,
+    "copy": false,
+    "skill": 165290,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 13",
+   "forecast": -2011,
+   "truth": -1637,
+   "reference": 468,
+   "mean24": 2492,
+   "last": -4785,
+   "tol": 5,
+   "expect": {
+    "err": 374,
+    "copy": false,
+    "skill": 200855,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 14",
+   "forecast": -4333,
+   "truth": -4678,
+   "reference": 314,
+   "mean24": -3722,
+   "last": 4658,
+   "tol": 5,
+   "expect": {
+    "err": 345,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "random 15",
+   "forecast": 275,
+   "truth": 192,
+   "reference": 138,
+   "mean24": -1365,
+   "last": -661,
+   "tol": 5,
+   "expect": {
+    "err": 83,
+    "copy": false,
+    "skill": 398551,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 16",
+   "forecast": -5437,
+   "truth": -5491,
+   "reference": 114,
+   "mean24": 5202,
+   "last": -897,
+   "tol": 5,
+   "expect": {
+    "err": 54,
+    "copy": false,
+    "skill": 526316,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 17",
+   "forecast": 4515,
+   "truth": 4233,
+   "reference": 104,
+   "mean24": -4529,
+   "last": -3695,
+   "tol": 10,
+   "expect": {
+    "err": 282,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "random 18",
+   "forecast": -5436,
+   "truth": -5741,
+   "reference": 54,
+   "mean24": -4404,
+   "last": 4158,
+   "tol": 0,
+   "expect": {
+    "err": 305,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "random 19",
+   "forecast": 5351,
+   "truth": 5686,
+   "reference": 170,
+   "mean24": -1556,
+   "last": 1876,
+   "tol": 5,
+   "expect": {
+    "err": 335,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "random 20",
+   "forecast": -2001,
+   "truth": -1835,
+   "reference": 486,
+   "mean24": 5728,
+   "last": -4641,
+   "tol": 5,
+   "expect": {
+    "err": 166,
+    "copy": false,
+    "skill": 658437,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 21",
+   "forecast": -5306,
+   "truth": -5529,
+   "reference": 443,
+   "mean24": -3524,
+   "last": 5459,
+   "tol": 5,
+   "expect": {
+    "err": 223,
+    "copy": false,
+    "skill": 496614,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 22",
+   "forecast": -2599,
+   "truth": -2310,
+   "reference": 312,
+   "mean24": -5659,
+   "last": -1123,
+   "tol": 10,
+   "expect": {
+    "err": 289,
+    "copy": false,
+    "skill": 73718,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 23",
+   "forecast": 3880,
+   "truth": 4117,
+   "reference": 267,
+   "mean24": -950,
+   "last": -35,
+   "tol": 5,
+   "expect": {
+    "err": 237,
+    "copy": false,
+    "skill": 112360,
+    "beat_baseline": true
+   }
+  }
+ ],
+ "reference": [
+  {
+   "name": "daily cycle, 1 h lead: persistence is the reference",
+   "window": [
+    1000,
+    1104,
+    1200,
+    1283,
+    1346,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    1104,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 24,
+    "mean24": 1000,
+    "spread": 282,
+    "persistence": 72,
+    "reference": 72,
+    "kind": "persistence_spread"
+   }
+  },
+  {
+   "name": "daily cycle, 6 h lead: spread is the reference",
+   "window": [
+    1000,
+    1104,
+    1200,
+    1283,
+    1346,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    1104,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 6,
+   "expect": {
+    "samples": 24,
+    "mean24": 1000,
+    "spread": 282,
+    "persistence": 355,
+    "reference": 282,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "daily cycle, 12 h lead",
+   "window": [
+    1000,
+    1104,
+    1200,
+    1283,
+    1346,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    1104,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 12,
+   "expect": {
+    "samples": 24,
+    "mean24": 1000,
+    "spread": 282,
+    "persistence": 565,
+    "reference": 282,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "daily cycle, 24 h lead: no pair, spread is the reference",
+   "window": [
+    1000,
+    1104,
+    1200,
+    1283,
+    1346,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    1104,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 24,
+   "expect": {
+    "samples": 24,
+    "mean24": 1000,
+    "spread": 282,
+    "persistence": null,
+    "reference": 282,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "flat window: zero reference",
+   "window": [
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500
+   ],
+   "lag": 6,
+   "expect": {
+    "samples": 24,
+    "mean24": 1500,
+    "spread": 0,
+    "persistence": 0,
+    "reference": 0,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "two samples only",
+   "window": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    1000,
+    1010
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 2,
+    "mean24": 1005,
+    "spread": 5,
+    "persistence": 10,
+    "reference": 5,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "two samples, no pair at this lag",
+   "window": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    1000,
+    1010
+   ],
+   "lag": 6,
+   "expect": {
+    "samples": 2,
+    "mean24": 1005,
+    "spread": 5,
+    "persistence": null,
+    "reference": 5,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "one sample: no reference",
+   "window": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    1000
+   ],
+   "lag": 1,
+   "expect": null
+  },
+  {
+   "name": "empty window: no reference",
+   "window": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "lag": 1,
+   "expect": null
+  },
+  {
+   "name": "gaps: pairs need both hours",
+   "window": [
+    1000,
+    1104,
+    1200,
+    null,
+    null,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    null,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    null,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 20,
+    "mean24": 982,
+    "spread": 278,
+    "persistence": 73,
+    "reference": 73,
+    "kind": "persistence_spread"
+   }
+  },
+  {
+   "name": "gaps, 6 h lead",
+   "window": [
+    1000,
+    1104,
+    1200,
+    null,
+    null,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    null,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    null,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 6,
+   "expect": {
+    "samples": 20,
+    "mean24": 982,
+    "spread": 278,
+    "persistence": 378,
+    "reference": 278,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "negative values, mean truncates toward zero",
+   "window": [
+    -7,
+    -8,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 2,
+    "mean24": -7,
+    "spread": 0,
+    "persistence": 1,
+    "reference": 0,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "negative mean truncates toward zero (−10/3)",
+   "window": [
+    -3,
+    -3,
+    -4,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 3,
+    "mean24": -3,
+    "spread": 0,
+    "persistence": 0,
+    "reference": 0,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "steady ramp: persistence equals the step",
+   "window": [
+    0,
+    100,
+    200,
+    300,
+    400,
+    500,
+    600,
+    700,
+    800,
+    900,
+    1000,
+    1100,
+    1200,
+    1300,
+    1400,
+    1500,
+    1600,
+    1700,
+    1800,
+    1900,
+    2000,
+    2100,
+    2200,
+    2300
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 24,
+    "mean24": 1150,
+    "spread": 692,
+    "persistence": 100,
+    "reference": 100,
+    "kind": "persistence_spread"
+   }
+  },
+  {
+   "name": "pressure window in Pa",
+   "window": [
+    101300,
+    101413,
+    101493,
+    101514,
+    101469,
+    101365,
+    101228,
+    101091,
+    100987,
+    100942,
+    100963,
+    101043,
+    101156,
+    101269,
+    101349,
+    101370,
+    101325,
+    101221,
+    101084,
+    100947,
+    100843,
+    100798,
+    100819,
+    100899
+   ],
+   "lag": 6,
+   "expect": {
+    "samples": 24,
+    "mean24": 101162,
+    "spread": 222,
+    "persistence": 381,
+    "reference": 222,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 00",
+   "window": [
+    null,
+    null,
+    2268,
+    -2633,
+    3485,
+    3108,
+    null,
+    3213,
+    -57,
+    null,
+    3870,
+    -1880,
+    -2151,
+    null,
+    3205,
+    -1679,
+    2933,
+    2970,
+    -38,
+    null,
+    null,
+    3421,
+    -2801,
+    1183
+   ],
+   "lag": 12,
+   "expect": {
+    "samples": 17,
+    "mean24": 1083,
+    "spread": 2411,
+    "persistence": 3054,
+    "reference": 2411,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 01",
+   "window": [
+    null,
+    -1502,
+    7,
+    1726,
+    null,
+    -2447,
+    null,
+    null,
+    3873,
+    1213,
+    3506,
+    2173,
+    -430,
+    null,
+    null,
+    null,
+    -2184,
+    114,
+    -2764,
+    -988,
+    null,
+    -568,
+    null,
+    1486
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 15,
+    "mean24": 214,
+    "spread": 2002,
+    "persistence": 2181,
+    "reference": 2002,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 02",
+   "window": [
+    -844,
+    3176,
+    null,
+    null,
+    -1277,
+    498,
+    null,
+    null,
+    -1417,
+    2393,
+    -2979,
+    -187,
+    954,
+    1827,
+    312,
+    2835,
+    -338,
+    2852,
+    null,
+    -1456,
+    850,
+    null,
+    -1666,
+    2333
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 18,
+    "mean24": 437,
+    "spread": 1788,
+    "persistence": 3072,
+    "reference": 1788,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 03",
+   "window": [
+    null,
+    null,
+    1574,
+    -2433,
+    -1095,
+    null,
+    -115,
+    null,
+    3377,
+    -593,
+    1149,
+    3582,
+    2381,
+    null,
+    -368,
+    -1978,
+    -1402,
+    985,
+    2415,
+    1031,
+    1601,
+    2474,
+    -784,
+    1838
+   ],
+   "lag": 24,
+   "expect": {
+    "samples": 19,
+    "mean24": 717,
+    "spread": 1746,
+    "persistence": null,
+    "reference": 1746,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 04",
+   "window": [
+    91,
+    -2691,
+    1580,
+    3456,
+    -4,
+    null,
+    -2014,
+    null,
+    null,
+    null,
+    319,
+    1083,
+    2744,
+    1133,
+    -2403,
+    null,
+    -743,
+    -2750,
+    1165,
+    null,
+    -2754,
+    -1859,
+    2424,
+    -144
+   ],
+   "lag": 6,
+   "expect": {
+    "samples": 18,
+    "mean24": -75,
+    "spread": 1942,
+    "persistence": 2633,
+    "reference": 1942,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 05",
+   "window": [
+    -1909,
+    -756,
+    2895,
+    2242,
+    1953,
+    null,
+    null,
+    null,
+    3991,
+    -592,
+    -1001,
+    -1428,
+    42,
+    165,
+    1491,
+    1291,
+    3545,
+    1715,
+    -53,
+    -1319,
+    null,
+    null,
+    -2347,
+    -2346
+   ],
+   "lag": 24,
+   "expect": {
+    "samples": 19,
+    "mean24": 398,
+    "spread": 1918,
+    "persistence": null,
+    "reference": 1918,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 06",
+   "window": [
+    -1926,
+    3564,
+    1565,
+    1900,
+    1034,
+    510,
+    398,
+    3529,
+    null,
+    -749,
+    647,
+    -2331,
+    1171,
+    -2574,
+    506,
+    3860,
+    1619,
+    820,
+    null,
+    -1059,
+    1176,
+    -274,
+    -2792,
+    -2494
+   ],
+   "lag": 12,
+   "expect": {
+    "samples": 22,
+    "mean24": 368,
+    "spread": 1940,
+    "persistence": 2929,
+    "reference": 1940,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 07",
+   "window": [
+    -1407,
+    null,
+    -2248,
+    90,
+    3118,
+    318,
+    -612,
+    -1939,
+    3683,
+    -549,
+    3482,
+    2256,
+    56,
+    2562,
+    null,
+    42,
+    3742,
+    2772,
+    null,
+    -1226,
+    2329,
+    null,
+    -1046,
+    null
+   ],
+   "lag": 6,
+   "expect": {
+    "samples": 19,
+    "mean24": 811,
+    "spread": 1997,
+    "persistence": 2868,
+    "reference": 1997,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 08",
+   "window": [
+    -1781,
+    1034,
+    -1578,
+    -390,
+    -2549,
+    null,
+    1990,
+    null,
+    -2535,
+    -856,
+    null,
+    -1313,
+    -1985,
+    -2578,
+    -2280,
+    3789,
+    3888,
+    1758,
+    null,
+    -315,
+    null,
+    3272,
+    -2582,
+    -2464
+   ],
+   "lag": 12,
+   "expect": {
+    "samples": 19,
+    "mean24": -393,
+    "spread": 2238,
+    "persistence": 3602,
+    "reference": 2238,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 09",
+   "window": [
+    null,
+    -195,
+    null,
+    -1127,
+    -535,
+    -1887,
+    983,
+    -555,
+    -1587,
+    2432,
+    2990,
+    3434,
+    -805,
+    -920,
+    -1006,
+    2323,
+    -1849,
+    -173,
+    2372,
+    -2326,
+    -2513,
+    -2078,
+    -2971,
+    1123
+   ],
+   "lag": 12,
+   "expect": {
+    "samples": 22,
+    "mean24": -221,
+    "spread": 1878,
+    "persistence": 2902,
+    "reference": 1878,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 10",
+   "window": [
+    -973,
+    -1722,
+    -2811,
+    null,
+    66,
+    -2818,
+    1364,
+    3268,
+    2152,
+    1028,
+    1852,
+    -2121,
+    800,
+    1363,
+    2805,
+    -1038,
+    1975,
+    -1281,
+    1487,
+    167,
+    2924,
+    -1338,
+    -1075,
+    3121
+   ],
+   "lag": 12,
+   "expect": {
+    "samples": 23,
+    "mean24": 399,
+    "spread": 1896,
+    "persistence": 3046,
+    "reference": 1896,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 11",
+   "window": [
+    -2991,
+    2799,
+    2969,
+    null,
+    786,
+    -1609,
+    621,
+    -108,
+    null,
+    3896,
+    null,
+    null,
+    3352,
+    1112,
+    -2120,
+    -636,
+    -18,
+    null,
+    426,
+    -1722,
+    -1140,
+    429,
+    480,
+    null
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 18,
+    "mean24": 362,
+    "spread": 1889,
+    "persistence": 2324,
+    "reference": 1889,
+    "kind": "climatology_spread"
+   }
+  }
+ ],
+ "fixed_point": [
+  {
+   "text": "12.3",
+   "expect": 1230
+  },
+  {
+   "text": "12",
+   "expect": 1200
+  },
+  {
+   "text": "-0.045",
+   "expect": -5
+  },
+  {
+   "text": "-0.044",
+   "expect": -4
+  },
+  {
+   "text": "0.005",
+   "expect": 1
+  },
+  {
+   "text": "0.004",
+   "expect": 0
+  },
+  {
+   "text": "-0.004",
+   "expect": 0
+  },
+  {
+   "text": "21.375",
+   "expect": 2138
+  },
+  {
+   "text": "21.374999",
+   "expect": 2137
+  },
+  {
+   "text": "1013.25",
+   "expect": 101325
+  },
+  {
+   "text": "-60",
+   "expect": -6000
+  },
+  {
+   "text": "0",
+   "expect": 0
+  },
+  {
+   "text": "-0.0",
+   "expect": 0
+  },
+  {
+   "text": "999.995",
+   "expect": 100000
+  },
+  {
+   "text": "1099.9",
+   "expect": 109990
+  },
+  {
+   "text": "7.1",
+   "expect": 710
+  },
+  {
+   "text": "0.1",
+   "expect": 10
+  },
+  {
+   "text": "0.30000000000000004",
+   "expect": 30
+  }
+ ]
+}

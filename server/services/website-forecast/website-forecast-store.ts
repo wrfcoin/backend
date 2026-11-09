@@ -92,13 +92,17 @@ const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : typeof v === 
 const json = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v ?? null);
 const num = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
-/** The wallet's own forecasts, newest first, with the practice score once the scorer has it. */
-export async function listMine(query: Query, forecaster: string, limit = 50) {
+/**
+ * The wallet's own forecasts, newest first, with the practice score once the scorer has it. `practice` adds
+ * `practiceScore` (the integer skill score, migration 0044) to each row; without it the field is absent.
+ */
+export async function listMine(query: Query, forecaster: string, limit = 50, practice?: (rows: Array<{ commit_id: string }>) => Promise<Map<string, unknown>>) {
   const rows = (await query(`SELECT w.commit_id, w.station_alias, w.variable, w.value, w.horizon_hours, w.issued_at, w.valid_at,
       w.status, w.failure, w.commit_tx_hash, w.reveal_tx_hash, w.committed_at_height, w.revealed_at_height,
       r.status AS score_status, r.scores AS scores
     FROM website_forecasts w LEFT JOIN forecast_verification_records r ON r.commit_id = w.commit_id
     WHERE w.forecaster = $1 ORDER BY w.created_at DESC LIMIT $2`, [forecaster, limit])).rows;
+  const practiceScores = practice ? await practice(rows) : null;
   return rows.map((row: any) => {
     const scores = json(row.scores) ?? {};
     const s = scores[row.variable];
@@ -124,6 +128,7 @@ export async function listMine(query: Query, forecaster: string, limit = 50) {
           error: typeof s?.error === 'number' ? s.error : null,
         }
         : null,
+      ...(practiceScores ? { practiceScore: practiceScores.get(row.commit_id) ?? null } : {}),
     };
   });
 }
