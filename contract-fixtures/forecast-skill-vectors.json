@@ -1,13 +1,83 @@
 {
- "schema": "wrfcoin-forecast-skill-vectors/v1",
- "about": "Shared vectors for the integer forecast skill rule. Every number is an integer; all divisions truncate toward zero; isqrt is the floor square root. A second implementation passes when it reproduces every 'expect' exactly.",
- "units": {
-  "temperature_c": "0.01 degC (temp_c_centi)",
-  "pressure_hpa": "Pa (0.01 hPa)",
-  "skill": "millionths, 0..=1000000"
- },
+ "schema": "wrfcoin-forecast-skill-vectors/v2",
+ "about": "Shared vectors for the integer forecast skill rule. A second implementation passes when it reproduces every 'expect' exactly. Every number is an integer.",
+ "rule": [
+  "Arithmetic: every division is integer division truncating toward zero; isqrt is the floor square root.",
+  "Units: temperature in 0.01 degC, pressure in Pa (0.01 hPa); skill in millionths, 0..=1000000.",
+  "1 Range ('range'): temperature -10000..=10000, pressure 30000..=120000, inclusive. An out-of-range reading is ignored; an out-of-range forecast is unscored.",
+  "2 Times: commit = the commit block's time; target = commit + lead hours.",
+  "3 Readings that count: station readings that reached the oracle attestation quorum and are not synthetic. Truth candidates are observed within 15 minutes of target and landed in a block whose time is before target + 35 min; a forecast is not scored before the chain tip's time has reached target + 35 min (15 minutes of readings plus 20 minutes to land and reach quorum), so the candidate set is closed. Window and 'last' readings are observed in the 24 hours before commit AND landed in a block below the commit's height.",
+  "4 Truth ('nearest_reading'): the candidate nearest target; ties go to the earlier reading, then the smaller id (byte order). None: no score.",
+  "5 Window ('hourly_window'): 24 slots, slot k = [commit - (24-k) h, commit - (23-k) h); sample = sum / count of the slot's readings, or null. 'last' ('last_reading_before') = the newest reading in [commit - 24 h, commit); ties: the smaller id.",
+  "6 Reference ('reference'), n = slots with a sample, lag = lead hours: fewer than 12 samples = no baseline (expect null, unscored). mean24 = sum/n. spread = isqrt((n*sum(x^2) - sum(x)^2) / n^2). pairs = slot pairs (i, i+lag) where both have a sample. persistence = isqrt(sum((x[i+lag]-x[i])^2) / pairs) when pairs >= 6, else null. reference = persistence when it is not null and smaller than spread ('persistence_spread'), else spread ('climatology_spread').",
+  "7 Score ('skill'): err = |forecast - truth|. copy = |forecast - mean24| <= tol or |forecast - last| <= tol (tol default 5). skill = 0 if copy or reference == 0, else max(0, 1000000 - 1000000*err/reference). beat_baseline = skill > 0.",
+  "Widths: with |x| <= 120000 (rule 1) and n <= 24: n*sum(x^2) <= 24*24*120000^2 < 8.3e12, sum(x)^2 < 8.3e12, sum of squared differences < 1.4e12, 1000000*err <= 2.4e11. Everything fits i64; no 128-bit arithmetic is needed. One 'skill' vector uses values near 2^31 to check exactness; 1000000*err stays below 2^53 there.",
+  "'fixed_point' is NOT part of the rule: it is the backend's adapter from the decimal text the node relays today to fixed point (2 places, round half away from zero; null = refused). The rule itself takes integers."
+ ],
  "precision": 1000000,
  "default_tol": 5,
+ "min_window_samples": 12,
+ "min_persistence_pairs": 6,
+ "truth_max_distance_s": 900,
+ "landing_margin_s": 1200,
+ "score_delay_s": 2100,
+ "range": [
+  {
+   "variable": "temperature_c",
+   "value": -10000,
+   "expect": true
+  },
+  {
+   "variable": "temperature_c",
+   "value": -10001,
+   "expect": false
+  },
+  {
+   "variable": "temperature_c",
+   "value": 10000,
+   "expect": true
+  },
+  {
+   "variable": "temperature_c",
+   "value": 10001,
+   "expect": false
+  },
+  {
+   "variable": "temperature_c",
+   "value": 0,
+   "expect": true
+  },
+  {
+   "variable": "pressure_hpa",
+   "value": 30000,
+   "expect": true
+  },
+  {
+   "variable": "pressure_hpa",
+   "value": 29999,
+   "expect": false
+  },
+  {
+   "variable": "pressure_hpa",
+   "value": 120000,
+   "expect": true
+  },
+  {
+   "variable": "pressure_hpa",
+   "value": 120001,
+   "expect": false
+  },
+  {
+   "variable": "pressure_hpa",
+   "value": 101325,
+   "expect": true
+  },
+  {
+   "variable": "pressure_hpa",
+   "value": 0,
+   "expect": false
+  }
+ ],
  "skill": [
   {
    "name": "perfect forecast",
@@ -325,7 +395,37 @@
    }
   },
   {
-   "name": "large values stay exact",
+   "name": "widest in-range temperature miss",
+   "forecast": 10000,
+   "truth": -10000,
+   "reference": 20000,
+   "mean24": 0,
+   "last": 0,
+   "tol": 5,
+   "expect": {
+    "err": 20000,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "widest in-range pressure miss",
+   "forecast": 120000,
+   "truth": 30000,
+   "reference": 90001,
+   "mean24": 75000,
+   "last": 75000,
+   "tol": 5,
+   "expect": {
+    "err": 90000,
+    "copy": false,
+    "skill": 12,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "large values stay exact (beyond the range rule; arithmetic check only)",
    "forecast": 2000000000,
    "truth": -2000000000,
    "reference": 2147483647,
@@ -734,6 +834,7 @@
     "samples": 24,
     "mean24": 1000,
     "spread": 282,
+    "pairs": 23,
     "persistence": 72,
     "reference": 72,
     "kind": "persistence_spread"
@@ -772,13 +873,14 @@
     "samples": 24,
     "mean24": 1000,
     "spread": 282,
+    "pairs": 18,
     "persistence": 355,
     "reference": 282,
     "kind": "climatology_spread"
    }
   },
   {
-   "name": "daily cycle, 12 h lead",
+   "name": "daily cycle, 12 h lead: 12 pairs",
    "window": [
     1000,
     1104,
@@ -810,6 +912,7 @@
     "samples": 24,
     "mean24": 1000,
     "spread": 282,
+    "pairs": 12,
     "persistence": 565,
     "reference": 282,
     "kind": "climatology_spread"
@@ -848,6 +951,7 @@
     "samples": 24,
     "mean24": 1000,
     "spread": 282,
+    "pairs": 0,
     "persistence": null,
     "reference": 282,
     "kind": "climatology_spread"
@@ -886,13 +990,14 @@
     "samples": 24,
     "mean24": 1500,
     "spread": 0,
+    "pairs": 18,
     "persistence": 0,
     "reference": 0,
     "kind": "climatology_spread"
    }
   },
   {
-   "name": "two samples only",
+   "name": "exactly 12 samples: scored",
    "window": [
     null,
     null,
@@ -906,31 +1011,32 @@
     null,
     null,
     null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
     1000,
-    1010
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
    ],
    "lag": 1,
    "expect": {
-    "samples": 2,
-    "mean24": 1005,
-    "spread": 5,
-    "persistence": 10,
-    "reference": 5,
-    "kind": "climatology_spread"
+    "samples": 12,
+    "mean24": 746,
+    "spread": 125,
+    "pairs": 11,
+    "persistence": 70,
+    "reference": 70,
+    "kind": "persistence_spread"
    }
   },
   {
-   "name": "two samples, no pair at this lag",
+   "name": "11 samples: no baseline",
    "window": [
     null,
     null,
@@ -945,61 +1051,218 @@
     null,
     null,
     null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    1000,
-    1010
-   ],
-   "lag": 6,
-   "expect": {
-    "samples": 2,
-    "mean24": 1005,
-    "spread": 5,
-    "persistence": null,
-    "reference": 5,
-    "kind": "climatology_spread"
-   }
-  },
-  {
-   "name": "one sample: no reference",
-   "window": [
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    1000
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
    ],
    "lag": 1,
    "expect": null
   },
   {
-   "name": "empty window: no reference",
+   "name": "12 samples spread out, no adjacent pair: spread",
+   "window": [
+    1000,
+    null,
+    1200,
+    null,
+    1346,
+    null,
+    1400,
+    null,
+    1346,
+    null,
+    1200,
+    null,
+    1000,
+    null,
+    800,
+    null,
+    654,
+    null,
+    600,
+    null,
+    654,
+    null,
+    800,
+    null
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 12,
+    "mean24": 1000,
+    "spread": 282,
+    "pairs": 0,
+    "persistence": null,
+    "reference": 282,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "12 samples, 6 h lead: exactly 6 pairs, persistence considered",
+   "window": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 6,
+   "expect": {
+    "samples": 12,
+    "mean24": 746,
+    "spread": 125,
+    "pairs": 6,
+    "persistence": 245,
+    "reference": 125,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "12 samples, 7 h lead: 5 pairs, persistence not used",
+   "window": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 7,
+   "expect": {
+    "samples": 12,
+    "mean24": 746,
+    "spread": 125,
+    "pairs": 5,
+    "persistence": null,
+    "reference": 125,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "18 h lead on a full window: exactly 6 pairs",
+   "window": [
+    1000,
+    1104,
+    1200,
+    1283,
+    1346,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    1104,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 18,
+   "expect": {
+    "samples": 24,
+    "mean24": 1000,
+    "spread": 282,
+    "pairs": 6,
+    "persistence": 509,
+    "reference": 282,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "19 h lead on a full window: 5 pairs, persistence not used",
+   "window": [
+    1000,
+    1104,
+    1200,
+    1283,
+    1346,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    1104,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 19,
+   "expect": {
+    "samples": 24,
+    "mean24": 1000,
+    "spread": 282,
+    "pairs": 5,
+    "persistence": null,
+    "reference": 282,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "empty window: no baseline",
    "window": [
     null,
     null,
@@ -1062,6 +1325,7 @@
     "samples": 20,
     "mean24": 982,
     "spread": 278,
+    "pairs": 16,
     "persistence": 73,
     "reference": 73,
     "kind": "persistence_spread"
@@ -1100,15 +1364,27 @@
     "samples": 20,
     "mean24": 982,
     "spread": 278,
+    "pairs": 13,
     "persistence": 378,
     "reference": 278,
     "kind": "climatology_spread"
    }
   },
   {
-   "name": "negative values, mean truncates toward zero",
+   "name": "negative values: mean truncates toward zero",
    "window": [
     -7,
+    -8,
+    -7,
+    -8,
+    -7,
+    -8,
+    -7,
+    -8,
+    -7,
+    -8,
+    -7,
+    -8,
     -8,
     null,
     null,
@@ -1120,44 +1396,34 @@
     null,
     null,
     null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
     null
    ],
    "lag": 1,
    "expect": {
-    "samples": 2,
+    "samples": 13,
     "mean24": -7,
     "spread": 0,
-    "persistence": 1,
+    "pairs": 12,
+    "persistence": 0,
     "reference": 0,
     "kind": "climatology_spread"
    }
   },
   {
-   "name": "negative mean truncates toward zero (−10/3)",
+   "name": "mixed signs: mean truncates toward zero",
    "window": [
     -3,
     -3,
     -4,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
-    null,
+    1,
+    -3,
+    -3,
+    -4,
+    1,
+    -3,
+    -3,
+    -4,
+    1,
     null,
     null,
     null,
@@ -1173,11 +1439,12 @@
    ],
    "lag": 1,
    "expect": {
-    "samples": 3,
-    "mean24": -3,
-    "spread": 0,
-    "persistence": 0,
-    "reference": 0,
+    "samples": 12,
+    "mean24": -2,
+    "spread": 1,
+    "pairs": 11,
+    "persistence": 3,
+    "reference": 1,
     "kind": "climatology_spread"
    }
   },
@@ -1214,6 +1481,7 @@
     "samples": 24,
     "mean24": 1150,
     "spread": 692,
+    "pairs": 23,
     "persistence": 100,
     "reference": 100,
     "kind": "persistence_spread"
@@ -1252,9 +1520,88 @@
     "samples": 24,
     "mean24": 101162,
     "spread": 222,
+    "pairs": 18,
     "persistence": 381,
     "reference": 222,
     "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "range extremes, pressure: fits 64 bits",
+   "window": [
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 24,
+    "mean24": 75000,
+    "spread": 45000,
+    "pairs": 23,
+    "persistence": 90000,
+    "reference": 45000,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "range extremes, temperature",
+   "window": [
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000
+   ],
+   "lag": 12,
+   "expect": {
+    "samples": 24,
+    "mean24": 0,
+    "spread": 10000,
+    "pairs": 12,
+    "persistence": 0,
+    "reference": 0,
+    "kind": "persistence_spread"
    }
   },
   {
@@ -1290,6 +1637,7 @@
     "samples": 17,
     "mean24": 1083,
     "spread": 2411,
+    "pairs": 6,
     "persistence": 3054,
     "reference": 2411,
     "kind": "climatology_spread"
@@ -1299,8 +1647,9 @@
    "name": "random 01",
    "window": [
     null,
-    -1502,
-    7,
+    null,
+    null,
+    null,
     1726,
     null,
     -2447,
@@ -1320,24 +1669,25 @@
     -988,
     null,
     -568,
-    null,
-    1486
+    null
    ],
-   "lag": 1,
+   "lag": 12,
    "expect": {
-    "samples": 15,
-    "mean24": 214,
-    "spread": 2002,
-    "persistence": 2181,
-    "reference": 2002,
+    "samples": 12,
+    "mean24": 268,
+    "spread": 2150,
+    "pairs": 2,
+    "persistence": null,
+    "reference": 2150,
     "kind": "climatology_spread"
    }
   },
   {
    "name": "random 02",
    "window": [
-    -844,
-    3176,
+    -637,
+    986,
+    null,
     null,
     null,
     -1277,
@@ -1351,31 +1701,31 @@
     954,
     1827,
     312,
-    2835,
-    -338,
-    2852,
     null,
+    -1266,
+    -135,
+    2813,
     -1456,
     850,
     null,
-    -1666,
-    2333
+    -1666
    ],
-   "lag": 1,
+   "lag": 12,
    "expect": {
-    "samples": 18,
-    "mean24": 437,
-    "spread": 1788,
-    "persistence": 3072,
-    "reference": 1788,
-    "kind": "climatology_spread"
+    "samples": 17,
+    "mean24": -22,
+    "spread": 1522,
+    "pairs": 6,
+    "persistence": 1115,
+    "reference": 1115,
+    "kind": "persistence_spread"
    }
   },
   {
    "name": "random 03",
    "window": [
-    null,
-    null,
+    -2179,
+    3281,
     1574,
     -2433,
     -1095,
@@ -1401,11 +1751,12 @@
    ],
    "lag": 24,
    "expect": {
-    "samples": 19,
-    "mean24": 717,
-    "spread": 1746,
+    "samples": 21,
+    "mean24": 701,
+    "spread": 1863,
+    "pairs": 0,
     "persistence": null,
-    "reference": 1746,
+    "reference": 1863,
     "kind": "climatology_spread"
    }
   },
@@ -1442,6 +1793,7 @@
     "samples": 18,
     "mean24": -75,
     "spread": 1942,
+    "pairs": 9,
     "persistence": 2633,
     "reference": 1942,
     "kind": "climatology_spread"
@@ -1452,42 +1804,44 @@
    "window": [
     -1909,
     -756,
-    2895,
-    2242,
-    1953,
     null,
-    null,
+    3526,
+    3784,
+    -1437,
+    870,
     null,
     3991,
     -592,
-    -1001,
-    -1428,
-    42,
-    165,
-    1491,
-    1291,
-    3545,
-    1715,
-    -53,
+    null,
+    null,
+    -214,
+    3374,
+    1616,
+    628,
+    null,
+    -2062,
+    787,
+    -1214,
     -1319,
     null,
     null,
-    -2347,
-    -2346
+    -2347
    ],
-   "lag": 24,
+   "lag": 1,
    "expect": {
-    "samples": 19,
-    "mean24": 398,
-    "spread": 1918,
-    "persistence": null,
-    "reference": 1918,
+    "samples": 17,
+    "mean24": 395,
+    "spread": 2106,
+    "pairs": 11,
+    "persistence": 2764,
+    "reference": 2106,
     "kind": "climatology_spread"
    }
   },
   {
    "name": "random 06",
    "window": [
+    null,
     -1926,
     3564,
     1565,
@@ -1510,22 +1864,24 @@
     -1059,
     1176,
     -274,
-    -2792,
-    -2494
+    -2792
    ],
-   "lag": 12,
+   "lag": 1,
    "expect": {
-    "samples": 22,
-    "mean24": 368,
-    "spread": 1940,
-    "persistence": 2929,
-    "reference": 1940,
+    "samples": 21,
+    "mean24": 504,
+    "spread": 1881,
+    "pairs": 18,
+    "persistence": 2603,
+    "reference": 1881,
     "kind": "climatology_spread"
    }
   },
   {
    "name": "random 07",
    "window": [
+    2297,
+    -254,
     -1407,
     null,
     -2248,
@@ -1547,30 +1903,33 @@
     null,
     -1226,
     2329,
-    null,
-    -1046,
     null
    ],
-   "lag": 6,
+   "lag": 12,
    "expect": {
-    "samples": 19,
-    "mean24": 811,
-    "spread": 1997,
-    "persistence": 2868,
-    "reference": 1997,
-    "kind": "climatology_spread"
+    "samples": 20,
+    "mean24": 925,
+    "spread": 1942,
+    "pairs": 8,
+    "persistence": 1524,
+    "reference": 1524,
+    "kind": "persistence_spread"
    }
   },
   {
    "name": "random 08",
    "window": [
-    -1781,
-    1034,
-    -1578,
-    -390,
-    -2549,
+    -1600,
+    2722,
     null,
-    1990,
+    null,
+    null,
+    3662,
+    null,
+    1790,
+    -1831,
+    null,
+    null,
     null,
     -2535,
     -856,
@@ -1583,68 +1942,73 @@
     3888,
     1758,
     null,
-    -315,
-    null,
-    3272,
-    -2582,
-    -2464
+    -315
    ],
-   "lag": 12,
+   "lag": 6,
    "expect": {
-    "samples": 19,
-    "mean24": -393,
-    "spread": 2238,
-    "persistence": 3602,
-    "reference": 2238,
+    "samples": 15,
+    "mean24": 154,
+    "spread": 2407,
+    "pairs": 6,
+    "persistence": 2709,
+    "reference": 2407,
     "kind": "climatology_spread"
    }
   },
   {
    "name": "random 09",
    "window": [
+    -1644,
+    -1566,
     null,
-    -195,
     null,
+    -1946,
+    3542,
+    2015,
     -1127,
     -535,
-    -1887,
-    983,
-    -555,
-    -1587,
-    2432,
-    2990,
-    3434,
-    -805,
-    -920,
+    null,
+    null,
+    658,
+    -693,
+    null,
+    1681,
+    150,
+    2106,
+    -284,
+    null,
     -1006,
     2323,
-    -1849,
-    -173,
-    2372,
-    -2326,
-    -2513,
-    -2078,
-    -2971,
-    1123
+    null,
+    null,
+    3260
    ],
    "lag": 12,
    "expect": {
-    "samples": 22,
-    "mean24": -221,
-    "spread": 1878,
-    "persistence": 2902,
-    "reference": 1878,
+    "samples": 16,
+    "mean24": 433,
+    "spread": 1757,
+    "pairs": 6,
+    "persistence": 2796,
+    "reference": 1757,
     "kind": "climatology_spread"
    }
   },
   {
    "name": "random 10",
    "window": [
-    -973,
-    -1722,
-    -2811,
     null,
-    66,
+    -2513,
+    -2078,
+    -2971,
+    1123,
+    2329,
+    -2677,
+    null,
+    -1249,
+    -1944,
+    null,
+    null,
     -2818,
     1364,
     3268,
@@ -1656,32 +2020,35 @@
     1363,
     2805,
     -1038,
-    1975,
-    -1281,
-    1487,
-    167,
-    2924,
-    -1338,
-    -1075,
-    3121
+    1975
    ],
    "lag": 12,
    "expect": {
-    "samples": 23,
-    "mean24": 399,
-    "spread": 1896,
-    "persistence": 3046,
-    "reference": 1896,
+    "samples": 20,
+    "mean24": 32,
+    "spread": 2098,
+    "pairs": 8,
+    "persistence": 3531,
+    "reference": 2098,
     "kind": "climatology_spread"
    }
   },
   {
    "name": "random 11",
    "window": [
-    -2991,
-    2799,
-    2969,
     null,
+    697,
+    null,
+    null,
+    1349,
+    null,
+    215,
+    2380,
+    3206,
+    null,
+    -1341,
+    null,
+    -259,
     786,
     -1609,
     621,
@@ -1692,26 +2059,1487 @@
     null,
     3352,
     1112,
-    -2120,
-    -636,
-    -18,
-    null,
-    426,
-    -1722,
-    -1140,
-    429,
-    480,
-    null
+    -2120
    ],
-   "lag": 1,
+   "lag": 24,
    "expect": {
-    "samples": 18,
-    "mean24": 362,
-    "spread": 1889,
-    "persistence": 2324,
-    "reference": 1889,
+    "samples": 15,
+    "mean24": 811,
+    "spread": 1751,
+    "pairs": 0,
+    "persistence": null,
+    "reference": 1751,
     "kind": "climatology_spread"
    }
+  }
+ ],
+ "hourly_window": [
+  {
+   "name": "slot edges: the window start is in, the anchor is out",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799913600,
+     "value": 100,
+     "id": "a"
+    },
+    {
+     "observed_at": 1799913599,
+     "value": 999,
+     "id": "b"
+    },
+    {
+     "observed_at": 1800000000,
+     "value": 999,
+     "id": "c"
+    },
+    {
+     "observed_at": 1799999999,
+     "value": 7,
+     "id": "d"
+    }
+   ],
+   "expect": [
+    100,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    7
+   ]
+  },
+  {
+   "name": "an hour boundary belongs to the later slot",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799996400,
+     "value": 50,
+     "id": "a"
+    },
+    {
+     "observed_at": 1799996399,
+     "value": 70,
+     "id": "b"
+    },
+    {
+     "observed_at": 1799992800,
+     "value": 90,
+     "id": "c"
+    }
+   ],
+   "expect": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    80,
+    50
+   ]
+  },
+  {
+   "name": "slot mean truncates toward zero, both signs",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799999990,
+     "value": 7,
+     "id": "a"
+    },
+    {
+     "observed_at": 1799999980,
+     "value": -8,
+     "id": "b"
+    },
+    {
+     "observed_at": 1799996000,
+     "value": 100,
+     "id": "c"
+    },
+    {
+     "observed_at": 1799995900,
+     "value": 103,
+     "id": "d"
+    },
+    {
+     "observed_at": 1799992000,
+     "value": -100,
+     "id": "e"
+    },
+    {
+     "observed_at": 1799991900,
+     "value": -103,
+     "id": "f"
+    }
+   ],
+   "expect": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    -101,
+    101,
+    0
+   ]
+  },
+  {
+   "name": "several readings in one slot, missing hours stay empty",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799913600,
+     "value": 1000,
+     "id": "j000"
+    },
+    {
+     "observed_at": 1799914200,
+     "value": 1005,
+     "id": "j001"
+    },
+    {
+     "observed_at": 1799914800,
+     "value": 1010,
+     "id": "j002"
+    },
+    {
+     "observed_at": 1799915400,
+     "value": 1015,
+     "id": "j003"
+    },
+    {
+     "observed_at": 1799916000,
+     "value": 1020,
+     "id": "j004"
+    },
+    {
+     "observed_at": 1799916600,
+     "value": 1025,
+     "id": "j005"
+    },
+    {
+     "observed_at": 1799917200,
+     "value": 1030,
+     "id": "j006"
+    },
+    {
+     "observed_at": 1799917800,
+     "value": 1035,
+     "id": "j007"
+    },
+    {
+     "observed_at": 1799918400,
+     "value": 1040,
+     "id": "j008"
+    },
+    {
+     "observed_at": 1799919000,
+     "value": 1045,
+     "id": "j009"
+    },
+    {
+     "observed_at": 1799919600,
+     "value": 1050,
+     "id": "j010"
+    },
+    {
+     "observed_at": 1799920200,
+     "value": 1055,
+     "id": "j011"
+    },
+    {
+     "observed_at": 1799920800,
+     "value": 1060,
+     "id": "j012"
+    },
+    {
+     "observed_at": 1799921400,
+     "value": 1065,
+     "id": "j013"
+    },
+    {
+     "observed_at": 1799922000,
+     "value": 1070,
+     "id": "j014"
+    },
+    {
+     "observed_at": 1799922600,
+     "value": 1075,
+     "id": "j015"
+    },
+    {
+     "observed_at": 1799923200,
+     "value": 1080,
+     "id": "j016"
+    },
+    {
+     "observed_at": 1799923800,
+     "value": 1085,
+     "id": "j017"
+    },
+    {
+     "observed_at": 1799931600,
+     "value": 1150,
+     "id": "j030"
+    },
+    {
+     "observed_at": 1799932200,
+     "value": 1155,
+     "id": "j031"
+    },
+    {
+     "observed_at": 1799932800,
+     "value": 1160,
+     "id": "j032"
+    },
+    {
+     "observed_at": 1799933400,
+     "value": 1165,
+     "id": "j033"
+    },
+    {
+     "observed_at": 1799934000,
+     "value": 1170,
+     "id": "j034"
+    },
+    {
+     "observed_at": 1799934600,
+     "value": 1175,
+     "id": "j035"
+    },
+    {
+     "observed_at": 1799935200,
+     "value": 1180,
+     "id": "j036"
+    },
+    {
+     "observed_at": 1799935800,
+     "value": 1185,
+     "id": "j037"
+    },
+    {
+     "observed_at": 1799936400,
+     "value": 1190,
+     "id": "j038"
+    },
+    {
+     "observed_at": 1799937000,
+     "value": 1195,
+     "id": "j039"
+    },
+    {
+     "observed_at": 1799937600,
+     "value": 1200,
+     "id": "j040"
+    },
+    {
+     "observed_at": 1799938200,
+     "value": 1205,
+     "id": "j041"
+    },
+    {
+     "observed_at": 1799938800,
+     "value": 1210,
+     "id": "j042"
+    },
+    {
+     "observed_at": 1799939400,
+     "value": 1215,
+     "id": "j043"
+    },
+    {
+     "observed_at": 1799940000,
+     "value": 1220,
+     "id": "j044"
+    },
+    {
+     "observed_at": 1799940600,
+     "value": 1225,
+     "id": "j045"
+    },
+    {
+     "observed_at": 1799941200,
+     "value": 1230,
+     "id": "j046"
+    },
+    {
+     "observed_at": 1799941800,
+     "value": 1235,
+     "id": "j047"
+    },
+    {
+     "observed_at": 1799942400,
+     "value": 1240,
+     "id": "j048"
+    },
+    {
+     "observed_at": 1799943000,
+     "value": 1245,
+     "id": "j049"
+    },
+    {
+     "observed_at": 1799943600,
+     "value": 1250,
+     "id": "j050"
+    },
+    {
+     "observed_at": 1799944200,
+     "value": 1255,
+     "id": "j051"
+    },
+    {
+     "observed_at": 1799944800,
+     "value": 1260,
+     "id": "j052"
+    },
+    {
+     "observed_at": 1799945400,
+     "value": 1265,
+     "id": "j053"
+    },
+    {
+     "observed_at": 1799946000,
+     "value": 1270,
+     "id": "j054"
+    },
+    {
+     "observed_at": 1799946600,
+     "value": 1275,
+     "id": "j055"
+    },
+    {
+     "observed_at": 1799947200,
+     "value": 1280,
+     "id": "j056"
+    },
+    {
+     "observed_at": 1799947800,
+     "value": 1285,
+     "id": "j057"
+    },
+    {
+     "observed_at": 1799948400,
+     "value": 1290,
+     "id": "j058"
+    },
+    {
+     "observed_at": 1799949000,
+     "value": 1295,
+     "id": "j059"
+    },
+    {
+     "observed_at": 1799949600,
+     "value": 1300,
+     "id": "j060"
+    },
+    {
+     "observed_at": 1799950200,
+     "value": 1305,
+     "id": "j061"
+    },
+    {
+     "observed_at": 1799950800,
+     "value": 1310,
+     "id": "j062"
+    },
+    {
+     "observed_at": 1799951400,
+     "value": 1315,
+     "id": "j063"
+    },
+    {
+     "observed_at": 1799952000,
+     "value": 1320,
+     "id": "j064"
+    },
+    {
+     "observed_at": 1799952600,
+     "value": 1325,
+     "id": "j065"
+    },
+    {
+     "observed_at": 1799953200,
+     "value": 1330,
+     "id": "j066"
+    },
+    {
+     "observed_at": 1799953800,
+     "value": 1335,
+     "id": "j067"
+    },
+    {
+     "observed_at": 1799954400,
+     "value": 1340,
+     "id": "j068"
+    },
+    {
+     "observed_at": 1799955000,
+     "value": 1345,
+     "id": "j069"
+    },
+    {
+     "observed_at": 1799955600,
+     "value": 1350,
+     "id": "j070"
+    },
+    {
+     "observed_at": 1799956200,
+     "value": 1355,
+     "id": "j071"
+    },
+    {
+     "observed_at": 1799956800,
+     "value": 1360,
+     "id": "j072"
+    },
+    {
+     "observed_at": 1799957400,
+     "value": 1365,
+     "id": "j073"
+    },
+    {
+     "observed_at": 1799958000,
+     "value": 1370,
+     "id": "j074"
+    },
+    {
+     "observed_at": 1799958600,
+     "value": 1375,
+     "id": "j075"
+    },
+    {
+     "observed_at": 1799959200,
+     "value": 1380,
+     "id": "j076"
+    },
+    {
+     "observed_at": 1799959800,
+     "value": 1385,
+     "id": "j077"
+    },
+    {
+     "observed_at": 1799960400,
+     "value": 1390,
+     "id": "j078"
+    },
+    {
+     "observed_at": 1799961000,
+     "value": 1395,
+     "id": "j079"
+    },
+    {
+     "observed_at": 1799961600,
+     "value": 1400,
+     "id": "j080"
+    },
+    {
+     "observed_at": 1799962200,
+     "value": 1405,
+     "id": "j081"
+    },
+    {
+     "observed_at": 1799962800,
+     "value": 1410,
+     "id": "j082"
+    },
+    {
+     "observed_at": 1799963400,
+     "value": 1415,
+     "id": "j083"
+    },
+    {
+     "observed_at": 1799964000,
+     "value": 1420,
+     "id": "j084"
+    },
+    {
+     "observed_at": 1799964600,
+     "value": 1425,
+     "id": "j085"
+    },
+    {
+     "observed_at": 1799965200,
+     "value": 1430,
+     "id": "j086"
+    },
+    {
+     "observed_at": 1799965800,
+     "value": 1435,
+     "id": "j087"
+    },
+    {
+     "observed_at": 1799966400,
+     "value": 1440,
+     "id": "j088"
+    },
+    {
+     "observed_at": 1799967000,
+     "value": 1445,
+     "id": "j089"
+    },
+    {
+     "observed_at": 1799967600,
+     "value": 1450,
+     "id": "j090"
+    },
+    {
+     "observed_at": 1799968200,
+     "value": 1455,
+     "id": "j091"
+    },
+    {
+     "observed_at": 1799968800,
+     "value": 1460,
+     "id": "j092"
+    },
+    {
+     "observed_at": 1799969400,
+     "value": 1465,
+     "id": "j093"
+    },
+    {
+     "observed_at": 1799970000,
+     "value": 1470,
+     "id": "j094"
+    },
+    {
+     "observed_at": 1799970600,
+     "value": 1475,
+     "id": "j095"
+    },
+    {
+     "observed_at": 1799971200,
+     "value": 1480,
+     "id": "j096"
+    },
+    {
+     "observed_at": 1799971800,
+     "value": 1485,
+     "id": "j097"
+    },
+    {
+     "observed_at": 1799972400,
+     "value": 1490,
+     "id": "j098"
+    },
+    {
+     "observed_at": 1799973000,
+     "value": 1495,
+     "id": "j099"
+    },
+    {
+     "observed_at": 1799973600,
+     "value": 1500,
+     "id": "j100"
+    },
+    {
+     "observed_at": 1799974200,
+     "value": 1505,
+     "id": "j101"
+    },
+    {
+     "observed_at": 1799978400,
+     "value": 1540,
+     "id": "j108"
+    },
+    {
+     "observed_at": 1799979000,
+     "value": 1545,
+     "id": "j109"
+    },
+    {
+     "observed_at": 1799979600,
+     "value": 1550,
+     "id": "j110"
+    },
+    {
+     "observed_at": 1799980200,
+     "value": 1555,
+     "id": "j111"
+    },
+    {
+     "observed_at": 1799980800,
+     "value": 1560,
+     "id": "j112"
+    },
+    {
+     "observed_at": 1799981400,
+     "value": 1565,
+     "id": "j113"
+    },
+    {
+     "observed_at": 1799982000,
+     "value": 1570,
+     "id": "j114"
+    },
+    {
+     "observed_at": 1799982600,
+     "value": 1575,
+     "id": "j115"
+    },
+    {
+     "observed_at": 1799983200,
+     "value": 1580,
+     "id": "j116"
+    },
+    {
+     "observed_at": 1799983800,
+     "value": 1585,
+     "id": "j117"
+    },
+    {
+     "observed_at": 1799984400,
+     "value": 1590,
+     "id": "j118"
+    },
+    {
+     "observed_at": 1799985000,
+     "value": 1595,
+     "id": "j119"
+    },
+    {
+     "observed_at": 1799985600,
+     "value": 1600,
+     "id": "j120"
+    },
+    {
+     "observed_at": 1799986200,
+     "value": 1605,
+     "id": "j121"
+    },
+    {
+     "observed_at": 1799986800,
+     "value": 1610,
+     "id": "j122"
+    },
+    {
+     "observed_at": 1799987400,
+     "value": 1615,
+     "id": "j123"
+    },
+    {
+     "observed_at": 1799988000,
+     "value": 1620,
+     "id": "j124"
+    },
+    {
+     "observed_at": 1799988600,
+     "value": 1625,
+     "id": "j125"
+    },
+    {
+     "observed_at": 1799989200,
+     "value": 1630,
+     "id": "j126"
+    },
+    {
+     "observed_at": 1799989800,
+     "value": 1635,
+     "id": "j127"
+    },
+    {
+     "observed_at": 1799990400,
+     "value": 1640,
+     "id": "j128"
+    },
+    {
+     "observed_at": 1799991000,
+     "value": 1645,
+     "id": "j129"
+    },
+    {
+     "observed_at": 1799991600,
+     "value": 1650,
+     "id": "j130"
+    },
+    {
+     "observed_at": 1799992200,
+     "value": 1655,
+     "id": "j131"
+    },
+    {
+     "observed_at": 1799992800,
+     "value": 1660,
+     "id": "j132"
+    },
+    {
+     "observed_at": 1799993400,
+     "value": 1665,
+     "id": "j133"
+    },
+    {
+     "observed_at": 1799994000,
+     "value": 1670,
+     "id": "j134"
+    },
+    {
+     "observed_at": 1799994600,
+     "value": 1675,
+     "id": "j135"
+    },
+    {
+     "observed_at": 1799995200,
+     "value": 1680,
+     "id": "j136"
+    },
+    {
+     "observed_at": 1799995800,
+     "value": 1685,
+     "id": "j137"
+    },
+    {
+     "observed_at": 1799996400,
+     "value": 1690,
+     "id": "j138"
+    },
+    {
+     "observed_at": 1799997000,
+     "value": 1695,
+     "id": "j139"
+    },
+    {
+     "observed_at": 1799997600,
+     "value": 1700,
+     "id": "j140"
+    },
+    {
+     "observed_at": 1799998200,
+     "value": 1705,
+     "id": "j141"
+    },
+    {
+     "observed_at": 1799998800,
+     "value": 1710,
+     "id": "j142"
+    },
+    {
+     "observed_at": 1799999400,
+     "value": 1715,
+     "id": "j143"
+    }
+   ],
+   "expect": [
+    1012,
+    1042,
+    1072,
+    null,
+    null,
+    1162,
+    1192,
+    1222,
+    1252,
+    1282,
+    1312,
+    1342,
+    1372,
+    1402,
+    1432,
+    1462,
+    1492,
+    null,
+    1552,
+    1582,
+    1612,
+    1642,
+    1672,
+    1702
+   ]
+  },
+  {
+   "name": "no readings",
+   "anchor": 1800000000,
+   "readings": [],
+   "expect": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "name": "readings outside the window only",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799910000,
+     "value": 1,
+     "id": "a"
+    },
+    {
+     "observed_at": 1800000060,
+     "value": 2,
+     "id": "b"
+    }
+   ],
+   "expect": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "name": "random",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799962162,
+     "value": 3991,
+     "id": "x000"
+    },
+    {
+     "observed_at": 1799952274,
+     "value": -2387,
+     "id": "x001"
+    },
+    {
+     "observed_at": 1799993247,
+     "value": 768,
+     "id": "x002"
+    },
+    {
+     "observed_at": 1799982565,
+     "value": 426,
+     "id": "x003"
+    },
+    {
+     "observed_at": 1799980052,
+     "value": -1722,
+     "id": "x004"
+    },
+    {
+     "observed_at": 1799923987,
+     "value": -1140,
+     "id": "x005"
+    },
+    {
+     "observed_at": 1799949807,
+     "value": 429,
+     "id": "x006"
+    },
+    {
+     "observed_at": 1799922941,
+     "value": 480,
+     "id": "x007"
+    },
+    {
+     "observed_at": 1799999740,
+     "value": -2335,
+     "id": "x008"
+    },
+    {
+     "observed_at": 1799989544,
+     "value": -2168,
+     "id": "x009"
+    },
+    {
+     "observed_at": 1799936499,
+     "value": 3617,
+     "id": "x010"
+    },
+    {
+     "observed_at": 1799930792,
+     "value": -912,
+     "id": "x011"
+    },
+    {
+     "observed_at": 1799926982,
+     "value": -1490,
+     "id": "x012"
+    },
+    {
+     "observed_at": 1799946215,
+     "value": -465,
+     "id": "x013"
+    },
+    {
+     "observed_at": 1799933971,
+     "value": 463,
+     "id": "x014"
+    },
+    {
+     "observed_at": 1799991671,
+     "value": -259,
+     "id": "x015"
+    },
+    {
+     "observed_at": 1799964846,
+     "value": -2916,
+     "id": "x016"
+    },
+    {
+     "observed_at": 1799958328,
+     "value": 2493,
+     "id": "x017"
+    },
+    {
+     "observed_at": 1799981904,
+     "value": 2682,
+     "id": "x018"
+    },
+    {
+     "observed_at": 1799935960,
+     "value": -467,
+     "id": "x019"
+    },
+    {
+     "observed_at": 1799926190,
+     "value": 161,
+     "id": "x020"
+    },
+    {
+     "observed_at": 1799966157,
+     "value": 472,
+     "id": "x021"
+    },
+    {
+     "observed_at": 1799918763,
+     "value": -2491,
+     "id": "x022"
+    },
+    {
+     "observed_at": 1799960592,
+     "value": 674,
+     "id": "x023"
+    },
+    {
+     "observed_at": 1799981198,
+     "value": -2421,
+     "id": "x024"
+    },
+    {
+     "observed_at": 1799952284,
+     "value": -2603,
+     "id": "x025"
+    },
+    {
+     "observed_at": 1799945236,
+     "value": -2932,
+     "id": "x026"
+    },
+    {
+     "observed_at": 1799961867,
+     "value": 320,
+     "id": "x027"
+    },
+    {
+     "observed_at": 1799933096,
+     "value": 2050,
+     "id": "x028"
+    },
+    {
+     "observed_at": 1799952453,
+     "value": -1841,
+     "id": "x029"
+    },
+    {
+     "observed_at": 1799935176,
+     "value": 411,
+     "id": "x030"
+    },
+    {
+     "observed_at": 1799987482,
+     "value": -1828,
+     "id": "x031"
+    },
+    {
+     "observed_at": 1799919087,
+     "value": 1126,
+     "id": "x032"
+    },
+    {
+     "observed_at": 1799969678,
+     "value": -421,
+     "id": "x033"
+    },
+    {
+     "observed_at": 1799956944,
+     "value": -176,
+     "id": "x034"
+    },
+    {
+     "observed_at": 1799942016,
+     "value": -2048,
+     "id": "x035"
+    },
+    {
+     "observed_at": 1799988731,
+     "value": -1130,
+     "id": "x036"
+    },
+    {
+     "observed_at": 1799967405,
+     "value": 1127,
+     "id": "x037"
+    },
+    {
+     "observed_at": 1799990872,
+     "value": 1211,
+     "id": "x038"
+    },
+    {
+     "observed_at": 1799938137,
+     "value": 1621,
+     "id": "x039"
+    },
+    {
+     "observed_at": 1799934205,
+     "value": -1197,
+     "id": "x040"
+    },
+    {
+     "observed_at": 1799935109,
+     "value": 3585,
+     "id": "x041"
+    },
+    {
+     "observed_at": 1799937678,
+     "value": -1894,
+     "id": "x042"
+    },
+    {
+     "observed_at": 1799963956,
+     "value": 219,
+     "id": "x043"
+    },
+    {
+     "observed_at": 1799922621,
+     "value": -2667,
+     "id": "x044"
+    },
+    {
+     "observed_at": 1799948301,
+     "value": 309,
+     "id": "x045"
+    },
+    {
+     "observed_at": 1799958765,
+     "value": -2576,
+     "id": "x046"
+    },
+    {
+     "observed_at": 1799982281,
+     "value": 421,
+     "id": "x047"
+    },
+    {
+     "observed_at": 1799944802,
+     "value": 66,
+     "id": "x048"
+    },
+    {
+     "observed_at": 1799955647,
+     "value": 3221,
+     "id": "x049"
+    },
+    {
+     "observed_at": 1799926867,
+     "value": -1505,
+     "id": "x050"
+    },
+    {
+     "observed_at": 1799944674,
+     "value": 2785,
+     "id": "x051"
+    },
+    {
+     "observed_at": 1799989078,
+     "value": 1034,
+     "id": "x052"
+    },
+    {
+     "observed_at": 1799928270,
+     "value": 1229,
+     "id": "x053"
+    },
+    {
+     "observed_at": 1799986664,
+     "value": -2619,
+     "id": "x054"
+    },
+    {
+     "observed_at": 1799939426,
+     "value": 2281,
+     "id": "x055"
+    },
+    {
+     "observed_at": 1799942020,
+     "value": 1796,
+     "id": "x056"
+    },
+    {
+     "observed_at": 1799984224,
+     "value": 3653,
+     "id": "x057"
+    },
+    {
+     "observed_at": 1799916412,
+     "value": 2460,
+     "id": "x058"
+    },
+    {
+     "observed_at": 1799932658,
+     "value": 327,
+     "id": "x059"
+    }
+   ],
+   "expect": [
+    2460,
+    -682,
+    -1109,
+    -944,
+    158,
+    939,
+    719,
+    676,
+    -27,
+    -78,
+    -1600,
+    3221,
+    -86,
+    1301,
+    -439,
+    -421,
+    null,
+    null,
+    -487,
+    1500,
+    -1135,
+    -405,
+    768,
+    -2335
+   ]
+  }
+ ],
+ "nearest_reading": [
+  {
+   "name": "exactly 15 minutes away is in",
+   "target": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799999100,
+     "value": 1,
+     "id": "a"
+    },
+    {
+     "observed_at": 1800000901,
+     "value": 2,
+     "id": "b"
+    }
+   ],
+   "expect": {
+    "observed_at": 1799999100,
+    "value": 1,
+    "id": "a"
+   }
+  },
+  {
+   "name": "one second past 15 minutes is out",
+   "target": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799999099,
+     "value": 1,
+     "id": "a"
+    },
+    {
+     "observed_at": 1800000901,
+     "value": 2,
+     "id": "b"
+    }
+   ],
+   "expect": null
+  },
+  {
+   "name": "nearest wins",
+   "target": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1800000300,
+     "value": 1,
+     "id": "a"
+    },
+    {
+     "observed_at": 1799999700,
+     "value": 2,
+     "id": "b"
+    },
+    {
+     "observed_at": 1800000200,
+     "value": 3,
+     "id": "c"
+    }
+   ],
+   "expect": {
+    "observed_at": 1800000200,
+    "value": 3,
+    "id": "c"
+   }
+  },
+  {
+   "name": "same distance before and after: the earlier reading",
+   "target": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1800000300,
+     "value": 1,
+     "id": "a"
+    },
+    {
+     "observed_at": 1799999700,
+     "value": 2,
+     "id": "b"
+    }
+   ],
+   "expect": {
+    "observed_at": 1799999700,
+    "value": 2,
+    "id": "b"
+   }
+  },
+  {
+   "name": "same distance, listed the other way round: still the earlier reading",
+   "target": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799999700,
+     "value": 2,
+     "id": "b"
+    },
+    {
+     "observed_at": 1800000300,
+     "value": 1,
+     "id": "a"
+    }
+   ],
+   "expect": {
+    "observed_at": 1799999700,
+    "value": 2,
+    "id": "b"
+   }
+  },
+  {
+   "name": "same time: the smaller id",
+   "target": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1800000060,
+     "value": 1,
+     "id": "b"
+    },
+    {
+     "observed_at": 1800000060,
+     "value": 2,
+     "id": "a"
+    }
+   ],
+   "expect": {
+    "observed_at": 1800000060,
+    "value": 2,
+    "id": "a"
+   }
+  },
+  {
+   "name": "a reading exactly at the target",
+   "target": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1800000000,
+     "value": 5,
+     "id": "z"
+    },
+    {
+     "observed_at": 1799999999,
+     "value": 6,
+     "id": "a"
+    }
+   ],
+   "expect": {
+    "observed_at": 1800000000,
+    "value": 5,
+    "id": "z"
+   }
+  },
+  {
+   "name": "no readings",
+   "target": 1800000000,
+   "readings": [],
+   "expect": null
+  }
+ ],
+ "last_reading_before": [
+  {
+   "name": "the anchor itself is out",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1800000000,
+     "value": 1,
+     "id": "a"
+    },
+    {
+     "observed_at": 1799999995,
+     "value": 2,
+     "id": "b"
+    },
+    {
+     "observed_at": 1799999400,
+     "value": 3,
+     "id": "c"
+    }
+   ],
+   "expect": {
+    "observed_at": 1799999995,
+    "value": 2,
+    "id": "b"
+   }
+  },
+  {
+   "name": "same time: the smaller id",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799999995,
+     "value": 2,
+     "id": "b"
+    },
+    {
+     "observed_at": 1799999995,
+     "value": 9,
+     "id": "a"
+    }
+   ],
+   "expect": {
+    "observed_at": 1799999995,
+    "value": 9,
+    "id": "a"
+   }
+  },
+  {
+   "name": "older than 24 hours is out",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799913599,
+     "value": 1,
+     "id": "a"
+    }
+   ],
+   "expect": null
+  },
+  {
+   "name": "exactly 24 hours before is in",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799913600,
+     "value": 1,
+     "id": "a"
+    }
+   ],
+   "expect": {
+    "observed_at": 1799913600,
+    "value": 1,
+    "id": "a"
+   }
+  },
+  {
+   "name": "no readings",
+   "anchor": 1800000000,
+   "readings": [],
+   "expect": null
   }
  ],
  "fixed_point": [
@@ -1786,6 +3614,82 @@
   {
    "text": "0.30000000000000004",
    "expect": 30
+  },
+  {
+   "text": "0.99999999999999999999",
+   "expect": 100
+  },
+  {
+   "text": "1e3",
+   "expect": null
+  },
+  {
+   "text": "1E3",
+   "expect": null
+  },
+  {
+   "text": "1.5e-7",
+   "expect": null
+  },
+  {
+   "text": "",
+   "expect": null
+  },
+  {
+   "text": " ",
+   "expect": null
+  },
+  {
+   "text": " 1",
+   "expect": null
+  },
+  {
+   "text": "1 ",
+   "expect": null
+  },
+  {
+   "text": "1.",
+   "expect": null
+  },
+  {
+   "text": ".5",
+   "expect": null
+  },
+  {
+   "text": "+1",
+   "expect": null
+  },
+  {
+   "text": "--1",
+   "expect": null
+  },
+  {
+   "text": "NaN",
+   "expect": null
+  },
+  {
+   "text": "Infinity",
+   "expect": null
+  },
+  {
+   "text": "1,5",
+   "expect": null
+  },
+  {
+   "text": "0x10",
+   "expect": null
+  },
+  {
+   "text": "1234567890123456",
+   "expect": null
+  },
+  {
+   "text": "0.111111111111111111111",
+   "expect": null
+  },
+  {
+   "text": "1.2.3",
+   "expect": null
   }
  ]
 }

@@ -9,9 +9,10 @@
 -- Down (reversible): DROP TABLE website_forecast_scores;
 CREATE TABLE IF NOT EXISTS website_forecast_scores (
   commit_id text PRIMARY KEY CHECK (commit_id ~ '^[0-9a-f]{64}$'),
-  -- pending: looked, no reading yet (retried until 24 h after the target time).
+  -- pending: looked, no reading yet or the node could not be read (retried until 24 h after the target time).
   status text NOT NULL CHECK (status IN ('pending', 'scored', 'unscored')),
-  reason text CHECK (reason IN ('no_reading', 'no_baseline')),
+  -- Why it is unscored; on a pending row, 'node_unavailable' or null (no reading yet).
+  reason text CHECK (reason IN ('no_reading', 'no_baseline', 'node_unavailable', 'out_of_range')),
   unit text NOT NULL CHECK (unit IN ('temp_c_centi', 'pressure_pa')),
   -- Target time used for the score: the commit block's time plus the lead ('chain'), or the draft's
   -- own target time when the commit height is not known ('draft').
@@ -20,6 +21,9 @@ CREATE TABLE IF NOT EXISTS website_forecast_scores (
   forecast_fp bigint,
   truth_fp bigint,
   truth_observed_at timestamptz,
+  -- The truth reading itself: its chain commit id and the block it landed in, so the score can be checked.
+  truth_commit_id text CHECK (length(truth_commit_id) <= 128),
+  truth_height bigint,
   err_fp bigint,
   ref_fp bigint,
   ref_kind text CHECK (ref_kind IN ('climatology_spread', 'persistence_spread')),

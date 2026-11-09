@@ -9,43 +9,67 @@ import request from 'supertest';
 import { readFileSync } from 'node:fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
 import {
-  hourlyWindow, isqrt, lastReadingBefore, nearestReading, numberToFixedPoint, parseFixedPoint, ratioSkill, referenceFromWindow, skillScore,
-  type Reading,
+  LANDING_MARGIN_S, MIN_PERSISTENCE_PAIRS, MIN_WINDOW_SAMPLES, TRUTH_MAX_DISTANCE_S, hourlyWindow, inRange, isqrt, lastReadingBefore, nearestReading,
+  numberToFixedPoint, parseFixedPoint, ratioSkill, referenceFromWindow, skillScore, type Reading, type ScoredVariable,
 } from '../server/services/forecast-score/practice-score';
 import {
-  GIVE_UP_S, PRACTICE_NOTE, SCORE_DELAY_S, publicPracticeScore, readPracticeScores, scoreWebsiteForecasts, websiteForecastScoreEnabled,
+  BACKOFF_BASE_MS, GIVE_UP_S, PRACTICE_NOTE, SCORE_DELAY_S, newPaceState, publicPracticeScore, readPracticeScores, readsPerMinute, scoreWebsiteForecasts,
+  websiteForecastScoreEnabled,
 } from '../server/services/forecast-score/practice-score-job';
 import { createWebsiteForecastRouter } from '../server/routes/website-forecast-routes';
+import { createPublicForecastVerificationRouter } from '../server/routes/forecast-verification-routes';
 import { listMine } from '../server/services/website-forecast/website-forecast-store';
 import type { Core4Get } from '../server/services/forecast-commit-record';
 import type { Query } from '../server/services/forecast-verification/observed-verification';
 
 const vectors = JSON.parse(readFileSync('contract-fixtures/forecast-skill-vectors.json', 'utf8'));
 const big = (v: number | null) => (v === null ? null : BigInt(v));
+const toReading = (r: any): Reading => ({ observedAt: r.observed_at, value: BigInt(r.value), id: r.id });
+const fromReading = (r: Reading | null) => (r === null ? null : { observed_at: r.observedAt, value: Number(r.value), id: r.id });
+const named = (list: any[]) => list.map((v: any) => [v.name, v] as [string, any]);
 
-describe('integer skill rule against the shared vectors', () => {
-  it('has the expected file shape', () => {
-    expect(vectors.schema).toBe('wrfcoin-forecast-skill-vectors/v1');
-    expect(vectors.precision).toBe(1_000_000);
-    expect(vectors.default_tol).toBe(5);
-    expect([vectors.skill.length, vectors.reference.length, vectors.fixed_point.length]).toEqual([46, 27, 18]);
+describe('integer skill rule against the shared vectors (schema v2)', () => {
+  it('has the expected file shape and constants', () => {
+    expect(vectors.schema).toBe('wrfcoin-forecast-skill-vectors/v2');
+    expect([vectors.precision, vectors.default_tol, vectors.min_window_samples, vectors.min_persistence_pairs]).toEqual([1_000_000, 5, MIN_WINDOW_SAMPLES, MIN_PERSISTENCE_PAIRS]);
+    expect([vectors.truth_max_distance_s, vectors.landing_margin_s, vectors.score_delay_s]).toEqual([TRUTH_MAX_DISTANCE_S, LANDING_MARGIN_S, SCORE_DELAY_S]);
+    expect(SCORE_DELAY_S).toBe(35 * 60);
+    expect(['range', 'skill', 'reference', 'hourly_window', 'nearest_reading', 'last_reading_before', 'fixed_point'].map((k) => vectors[k].length)).toEqual([11, 48, 33, 7, 8, 5, 37]);
+    expect(vectors.rule.length).toBeGreaterThan(8);
   });
 
-  it.each(vectors.skill.map((v: any) => [v.name, v]))('skill: %s', (_name, v: any) => {
+  it.each(vectors.range.map((v: any) => [`${v.variable} ${v.value}`, v]))('range: %s', (_n, v: any) => {
+    expect(inRange(v.variable as ScoredVariable, BigInt(v.value))).toBe(v.expect);
+  });
+
+  it.each(named(vectors.skill))('skill: %s', (_name, v: any) => {
     const r = skillScore({ forecast: BigInt(v.forecast), truth: BigInt(v.truth), reference: BigInt(v.reference), mean24: BigInt(v.mean24), last: BigInt(v.last), tol: BigInt(v.tol) });
     expect({ err: Number(r.err), copy: r.copy, skill: Number(r.skill), beat_baseline: r.beatBaseline }).toEqual(v.expect);
   });
 
-  it.each(vectors.reference.map((v: any) => [v.name, v]))('reference: %s', (_name, v: any) => {
+  it.each(named(vectors.reference))('reference: %s', (_name, v: any) => {
     const r = referenceFromWindow(v.window.map(big), v.lag);
     expect(r === null ? null : {
-      samples: r.samples, mean24: Number(r.mean24), spread: Number(r.spread), persistence: r.persistence === null ? null : Number(r.persistence),
+      samples: r.samples, mean24: Number(r.mean24), spread: Number(r.spread), pairs: r.pairs, persistence: r.persistence === null ? null : Number(r.persistence),
       reference: Number(r.reference), kind: r.kind,
     }).toEqual(v.expect);
   });
 
-  it.each(vectors.fixed_point.map((v: any) => [v.text, v.expect]))('fixed point: %s', (text, expected) => {
-    expect(Number(parseFixedPoint(text as string))).toBe(expected);
+  it.each(named(vectors.hourly_window))('hourly window: %s', (_name, v: any) => {
+    expect(hourlyWindow(v.readings.map(toReading), v.anchor).map((x) => (x === null ? null : Number(x)))).toEqual(v.expect);
+  });
+
+  it.each(named(vectors.nearest_reading))('nearest reading: %s', (_name, v: any) => {
+    expect(fromReading(nearestReading(v.readings.map(toReading), v.target))).toEqual(v.expect);
+  });
+
+  it.each(named(vectors.last_reading_before))('last reading before: %s', (_name, v: any) => {
+    expect(fromReading(lastReadingBefore(v.readings.map(toReading), v.anchor))).toEqual(v.expect);
+  });
+
+  it.each(vectors.fixed_point.map((v: any) => [JSON.stringify(v.text), v]))('fixed point (backend adapter): %s', (_n, v: any) => {
+    const r = parseFixedPoint(v.text);
+    expect(r === null ? null : Number(r)).toBe(v.expect);
   });
 
   it('uses the default tolerance of 5 when none is given', () => {
@@ -53,53 +77,37 @@ describe('integer skill rule against the shared vectors', () => {
     expect(skillScore({ forecast: 1806n, truth: 1806n, reference: 250n, mean24: 1800n, last: 0n }).skill).toBe(1_000_000n);
   });
 
-  it('refuses what is not a plain decimal, and never goes through floating-point arithmetic', () => {
-    for (const bad of ['', ' 1', '1e3', '1.', '.5', '+1', 'NaN', '1,5', '1234567890123456']) expect(parseFixedPoint(bad)).toBeNull();
+  it('turns JSON numbers into fixed point through their text, never through floating-point arithmetic', () => {
     expect(numberToFixedPoint(0.1 + 0.2)).toBe(30n);
     expect(numberToFixedPoint(1.005)).toBe(101n); // the text "1.005", not the binary value just below it
     expect(numberToFixedPoint(-0)).toBe(0n);
     expect(numberToFixedPoint(1e-7)).toBeNull();
+    expect(numberToFixedPoint(1e21)).toBeNull();
     expect(numberToFixedPoint(Number.NaN)).toBeNull();
     expect(numberToFixedPoint('12.3')).toBeNull();
   });
 
-  it('isqrt is the floor square root, exact past 2^53', () => {
+  it('isqrt is the floor square root, exact past 2^53; bad arguments are refused', () => {
     for (const [n, r] of [[0n, 0n], [1n, 1n], [3n, 1n], [4n, 2n], [43125n, 207n], [10n ** 30n, 10n ** 15n], [10n ** 30n - 1n, 10n ** 15n - 1n]]) expect(isqrt(n)).toBe(r);
     expect(() => isqrt(-1n)).toThrow();
     expect(() => ratioSkill(-1n, 5n)).toThrow();
-    expect(() => referenceFromWindow([1n, 2n], 0)).toThrow();
-  });
-});
-
-describe('readings to window and truth', () => {
-  const at = (observedAt: number, value: bigint, id = `r${observedAt}`): Reading => ({ observedAt, value, id });
-  const ANCHOR = 1_800_000_000;
-
-  it('buckets the 24 hours before the anchor into hourly means; the anchor itself is outside', () => {
-    const w = hourlyWindow([at(ANCHOR - 86_400, 100n), at(ANCHOR - 86_400 + 3599, 103n), at(ANCHOR - 3600, 7n), at(ANCHOR - 1, -8n), at(ANCHOR, 999n), at(ANCHOR - 86_401, 999n)], ANCHOR);
-    expect(w.length).toBe(24);
-    expect(w[0]).toBe(101n); // (100 + 103) / 2 truncates
-    expect(w[23]).toBe(0n); // (7 − 8) / 2 truncates toward zero
-    expect(w.slice(1, 23).every((v) => v === null)).toBe(true);
+    expect(() => ratioSkill(1n, -5n)).toThrow();
+    expect(() => skillScore({ forecast: 1n, truth: 1n, reference: 1n, mean24: 0n, last: 0n, tol: -1n })).toThrow();
+    expect(() => referenceFromWindow(Array(24).fill(1n), 0)).toThrow();
+    expect(() => referenceFromWindow(Array(24).fill(1n), 1.5)).toThrow();
   });
 
-  it('takes the last reading strictly before the anchor', () => {
-    expect(lastReadingBefore([at(ANCHOR, 1n), at(ANCHOR - 5, 2n), at(ANCHOR - 600, 3n)], ANCHOR)?.value).toBe(2n);
-    expect(lastReadingBefore([at(ANCHOR - 5, 2n, 'b'), at(ANCHOR - 5, 9n, 'a')], ANCHOR)?.value).toBe(9n);
-    expect(lastReadingBefore([at(ANCHOR - 86_401, 1n)], ANCHOR)).toBeNull();
-  });
-
-  it('takes the reading nearest the target time, at most 15 minutes away; ties go to the earlier one', () => {
-    expect(nearestReading([at(ANCHOR - 901, 1n), at(ANCHOR + 901, 2n)], ANCHOR)).toBeNull();
-    expect(nearestReading([at(ANCHOR - 900, 1n), at(ANCHOR + 901, 2n)], ANCHOR)?.value).toBe(1n);
-    expect(nearestReading([at(ANCHOR + 300, 1n), at(ANCHOR - 300, 2n), at(ANCHOR + 200, 3n)], ANCHOR)?.value).toBe(3n);
-    expect(nearestReading([at(ANCHOR + 300, 1n), at(ANCHOR - 300, 2n)], ANCHOR)?.value).toBe(2n);
-    expect(nearestReading([at(ANCHOR + 60, 1n, 'b'), at(ANCHOR + 60, 2n, 'a')], ANCHOR)?.value).toBe(2n);
+  it('ignores a reading whose time is not a whole number of seconds', () => {
+    const odd = [{ observedAt: Number.NaN, value: 1n, id: 'a' }, { observedAt: 1.5e300, value: 2n, id: 'b' }, { observedAt: 1_800_000_000.5, value: 3n, id: 'c' }];
+    expect(nearestReading(odd, 1_800_000_000)).toBeNull();
+    expect(lastReadingBefore(odd, 1_800_000_001)).toBeNull();
+    expect(hourlyWindow(odd, 1_800_000_001).every((x) => x === null)).toBe(true);
   });
 });
 
 // ---------------------------------------------------------------------------------------------------
-// A fake node: blocks every 77 s; a reading lands in the first block at least 150 s after it is observed.
+// A fake node: blocks every 77 s; a reading lands in the first block at least 150 s after it is observed
+// (or `landDelay` seconds after), and has reached quorum unless said otherwise.
 // ---------------------------------------------------------------------------------------------------
 const STATION = 'PWS-TEST-ALPHA-01';
 const BLOCK_S = 77;
@@ -110,13 +118,13 @@ const LEAD = 6;
 const VALID_AT = COMMITTED_AT + LEAD * 3600;
 const COMMIT_ID = 'c1'.repeat(32);
 
-interface Obs { observedAt: number; values: Record<string, number>; provenance?: string | null; quorum?: boolean | null }
+interface Obs { observedAt: number; values: Record<string, number>; provenance?: string | null; quorum?: boolean | null; landDelay?: number }
+const landing = (o: Obs) => Math.ceil((o.observedAt + (o.landDelay ?? 150) - GENESIS) / BLOCK_S);
 
 function fakeNode(tipHeight: number, readings: Obs[], opts: { fail?: boolean; busyAfter?: number; clock?: () => number } = {}) {
   const calls = { blocks: 0, observations: 0 };
   /** When each request reached the node (the test's clock), and its path. */
   const log: Array<{ at: number; path: string }> = [];
-  const landing = (o: Obs) => Math.ceil((o.observedAt + 150 - GENESIS) / BLOCK_S);
   const get: Core4Get = async (path, query) => {
     log.push({ at: opts.clock ? opts.clock() : 0, path });
     if (opts.busyAfter !== undefined && log.length > opts.busyAfter) return { ok: false, status: 429, payload: null };
@@ -156,74 +164,123 @@ const tipAt = (time: number) => Math.floor((time - GENESIS) / BLOCK_S);
 /** A clock the pacing sleeps on: waiting costs no real time. */
 function fast() {
   let t = 0;
-  return { now: () => t, sleep: async (ms: number) => { t += ms; } };
+  return { now: () => t, sleep: async (ms: number) => { t += ms; }, advance: (ms: number) => { t += ms; } };
 }
 
-function fakeStore(rows: any[], nws: any[] = []) {
-  const saved: any[][] = [];
+type Saved = Record<string, any>;
+function fakeStore(rows: any[], opts: { nws?: any[]; failSave?: boolean } = {}) {
+  const saved: Saved[] = [];
+  const sqls: string[] = [];
+  const nwsParams: unknown[][] = [];
   const query: Query = async (sql, params = []) => {
+    sqls.push(sql);
     if (sql.includes('FROM website_forecasts w LEFT JOIN website_forecast_scores')) return { rows };
-    if (sql.includes('INSERT INTO website_forecast_scores')) { saved.push(params); return { rows: [] }; }
-    if (sql.includes('forecast_verification_noaa_reference')) return { rows: nws };
+    const insert = /INSERT INTO website_forecast_scores \(([^)]+)\)/.exec(sql);
+    if (insert) {
+      if (opts.failSave) throw new Error('database is down');
+      const columns = insert[1].split(',').map((c) => c.trim());
+      expect(columns.slice(-2)).toEqual(['attempts', 'scored_at']);
+      expect(params.length).toBe(columns.length - 1); // attempts is a literal
+      const row: Saved = {};
+      columns.slice(0, -2).forEach((c, i) => { row[c] = params[i]; });
+      row.scored_at = params[params.length - 1];
+      saved.push(row);
+      return { rows: [] };
+    }
+    if (sql.includes('forecast_verification_noaa_reference')) { nwsParams.push(params); return { rows: opts.nws ?? [] }; }
     throw new Error(`unexpected SQL: ${sql.slice(0, 60)}`);
   };
-  return { query, saved };
+  return { query, saved, sqls, nwsParams };
 }
 const forecastRow = (over: Record<string, unknown> = {}) => ({
   commit_id: COMMIT_ID, station_id: STATION, variable: 'temperature_c', value: 18.1, horizon_hours: LEAD, committed_at_height: String(COMMIT_HEIGHT),
   issued: String(COMMITTED_AT - 120), valid: String(COMMITTED_AT - 120 + LEAD * 3600), ...over,
 });
-// UPSERT parameter positions (1-based in SQL).
-const P = { status: 1, reason: 2, unit: 3, validAt: 4, source: 5, forecast: 6, truth: 7, truthAt: 8, err: 9, ref: 10, refKind: 11, mean24: 12, last: 13, samples: 14, tol: 15, copied: 16, skill: 17, beat: 18, nws: 19, nwsErr: 20, nwsSkill: 21, nwsLead: 22, now: 23 };
+const pick = (row: Saved, keys: string[]) => keys.map((k) => row[k]);
 
 describe('scoring pass', () => {
   const NOW = VALID_AT + SCORE_DELAY_S + 600;
 
   it('scores a forecast by the integer rule: truth, reference from the station\'s own 24 hours, skill, beat the baseline', async () => {
-    const store = fakeStore([forecastRow()], [{ issued: String(COMMITTED_AT - 3000), valid: String(Math.floor(VALID_AT / 3600) * 3600), temperature_c: 18.4, humidity_pct: null, source: 'nws:test' }]);
+    const store = fakeStore([forecastRow()], { nws: [{ issued: String(Math.floor(VALID_AT / 3600) * 3600 - 7 * 3600), temperature_c: 18.4 }] });
     const node = fakeNode(tipAt(NOW), ramp());
-    expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: node.get, nowSec: NOW })).toMatchObject({ scored: 1, unscored: 0, waiting: 0, retry: 0 });
+    expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: node.get, nowSec: NOW }))
+      .toMatchObject({ scored: 1, unscored: 0, waiting: 0, retry: 0, skipped: 0, saveErrors: 0, nodeBusy: false, backingOff: false });
     expect(store.saved.length).toBe(1);
     const p = store.saved[0];
     // Hourly means 1012 + 30k (k = 0..23): mean 1357, spread isqrt(43125) = 207, 6 h persistence 180 (the smaller one).
-    expect([p[0], p[P.status], p[P.reason], p[P.unit], p[P.validAt], p[P.source]]).toEqual([COMMIT_ID, 'scored', null, 'temp_c_centi', VALID_AT, 'chain']);
-    expect([p[P.forecast], p[P.truth], p[P.truthAt], p[P.err]]).toEqual(['1810', '1900', VALID_AT, '90']);
-    expect([p[P.ref], p[P.refKind], p[P.mean24], p[P.last], p[P.samples], p[P.tol]]).toEqual(['180', 'persistence_spread', '1357', '1715', 24, 5]);
-    expect([p[P.copied], p[P.skill], p[P.beat]]).toEqual([false, 500_000, true]);
+    expect(pick(p, ['commit_id', 'status', 'reason', 'unit', 'valid_at', 'valid_at_source'])).toEqual([COMMIT_ID, 'scored', null, 'temp_c_centi', VALID_AT, 'chain']);
+    expect(pick(p, ['forecast_fp', 'truth_fp', 'truth_observed_at', 'err_fp'])).toEqual(['1810', '1900', VALID_AT, '90']);
+    // The truth reading is named: reading j = 180 of the ramp, and the block it landed in.
+    expect(pick(p, ['truth_commit_id', 'truth_height'])).toEqual(['obs-00180', Math.ceil((VALID_AT + 150 - GENESIS) / BLOCK_S)]);
+    expect(pick(p, ['ref_fp', 'ref_kind', 'mean24_fp', 'last_fp', 'window_samples', 'tol'])).toEqual(['180', 'persistence_spread', '1357', '1715', 24, 5]);
+    expect(pick(p, ['copied', 'skill', 'beat_baseline'])).toEqual([false, 500_000, true]);
     // NOAA's forecast for that hour, captured before the commit: 18.4 °C, off by 0.60, skill 1e6 − 1e6·60/180.
-    expect([p[P.nws], p[P.nwsErr], p[P.nwsSkill], p[P.nwsLead]]).toEqual(['1840', '60', 666_667, expect.any(Number)]);
-    expect(p[P.now]).toBe(NOW);
-  });
-
-  it('reads each block once per pass and stays inside the node read budget', async () => {
-    const store = fakeStore([forecastRow()]);
-    const node = fakeNode(tipAt(NOW), ramp());
-    await scoreWebsiteForecasts({ ...fast(), query: store.query, get: node.get, nowSec: NOW });
-    expect(node.calls.blocks).toBeLessThan(80);
-    expect(node.calls.observations).toBeLessThan(30);
+    expect(pick(p, ['nws_fp', 'nws_err_fp', 'nws_skill', 'nws_lead_hours'])).toEqual(['1840', '60', 666_667, 7]);
+    expect(pick(p, ['last_attempt_at', 'scored_at'])).toEqual([NOW, NOW]);
+    // The NOAA capture must itself be older than the commit time, not just its hour.
+    expect(store.sqls.find((q) => q.includes('forecast_verification_noaa_reference'))).toMatch(/captured_at < to_timestamp\(\$3\)/);
+    expect(store.nwsParams[0]).toEqual([STATION, Math.floor(VALID_AT / 3600) * 3600, COMMITTED_AT]);
   });
 
   it('zeroes a copy of the last reading', async () => {
     const store = fakeStore([forecastRow({ value: 17.2 })]);
     await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(NOW), ramp()).get, nowSec: NOW });
-    const p = store.saved[0];
-    expect([p[P.forecast], p[P.last], p[P.copied], p[P.skill], p[P.beat]]).toEqual(['1720', '1715', true, 0, false]);
+    expect(pick(store.saved[0], ['forecast_fp', 'last_fp', 'copied', 'skill', 'beat_baseline'])).toEqual(['1720', '1715', true, 0, false]);
   });
 
   it('scores pressure in Pa; a flat station has a zero reference and nobody beats it', async () => {
     const store = fakeStore([forecastRow({ variable: 'pressure_hpa', value: 1013.3 })]);
     await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(NOW), ramp()).get, nowSec: NOW });
-    const p = store.saved[0];
-    expect([p[P.unit], p[P.forecast], p[P.truth], p[P.err], p[P.ref], p[P.skill], p[P.beat], p[P.nws]]).toEqual(['pressure_pa', '101330', '101325', '5', '0', 0, false, null]);
+    expect(pick(store.saved[0], ['unit', 'forecast_fp', 'truth_fp', 'err_fp', 'ref_fp', 'skill', 'beat_baseline', 'nws_fp'])).toEqual(['pressure_pa', '101330', '101325', '5', '0', 0, false, null]);
   });
 
-  it('waits until 20 minutes after the chain target time, by the clock and by the chain tip', async () => {
+  it('does not score before the chain tip has reached target + 35 minutes, whatever the wall clock says', async () => {
     const store = fakeStore([forecastRow()]);
     const early = VALID_AT + SCORE_DELAY_S - 1;
     expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(early), ramp()).get, nowSec: early })).toMatchObject({ waiting: 1, scored: 0 });
-    // The clock is past, the chain is not (stalled): still waiting.
-    expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(VALID_AT), ramp()).get, nowSec: NOW })).toMatchObject({ waiting: 1, scored: 0 });
+    // The clock is past, the chain is not (20 minutes after the target, the old threshold): still waiting.
+    expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(VALID_AT + 20 * 60), ramp()).get, nowSec: NOW })).toMatchObject({ waiting: 1, scored: 0 });
     expect(store.saved).toEqual([]);
+  });
+
+  it('the truth does not depend on when the scorer runs: a reading that lands late is still the one chosen', async () => {
+    // Observed one minute after the target, but it takes 25 minutes to land. The 10-minute readings around it land promptly.
+    const late: Obs = { observedAt: VALID_AT + 60, values: { temperature_c: 19.4 }, landDelay: 25 * 60 };
+    const readings = [...ramp().filter((o) => o.observedAt !== VALID_AT), late];
+    // Run exactly when it first may run, and again hours later: the same truth both times.
+    for (const at of [VALID_AT + SCORE_DELAY_S, VALID_AT + 5 * 3600]) {
+      const store = fakeStore([forecastRow()]);
+      expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(at) + 1, readings).get, nowSec: at + BLOCK_S })).toMatchObject({ scored: 1 });
+      expect(pick(store.saved[0], ['truth_fp', 'truth_observed_at', 'truth_commit_id'])).toEqual(['1940', VALID_AT + 60, `obs-${String(readings.length - 1).padStart(5, '0')}`]);
+    }
+    // A reading that lands after target + 35 minutes is never a candidate, even when the scorer runs much later.
+    const tooLate = [...ramp().filter((o) => o.observedAt !== VALID_AT), { ...late, landDelay: 40 * 60 }];
+    const store = fakeStore([forecastRow()]);
+    await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(VALID_AT + 5 * 3600), tooLate).get, nowSec: VALID_AT + 5 * 3600 });
+    expect(pick(store.saved[0], ['truth_fp', 'truth_observed_at'])).toEqual(['1895', VALID_AT - 600]);
+  });
+
+  it('the baseline and the copy check use only readings that had landed before the commit', async () => {
+    // A back-dated reading equal to the forecast: "observed" a minute before the commit, landed 10 minutes after it.
+    const backdated: Obs = { observedAt: COMMITTED_AT - 60, values: { temperature_c: 18.1 }, landDelay: 660 };
+    expect(landing(backdated)).toBeGreaterThan(COMMIT_HEIGHT);
+    const store = fakeStore([forecastRow()]);
+    await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(NOW), [...ramp(), backdated]).get, nowSec: NOW });
+    // Had it counted, `last` would be 1810 and the forecast a copy with skill 0.
+    expect(pick(store.saved[0], ['last_fp', 'mean24_fp', 'copied', 'skill'])).toEqual(['1715', '1357', false, 500_000]);
+    // A reading with the same value that had landed two blocks before the commit does count.
+    const early: Obs = { observedAt: COMMITTED_AT - 300, values: { temperature_c: 18.1 }, landDelay: 100 };
+    expect(landing(early)).toBe(COMMIT_HEIGHT - 2);
+    const seen = fakeStore([forecastRow()]);
+    await scoreWebsiteForecasts({ ...fast(), query: seen.query, get: fakeNode(tipAt(NOW), [...ramp(), early]).get, nowSec: NOW });
+    expect(pick(seen.saved[0], ['last_fp', 'copied', 'skill'])).toEqual(['1810', true, 0]);
+    // A reading landing exactly in the commit's block is not below it.
+    const atCommit: Obs = { ...backdated, landDelay: 60 };
+    expect(landing(atCommit)).toBe(COMMIT_HEIGHT);
+    const edge = fakeStore([forecastRow()]);
+    await scoreWebsiteForecasts({ ...fast(), query: edge.query, get: fakeNode(tipAt(NOW), [...ramp(), atCommit]).get, nowSec: NOW });
+    expect(pick(edge.saved[0], ['last_fp', 'copied'])).toEqual(['1715', false]);
   });
 
   it('no reading within 15 minutes: pending, then unscored after 24 hours; never a made-up truth', async () => {
@@ -231,41 +288,22 @@ describe('scoring pass', () => {
     const gap = ramp(VALID_AT + 86_400 + 7200, (j) => j >= 178 && j <= 182);
     const store = fakeStore([forecastRow()]);
     expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(NOW), gap).get, nowSec: NOW })).toMatchObject({ scored: 0, unscored: 0, waiting: 1, retry: 0 });
-    expect([store.saved[0][P.status], store.saved[0][P.reason], store.saved[0][P.truth], store.saved[0][P.skill]]).toEqual(['pending', null, null, null]);
+    expect(pick(store.saved[0], ['status', 'reason', 'truth_fp', 'skill', 'scored_at'])).toEqual(['pending', null, null, null, null]);
     const late = VALID_AT + GIVE_UP_S + 60;
     expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(late), gap).get, nowSec: late })).toMatchObject({ scored: 0, unscored: 1, waiting: 0, retry: 0 });
-    expect([store.saved[1][P.status], store.saved[1][P.reason], store.saved[1][P.truth], store.saved[1][P.skill]]).toEqual(['unscored', 'no_reading', null, null]);
+    expect(pick(store.saved[1], ['status', 'reason', 'truth_fp', 'skill', 'scored_at'])).toEqual(['unscored', 'no_reading', null, null, late]);
   });
 
-  it('never scores against synthetic readings', async () => {
+  it('never scores against synthetic or out-of-range readings', async () => {
     const store = fakeStore([forecastRow()]);
     const synthetic = ramp().map((o) => ({ ...o, provenance: 'synthetic' }));
     expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(NOW), synthetic).get, nowSec: NOW })).toMatchObject({ scored: 0, waiting: 1 });
-    expect(store.saved[0][P.status]).toBe('pending');
-  });
-
-  it('no earlier readings to build a baseline from: unscored, with the truth it found', async () => {
-    const store = fakeStore([forecastRow()]);
-    const onlyAfter = ramp().filter((o) => o.observedAt >= COMMITTED_AT);
-    expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(NOW), onlyAfter).get, nowSec: NOW })).toMatchObject({ unscored: 1 });
-    expect([store.saved[0][P.status], store.saved[0][P.reason], store.saved[0][P.truth], store.saved[0][P.skill]]).toEqual(['unscored', 'no_baseline', '1900', null]);
-  });
-
-  it('falls back to the draft target time when the commit height is unknown', async () => {
-    const store = fakeStore([forecastRow({ committed_at_height: null })]);
-    await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(NOW), ramp()).get, nowSec: NOW });
-    expect([store.saved[0][P.status], store.saved[0][P.validAt], store.saved[0][P.source]]).toEqual(['scored', COMMITTED_AT - 120 + LEAD * 3600, 'draft']);
-  });
-
-  it('a node that cannot answer leaves the forecast pending for a later pass', async () => {
-    const store = fakeStore([forecastRow()]);
-    expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(NOW), ramp(), { fail: true }).get, nowSec: NOW })).toMatchObject({ scored: 0, unscored: 0, waiting: 0, retry: 1 });
-    expect(store.saved).toEqual([]);
-    // The tip answers but the readings do not.
-    const node = fakeNode(tipAt(NOW), ramp());
-    const flaky: Core4Get = (path, q) => (path.includes('/observations') ? Promise.reject(new Error('down')) : node.get(path, q));
-    expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: flaky, nowSec: NOW })).toMatchObject({ retry: 1, scored: 0 });
-    expect(store.saved[0][P.status]).toBe('pending');
+    expect(store.saved[0].status).toBe('pending');
+    // The reading at the target says 500 °C: ignored, the next nearest is used.
+    const absurd = ramp().map((o) => (o.observedAt === VALID_AT ? { ...o, values: { temperature_c: 500 } } : o));
+    const next = fakeStore([forecastRow()]);
+    await scoreWebsiteForecasts({ ...fast(), query: next.query, get: fakeNode(tipAt(NOW), absurd).get, nowSec: NOW });
+    expect(pick(next.saved[0], ['status', 'truth_fp'])).toEqual(['scored', '1895']);
   });
 
   it('only readings that reached the attestation quorum count as truth', async () => {
@@ -273,29 +311,69 @@ describe('scoring pass', () => {
     const mixed = ramp().map((o) => (o.observedAt === VALID_AT ? { ...o, quorum: false } : o));
     const store = fakeStore([forecastRow()]);
     expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(NOW), mixed).get, nowSec: NOW })).toMatchObject({ scored: 1 });
-    expect([store.saved[0][P.truth], store.saved[0][P.truthAt], store.saved[0][P.err]]).toEqual(['1895', VALID_AT - 600, '85']);
+    expect(pick(store.saved[0], ['truth_fp', 'truth_observed_at', 'err_fp'])).toEqual(['1895', VALID_AT - 600, '85']);
     // Readings within 15 minutes exist, but none has quorum (one has no attestation at all): waiting, then unscored.
     const none = ramp(VALID_AT + 86_400 + 7200).map((o) => (Math.abs(o.observedAt - VALID_AT) <= 900 ? { ...o, quorum: o.observedAt === VALID_AT ? null : false } : o));
     const waiting = fakeStore([forecastRow()]);
     expect(await scoreWebsiteForecasts({ ...fast(), query: waiting.query, get: fakeNode(tipAt(NOW), none).get, nowSec: NOW })).toMatchObject({ scored: 0, waiting: 1 });
-    expect([waiting.saved[0][P.status], waiting.saved[0][P.truth]]).toEqual(['pending', null]);
+    expect(pick(waiting.saved[0], ['status', 'truth_fp'])).toEqual(['pending', null]);
     const late = VALID_AT + GIVE_UP_S + 60;
     expect(await scoreWebsiteForecasts({ ...fast(), query: waiting.query, get: fakeNode(tipAt(late), none).get, nowSec: late })).toMatchObject({ unscored: 1 });
-    expect([waiting.saved[1][P.status], waiting.saved[1][P.reason]]).toEqual(['unscored', 'no_reading']);
+    expect(pick(waiting.saved[1], ['status', 'reason'])).toEqual(['unscored', 'no_reading']);
   });
 
-  it('the reference window also uses quorum readings only', async () => {
+  it('the reference window also uses quorum readings only, and needs at least 12 hourly samples', async () => {
     // Before the commit only the readings on the hour have quorum: 24 hourly samples 1000 + 30k instead of the means 1012 + 30k.
     const sparse = ramp().map((o) => (o.observedAt < COMMITTED_AT && (o.observedAt - (COMMITTED_AT - 86_400)) % 3600 !== 0 ? { ...o, quorum: false } : o));
     const store = fakeStore([forecastRow()]);
     await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(NOW), sparse).get, nowSec: NOW });
-    const p = store.saved[0];
-    expect([p[P.status], p[P.mean24], p[P.last], p[P.ref], p[P.samples], p[P.skill]]).toEqual(['scored', '1345', '1690', '180', 24, 500_000]);
-    // No quorum reading before the commit at all: no baseline.
-    const bare = ramp().map((o) => (o.observedAt < COMMITTED_AT ? { ...o, quorum: false } : o));
+    expect(pick(store.saved[0], ['status', 'mean24_fp', 'last_fp', 'ref_fp', 'window_samples', 'skill'])).toEqual(['scored', '1345', '1690', '180', 24, 500_000]);
+    // Readings only in the last 11 hours before the commit: no baseline, with the truth it found.
+    const short = ramp().filter((o) => o.observedAt >= COMMITTED_AT - 11 * 3600);
     const none = fakeStore([forecastRow()]);
-    await scoreWebsiteForecasts({ ...fast(), query: none.query, get: fakeNode(tipAt(NOW), bare).get, nowSec: NOW });
-    expect([none.saved[0][P.status], none.saved[0][P.reason]]).toEqual(['unscored', 'no_baseline']);
+    expect(await scoreWebsiteForecasts({ ...fast(), query: none.query, get: fakeNode(tipAt(NOW), short).get, nowSec: NOW })).toMatchObject({ unscored: 1 });
+    expect(pick(none.saved[0], ['status', 'reason', 'truth_fp', 'truth_commit_id', 'skill'])).toEqual(['unscored', 'no_baseline', '1900', expect.stringMatching(/^obs-/), null]);
+    // Twelve hours is enough.
+    const enough = fakeStore([forecastRow()]);
+    await scoreWebsiteForecasts({ ...fast(), query: enough.query, get: fakeNode(tipAt(NOW), ramp().filter((o) => o.observedAt >= COMMITTED_AT - 12 * 3600)).get, nowSec: NOW });
+    expect(pick(enough.saved[0], ['status', 'window_samples'])).toEqual(['scored', 12]);
+  });
+
+  it('a forecast outside the scored range is unscored with that reason; a row it cannot read is counted, not dropped', async () => {
+    const store = fakeStore([forecastRow({ value: 150 }), forecastRow({ commit_id: 'c2'.repeat(32), variable: 'humidity_pct' }), forecastRow({ commit_id: 'c3'.repeat(32), horizon_hours: 0 })]);
+    const node = fakeNode(tipAt(NOW), ramp());
+    expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: node.get, nowSec: NOW })).toMatchObject({ unscored: 1, skipped: 2, scored: 0 });
+    expect(store.saved.length).toBe(1);
+    expect(pick(store.saved[0], ['status', 'reason', 'forecast_fp', 'scored_at'])).toEqual(['unscored', 'out_of_range', null, NOW]);
+  });
+
+  it('falls back to the draft target time when the commit height is unknown', async () => {
+    const store = fakeStore([forecastRow({ committed_at_height: null })]);
+    await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(NOW), ramp()).get, nowSec: NOW });
+    expect(pick(store.saved[0], ['status', 'valid_at', 'valid_at_source'])).toEqual(['scored', COMMITTED_AT - 120 + LEAD * 3600, 'draft']);
+  });
+
+  it('a node that cannot answer: pending with its own reason, then unscored after 24 hours', async () => {
+    const store = fakeStore([forecastRow()]);
+    // Not even the tip: nothing is known, nothing is marked.
+    expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(NOW), ramp(), { fail: true }).get, nowSec: NOW })).toMatchObject({ scored: 0, retry: 1, nodeBusy: false });
+    expect(store.saved).toEqual([]);
+    // The tip answers but the readings do not.
+    const node = fakeNode(tipAt(NOW), ramp());
+    const flaky: Core4Get = (path, q) => (path.includes('/observations') ? Promise.reject(new Error('down')) : node.get(path, q));
+    expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: flaky, nowSec: NOW })).toMatchObject({ retry: 1, scored: 0, unscored: 0 });
+    expect(pick(store.saved[0], ['status', 'reason', 'scored_at'])).toEqual(['pending', 'node_unavailable', null]);
+    const late = Number(forecastRow().valid) + GIVE_UP_S + 60;
+    const lateNode = fakeNode(tipAt(late), ramp());
+    const stillFlaky: Core4Get = (path, q) => (path.includes('/observations') ? Promise.reject(new Error('down')) : lateNode.get(path, q));
+    expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: stillFlaky, nowSec: late })).toMatchObject({ retry: 0, unscored: 1 });
+    expect(pick(store.saved[1], ['status', 'reason', 'scored_at'])).toEqual(['unscored', 'node_unavailable', late]);
+  });
+
+  it('a result that cannot be saved is its own count, and is not reported as a node failure', async () => {
+    const store = fakeStore([forecastRow()], { failSave: true });
+    expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(NOW), ramp()).get, nowSec: NOW }))
+      .toMatchObject({ scored: 0, unscored: 0, waiting: 0, retry: 0, saveErrors: 1 });
   });
 
   const threeForecasts = () => [forecastRow(), forecastRow({ commit_id: 'c2'.repeat(32), value: 18.6 }), forecastRow({ commit_id: 'c3'.repeat(32), value: 19.4, horizon_hours: 1 })];
@@ -303,7 +381,7 @@ describe('scoring pass', () => {
 
   it('paces node reads under the ceiling, across passes too, and shares reads between forecasts of one station', async () => {
     const clock = fast();
-    const pace = { nextReadAt: 0 };
+    const pace = newPaceState();
     const node = fakeNode(tipAt(NOW + 3600), ramp(), { clock: clock.now });
     const store = fakeStore(threeForecasts());
     const first = await scoreWebsiteForecasts({ ...clock, pace, query: store.query, get: node.get, nowSec: NOW + 3600 });
@@ -315,6 +393,7 @@ describe('scoring pass', () => {
     // Three forecasts for one station cost far less than three times one: blocks and reading chunks are shared.
     const alone = fakeNode(tipAt(NOW + 3600), ramp());
     await scoreWebsiteForecasts({ ...fast(), query: fakeStore([forecastRow()]).query, get: alone.get, nowSec: NOW + 3600 });
+    expect(alone.log.length).toBeLessThan(80);
     expect(node.log.length).toBeLessThan(alone.log.length * 2);
     const paths = node.log.filter((l) => l.path.startsWith('/chain/block/')).map((l) => l.path);
     expect(new Set(paths).size).toBe(paths.length);
@@ -324,7 +403,6 @@ describe('scoring pass', () => {
   });
 
   it('honours a lower ceiling from the environment and ignores a bad one', async () => {
-    const { readsPerMinute } = await import('../server/services/forecast-score/practice-score-job');
     expect([readsPerMinute(undefined), readsPerMinute('6'), readsPerMinute('0'), readsPerMinute('500'), readsPerMinute('abc'), readsPerMinute('2.5')]).toEqual([20, 6, 20, 20, 20, 20]);
     const clock = fast();
     const node = fakeNode(tipAt(NOW), ramp(), { clock: clock.now });
@@ -332,62 +410,89 @@ describe('scoring pass', () => {
     expect(mostInAnyMinute(node.log.map((l) => l.at))).toBeLessThanOrEqual(6);
   });
 
-  it('a 429 from the node stops the pass at once; nothing is marked and the next interval starts over', async () => {
+  it('a 429 stops the pass at once, marks nothing, and the scorer backs off 5 minutes, then 10', async () => {
+    const clock = fast();
+    const pace = newPaceState();
     const store = fakeStore(threeForecasts());
     const node = fakeNode(tipAt(NOW + 3600), ramp(), { busyAfter: 12 });
-    expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: node.get, nowSec: NOW + 3600 }))
-      .toMatchObject({ scored: 0, unscored: 0, retry: 3, nodeBusy: true, nodeReads: 13 });
+    const run = () => scoreWebsiteForecasts({ ...clock, pace, query: store.query, get: node.get, nowSec: NOW + 3600 });
+    expect(await run()).toMatchObject({ scored: 0, unscored: 0, retry: 3, nodeBusy: true, nodeReads: 13, backingOff: false });
     expect(node.log.length).toBe(13); // the 429 itself was the last request
     expect(store.saved).toEqual([]);
-    // Busy on the very first read (the tip): same outcome.
-    const tipBusy = fakeNode(tipAt(NOW), ramp(), { busyAfter: 0 });
-    expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: tipBusy.get, nowSec: NOW })).toMatchObject({ retry: 3, nodeBusy: true, nodeReads: 1 });
+    // The next interval falls inside the backoff: no query result is acted on and the node is not touched.
+    clock.advance(BACKOFF_BASE_MS - 1000);
+    expect(await run()).toMatchObject({ backingOff: true, nodeReads: 0, retry: 0 });
+    expect(node.log.length).toBe(13);
+    // After 5 minutes it tries again; still busy, so the wait doubles.
+    clock.advance(2000);
+    expect(await run()).toMatchObject({ nodeBusy: true, nodeReads: 1, backingOff: false });
+    clock.advance(BACKOFF_BASE_MS + 1000);
+    expect(await run()).toMatchObject({ backingOff: true });
+    expect(pace.busyStreak).toBe(2);
+    // A clean pass clears the streak.
+    clock.advance(BACKOFF_BASE_MS);
+    const calm = fakeNode(tipAt(NOW + 3600), ramp());
+    expect(await scoreWebsiteForecasts({ ...clock, pace, query: store.query, get: calm.get, nowSec: NOW + 3600 })).toMatchObject({ scored: 3, nodeBusy: false });
+    expect(pace.busyStreak).toBe(0);
   });
 
   it('does nothing, and reads nothing from the node, when no forecast is due', async () => {
     const node = fakeNode(tipAt(NOW), ramp());
-    expect(await scoreWebsiteForecasts({ ...fast(), query: fakeStore([]).query, get: node.get, nowSec: NOW })).toEqual({ scored: 0, unscored: 0, waiting: 0, retry: 0, nodeReads: 0, nodeBusy: false });
+    expect(await scoreWebsiteForecasts({ ...fast(), query: fakeStore([]).query, get: node.get, nowSec: NOW }))
+      .toEqual({ scored: 0, unscored: 0, waiting: 0, retry: 0, skipped: 0, saveErrors: 0, nodeReads: 0, nodeBusy: false, backingOff: false });
     expect(node.calls).toEqual({ blocks: 0, observations: 0 });
   });
 });
 
-describe('what the site is told', () => {
-  const scored = {
-    status: 'scored', reason: null, unit: 'temp_c_centi', valid: String(VALID_AT), forecast_fp: '1810', truth_fp: '1900', truth_observed: String(VALID_AT),
-    err_fp: '90', ref_fp: '180', ref_kind: 'persistence_spread', copied: false, skill: 500000, beat_baseline: true,
-    nws_fp: '1840', nws_err_fp: '60', nws_skill: 666667, nws_lead_hours: 6,
-  };
+const SCORED_ROW = {
+  status: 'scored', reason: null, unit: 'temp_c_centi', valid: String(VALID_AT), forecast_fp: '1810', truth_fp: '1900', truth_observed: String(VALID_AT),
+  truth_commit_id: 'ab'.repeat(32), truth_height: '1790', err_fp: '90', ref_fp: '180', ref_kind: 'persistence_spread', copied: false, skill: 500000,
+  beat_baseline: true, nws_fp: '1840', nws_err_fp: '60', nws_skill: 666667, nws_lead_hours: 6,
+};
+/** Nothing in a practice score may name the station, a place, a wallet or money. */
+const PRIVATE_WORDS = /station|lat|lon|owner|payout|address|wallet|forecaster|amount|reward/i;
 
-  it('scored: integers, the baseline, beat it or not, the NOAA comparison, and an honest note about pay', () => {
-    expect(publicPracticeScore(scored, 'revealed', 'temperature_c', VALID_AT)).toEqual({
-      paid: false, note: PRACTICE_NOTE, unit: 'temp_c_centi', skillMax: 1_000_000, status: 'scored', reason: null, text: 'scored',
+describe('what the site is told', () => {
+  it('scored: integers, the baseline, beat it or not, the NOAA comparison, the truth reading, and that nothing is paid', () => {
+    expect(publicPracticeScore(SCORED_ROW, 'revealed', 'temperature_c', VALID_AT)).toEqual({
+      paid: false, note: 'Practice score. Nothing is paid for it.', unit: 'temp_c_centi', skillMax: 1_000_000, status: 'scored', reason: null, text: 'scored',
       validAt: new Date(VALID_AT * 1000).toISOString(), forecast: 1810, truth: 1900, truthObservedAt: new Date(VALID_AT * 1000).toISOString(),
+      truthCommitId: 'ab'.repeat(32), truthHeight: 1790,
       error: 90, baseline: { error: 180, kind: 'persistence_spread' }, skill: 500_000, copied: false, beatBaseline: true,
       nws: { source: 'NOAA National Weather Service forecast', forecast: 1840, error: 60, skill: 666_667, leadHours: 6, result: 'nws_beat_you' },
     });
-    expect(publicPracticeScore({ ...scored, nws_err_fp: '95' }, 'revealed', 'temperature_c', null)).toMatchObject({ nws: { result: 'you_beat_nws' } });
-    expect(publicPracticeScore({ ...scored, nws_fp: null, nws_err_fp: null, nws_skill: null }, 'revealed', 'temperature_c', null)).toMatchObject({ nws: null });
-    expect(PRACTICE_NOTE).toMatch(/Nothing is paid yet/);
-    expect(PRACTICE_NOTE).not.toMatch(/[0-9]|WRF|earn/i);
+    expect(publicPracticeScore({ ...SCORED_ROW, nws_err_fp: '95' }, 'revealed', 'temperature_c', null)).toMatchObject({ nws: { result: 'you_beat_nws' } });
+    expect(publicPracticeScore({ ...SCORED_ROW, nws_err_fp: '90' }, 'revealed', 'temperature_c', null)).toMatchObject({ nws: { result: 'tie' } });
+    expect(publicPracticeScore({ ...SCORED_ROW, nws_fp: null, nws_err_fp: null, nws_skill: null }, 'revealed', 'temperature_c', null)).toMatchObject({ nws: null });
+    // No promise of pay, now or later.
+    expect(PRACTICE_NOTE).toBe('Practice score. Nothing is paid for it.');
+    expect(PRACTICE_NOTE).not.toMatch(/[0-9]|WRF|earn|start|when|soon|later|yet/i);
   });
 
-  it('pending until 20 minutes after the target time, then waiting for a reading, then unscored', () => {
+  it('pending until 35 minutes after the target time, then waiting for a reading or for the node, then unscored with its reason', () => {
     const until = new Date((VALID_AT + SCORE_DELAY_S) * 1000).toISOString();
-    expect(publicPracticeScore(null, 'revealed', 'temperature_c', VALID_AT)).toMatchObject({ status: 'pending', reason: null, text: `pending until ${until}`, pendingUntil: until, paid: false });
-    expect(publicPracticeScore({ status: 'pending', valid: String(VALID_AT) }, 'revealed', 'temperature_c', 1)).toMatchObject({
-      status: 'pending', reason: 'waiting_for_reading', pendingUntil: until, giveUpAt: new Date((VALID_AT + GIVE_UP_S) * 1000).toISOString(),
+    expect(publicPracticeScore(null, 'revealed', 'temperature_c', VALID_AT)).toMatchObject({ status: 'pending', reason: null, text: `pending until ${until}`, pendingUntil: until, validAt: null, paid: false });
+    expect(publicPracticeScore(null, 'revealed', 'temperature_c', null)).toMatchObject({ status: 'pending', text: 'pending until the target time', pendingUntil: null, giveUpAt: null });
+    expect(publicPracticeScore({ status: 'pending', reason: null, valid: String(VALID_AT) }, 'revealed', 'temperature_c', 1)).toMatchObject({
+      status: 'pending', reason: 'waiting_for_reading', text: 'pending: waiting for a station reading', pendingUntil: until,
+      validAt: new Date(VALID_AT * 1000).toISOString(), giveUpAt: new Date((VALID_AT + GIVE_UP_S) * 1000).toISOString(),
     });
-    expect(publicPracticeScore({ status: 'unscored', reason: 'no_reading', valid: String(VALID_AT), forecast_fp: '1810' }, 'revealed', 'temperature_c', null))
-      .toMatchObject({ status: 'unscored', reason: 'no_reading', text: 'unscored: no reading', forecast: 1810, truth: null });
-    expect(publicPracticeScore({ status: 'unscored', reason: 'no_baseline', valid: String(VALID_AT) }, 'revealed', 'temperature_c', null))
-      .toMatchObject({ text: 'unscored: not enough earlier readings for a baseline' });
+    // A node failure is never shown as "waiting for a station reading".
+    expect(publicPracticeScore({ status: 'pending', reason: 'node_unavailable', valid: String(VALID_AT) }, 'revealed', 'temperature_c', 1))
+      .toMatchObject({ status: 'pending', reason: 'node_unavailable', text: 'pending: the chain node could not be read; trying again' });
+    const unscored = (reason: string) => publicPracticeScore({ status: 'unscored', reason, valid: String(VALID_AT), forecast_fp: '1810' }, 'revealed', 'temperature_c', null);
+    expect(unscored('no_reading')).toMatchObject({ status: 'unscored', reason: 'no_reading', text: 'unscored: no reading', forecast: 1810, truth: null, truthCommitId: null });
+    expect(unscored('no_baseline')).toMatchObject({ text: 'unscored: not enough earlier readings for a baseline' });
+    expect(unscored('node_unavailable')).toMatchObject({ reason: 'node_unavailable', text: 'unscored: the chain node could not be read' });
+    expect(unscored('out_of_range')).toMatchObject({ reason: 'out_of_range', text: 'unscored: the forecast value is outside the scored range' });
+    expect(unscored('constructor')).toMatchObject({ reason: 'no_reading' });
     expect(publicPracticeScore(null, 'failed', 'temperature_c', VALID_AT)).toBeNull();
     expect(publicPracticeScore(null, 'revealed', 'humidity_pct', VALID_AT)).toBeNull();
+    expect(publicPracticeScore(null, 'revealed', 'constructor', VALID_AT)).toBeNull();
   });
 
   it('carries no station id, coordinates, wallet or payout field', () => {
-    const text = JSON.stringify(publicPracticeScore(scored, 'revealed', 'temperature_c', VALID_AT));
-    expect(text).not.toMatch(/station|lat|lon|owner|payout|address|amount|reward/i);
+    expect(JSON.stringify(publicPracticeScore(SCORED_ROW, 'revealed', 'temperature_c', VALID_AT))).not.toMatch(PRIVATE_WORDS);
   });
 });
 
@@ -437,11 +542,7 @@ describe('GET /api/forecasts/mine', () => {
 
   it('when on: a scored row, a pending row, and nothing for a forecast that is not revealed yet', async () => {
     process.env.WEBSITE_FORECAST_SCORE_ENABLED = 'true';
-    const res = await request(app(store([{
-      commit_id: 'a1'.repeat(32), status: 'scored', reason: null, unit: 'temp_c_centi', valid: String(VALID_AT), forecast_fp: '1810', truth_fp: '1900',
-      truth_observed: String(VALID_AT), err_fp: '90', ref_fp: '180', ref_kind: 'persistence_spread', copied: false, skill: 500000, beat_baseline: true,
-      nws_fp: null, nws_err_fp: null, nws_skill: null, nws_lead_hours: null,
-    }]).query)).get('/api/forecasts/mine');
+    const res = await request(app(store([{ ...SCORED_ROW, commit_id: 'a1'.repeat(32), nws_fp: null, nws_err_fp: null, nws_skill: null, nws_lead_hours: null }]).query)).get('/api/forecasts/mine');
     expect(res.status).toBe(200);
     const [a, b, c] = res.body.forecasts;
     expect(a.practiceScore).toMatchObject({ status: 'scored', forecast: 1810, truth: 1900, error: 90, skill: 500000, beatBaseline: true, paid: false, nws: null });
@@ -458,6 +559,71 @@ describe('GET /api/forecasts/mine', () => {
   });
 });
 
+describe('GET /api/forecast-verification/forecasts/:commitId (anyone, no login)', () => {
+  const saved = { ...process.env };
+  const ID = 'a1'.repeat(32);
+  const RAW_STATION = 'PWS-SECRET-RAW-ID-77';
+  const record = {
+    commit_id: ID, station_alias: 'st_0123456789ab', model_id: 'website-manual/v1', issued_at: new Date((COMMITTED_AT - 120) * 1000), valid_at: new Date(VALID_AT * 1000),
+    horizon_hours: 6, status: 'pending', unavailable_reason: null, forecast_values: { temperature_c: 18.1 }, truth: null, scores: null, noaa_reference: null,
+    noaa_reason: null, submitted_at: new Date(COMMITTED_AT * 1000), scored_at: null,
+    // Columns a careless SELECT * would return: they must never reach the answer.
+    station_id: RAW_STATION, forecaster: `0x${'ee'.repeat(20)}`, payout_address: `0x${'ff'.repeat(20)}`,
+  };
+  const app = (scoreRows: any[] | Error) => {
+    const sqls: string[] = [];
+    const query: Query = async (sql) => {
+      sqls.push(sql);
+      if (sql.includes('FROM website_forecast_scores')) { if (scoreRows instanceof Error) throw scoreRows; return { rows: scoreRows }; }
+      if (sql.includes('FROM forecast_verification_records WHERE commit_id')) return { rows: [record] };
+      return { rows: [] };
+    };
+    const a = express();
+    a.use('/api/forecast-verification', createPublicForecastVerificationRouter({ query, rateLimit: (_q, _s, n) => n() }));
+    return { a, sqls };
+  };
+  beforeEach(() => { process.env.FORECAST_VERIFICATION_ENABLED = 'true'; process.env.WEBSITE_FORECAST_ENABLED = 'true'; delete process.env.WEBSITE_FORECAST_SCORE_ENABLED; });
+  afterEach(() => { process.env = { ...saved }; });
+  const leaks = (body: unknown) => {
+    const text = JSON.stringify(body);
+    return text.includes(RAW_STATION) || text.includes('ee'.repeat(20)) || text.includes('ff'.repeat(20)) || /payout|forecaster|owner|latitude|longitude/i.test(text);
+  };
+
+  it('switch off: the record as before, no practiceScore field, the score table never read', async () => {
+    const { a, sqls } = app([{ ...SCORED_ROW, commit_id: ID }]);
+    const res = await request(a).get(`/api/forecast-verification/forecasts/${ID}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ commitId: ID, stationAlias: 'st_0123456789ab', status: 'pending' });
+    expect('practiceScore' in res.body).toBe(false);
+    expect(sqls.some((q) => q.includes('website_forecast_scores'))).toBe(false);
+    expect(leaks(res.body)).toBe(false);
+  });
+
+  it('switch on: the practice score, with no station id, wallet or payout field anywhere in the answer', async () => {
+    process.env.WEBSITE_FORECAST_SCORE_ENABLED = 'true';
+    const res = await request(app([{ ...SCORED_ROW, commit_id: ID, station_id: RAW_STATION, forecaster: `0x${'ee'.repeat(20)}` }]).a).get(`/api/forecast-verification/forecasts/${ID}`);
+    expect(res.status).toBe(200);
+    expect(res.body.practiceScore).toMatchObject({ status: 'scored', forecast: 1810, truth: 1900, error: 90, skill: 500_000, beatBaseline: true, paid: false });
+    expect(JSON.stringify(res.body.practiceScore)).not.toMatch(PRIVATE_WORDS);
+    expect(leaks(res.body)).toBe(false);
+  });
+
+  it('switch on, not a website forecast (no score row): practiceScore is null, never "pending"', async () => {
+    process.env.WEBSITE_FORECAST_SCORE_ENABLED = 'true';
+    const res = await request(app([]).a).get(`/api/forecast-verification/forecasts/${ID}`);
+    expect(res.status).toBe(200);
+    expect(res.body.practiceScore).toBeNull();
+  });
+
+  it('switch on, score table missing: the record still answers', async () => {
+    process.env.WEBSITE_FORECAST_SCORE_ENABLED = 'true';
+    const res = await request(app(new Error('relation "website_forecast_scores" does not exist')).a).get(`/api/forecast-verification/forecasts/${ID}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ commitId: ID, practiceScore: null });
+    expect(leaks(res.body)).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------------------------------
 // Storage on real PostgreSQL (CI): migration 0044 applies twice, the upsert, the terminal states, the list.
 // ---------------------------------------------------------------------------------------------------
@@ -469,6 +635,7 @@ const PG_URL = process.env.BACKFILL_TEST_PG_URL;
   let sql: any;
   let query: Query;
   const NOW = VALID_AT + SCORE_DELAY_S + 600;
+  const VALID_HOUR = Math.floor(VALID_AT / 3600) * 3600;
 
   async function insertForecast(commitId: string, over: { value?: number; variable?: string; day?: string; status?: string; height?: number | null } = {}) {
     await sql.unsafe(`INSERT INTO website_forecasts (commit_id, forecaster, station_id, station_alias, variable, value, horizon_hours, issued_at, valid_at,
@@ -478,10 +645,14 @@ const PG_URL = process.env.BACKFILL_TEST_PG_URL;
       over.day ?? '2027-01-15', 'ab'.repeat(32), 'cd'.repeat(64), over.status ?? 'revealed', over.height === undefined ? COMMIT_HEIGHT : over.height,
       COMMITTED_AT - 120]);
   }
+  const insertNws = (issuedHour: number, temperatureC: number, capturedAt: number) => sql.unsafe(`INSERT INTO forecast_verification_noaa_reference
+      (station_id, issued_hour, valid_hour, temperature_c, humidity_pct, source, captured_at) VALUES ($1, to_timestamp($2), to_timestamp($3), $4, 50, 'nws:test', to_timestamp($5))`,
+  [STATION, issuedHour, VALID_HOUR, temperatureC, capturedAt]);
   const practice = async (rows: any[]) => {
     const scores = await readPracticeScores(query, rows.map((r) => r.commit_id));
     return new Map<string, unknown>(rows.map((r) => [r.commit_id, publicPracticeScore(scores.get(r.commit_id) ?? null, r.status, r.variable, Math.floor(new Date(r.valid_at).getTime() / 1000))]));
   };
+  const pass = (node: { get: Core4Get }, nowSec: number) => scoreWebsiteForecasts({ ...fast(), query, get: node.get, nowSec });
 
   beforeAll(async () => {
     sql = postgres(PG_URL as string, { max: 1, onnotice: () => {} });
@@ -498,56 +669,80 @@ const PG_URL = process.env.BACKFILL_TEST_PG_URL;
     await sql.unsafe(`DROP SCHEMA ${schema} CASCADE`);
     await sql.end({ timeout: 5 });
   });
-  beforeEach(async () => { await sql.unsafe('TRUNCATE website_forecast_scores, website_forecasts'); });
+  beforeEach(async () => { await sql.unsafe('TRUNCATE website_forecast_scores, website_forecasts, forecast_verification_noaa_reference'); });
 
-  it('scores a revealed forecast once, stores integers, and lists it with the wallet\'s forecasts', async () => {
+  it('scores a revealed forecast once, stores integers and the truth reading, and lists it with the wallet\'s forecasts', async () => {
     await insertForecast(COMMIT_ID);
-    await sql.unsafe(`INSERT INTO forecast_verification_noaa_reference (station_id, issued_hour, valid_hour, temperature_c, humidity_pct, source)
-      VALUES ($1, to_timestamp($2), to_timestamp($3), 18.4, 50, 'nws:test')`, [STATION, Math.floor((COMMITTED_AT - 3600) / 3600) * 3600, Math.floor(VALID_AT / 3600) * 3600]);
+    // Two NOAA captures for the hour: an older one taken before the commit, and a newer issue hour that began
+    // before the commit but was captured after it. Only the first may be used.
+    const commitHour = Math.floor(COMMITTED_AT / 3600) * 3600;
+    await insertNws(commitHour - 3600, 18.4, COMMITTED_AT - 3000);
+    await insertNws(commitHour, 19.0, COMMITTED_AT + 60);
     const node = fakeNode(tipAt(NOW), ramp());
-    expect(await scoreWebsiteForecasts({ ...fast(), query, get: node.get, nowSec: NOW })).toMatchObject({ scored: 1, unscored: 0, waiting: 0, retry: 0 });
+    expect(await pass(node, NOW)).toMatchObject({ scored: 1, unscored: 0, waiting: 0, retry: 0, saveErrors: 0 });
     const [row] = await sql.unsafe('SELECT * FROM website_forecast_scores');
     expect(row).toMatchObject({
       commit_id: COMMIT_ID, status: 'scored', reason: null, unit: 'temp_c_centi', valid_at_source: 'chain', forecast_fp: '1810', truth_fp: '1900', err_fp: '90',
+      truth_commit_id: 'obs-00180', truth_height: String(Math.ceil((VALID_AT + 150 - GENESIS) / BLOCK_S)),
       ref_fp: '180', ref_kind: 'persistence_spread', mean24_fp: '1357', last_fp: '1715', window_samples: 24, tol: 5, copied: false, skill: 500000,
-      beat_baseline: true, nws_fp: '1840', nws_err_fp: '60', nws_skill: 666667, attempts: 1,
+      beat_baseline: true, nws_fp: '1840', nws_err_fp: '60', nws_skill: 666667, nws_lead_hours: (VALID_HOUR - (commitHour - 3600)) / 3600, attempts: 1,
     });
     expect(Math.floor(new Date(row.valid_at).getTime() / 1000)).toBe(VALID_AT);
+    expect(Math.floor(new Date(row.scored_at).getTime() / 1000)).toBe(NOW);
     // A scored forecast is final: a later pass neither selects nor rewrites it.
     const before = { ...node.calls };
-    expect(await scoreWebsiteForecasts({ ...fast(), query, get: node.get, nowSec: NOW + 7200 })).toMatchObject({ scored: 0, unscored: 0, waiting: 0, retry: 0 });
+    expect(await pass(node, NOW + 7200)).toMatchObject({ scored: 0, unscored: 0, waiting: 0, retry: 0 });
     expect(node.calls).toEqual(before);
     const mine = await listMine(query, WALLET, 50, practice);
     expect(mine.length).toBe(1);
-    expect(mine[0].practiceScore).toMatchObject({ status: 'scored', forecast: 1810, truth: 1900, error: 90, baseline: { error: 180 }, skill: 500000, beatBaseline: true, nws: { result: 'nws_beat_you' } });
+    expect(mine[0].practiceScore).toMatchObject({
+      status: 'scored', forecast: 1810, truth: 1900, error: 90, baseline: { error: 180 }, skill: 500000, beatBaseline: true, truthCommitId: 'obs-00180', nws: { result: 'nws_beat_you' },
+    });
     expect((await listMine(query, WALLET))[0]).not.toHaveProperty('practiceScore');
   });
 
-  it('pending is retried no sooner than 30 minutes later, then becomes scored or unscored', async () => {
+  it('a NOAA capture taken after the commit is never used', async () => {
+    await insertForecast(COMMIT_ID);
+    await insertNws(Math.floor(COMMITTED_AT / 3600) * 3600, 19.0, COMMITTED_AT + 60);
+    expect(await pass(fakeNode(tipAt(NOW), ramp()), NOW)).toMatchObject({ scored: 1 });
+    expect((await sql.unsafe('SELECT nws_fp, nws_err_fp, nws_skill FROM website_forecast_scores'))[0]).toMatchObject({ nws_fp: null, nws_err_fp: null, nws_skill: null });
+  });
+
+  it('pending is retried no sooner than 30 minutes later, then becomes unscored', async () => {
     await insertForecast(COMMIT_ID);
     const gap = ramp(VALID_AT + 86_400 + 7200, (j) => j >= 178 && j <= 182);
-    expect(await scoreWebsiteForecasts({ ...fast(), query, get: fakeNode(tipAt(NOW), gap).get, nowSec: NOW })).toMatchObject({ waiting: 1 });
-    expect((await sql.unsafe('SELECT status, attempts, scored_at FROM website_forecast_scores'))[0]).toMatchObject({ status: 'pending', attempts: 1, scored_at: null });
+    expect(await pass(fakeNode(tipAt(NOW), gap), NOW)).toMatchObject({ waiting: 1 });
+    expect((await sql.unsafe('SELECT status, reason, attempts, scored_at FROM website_forecast_scores'))[0]).toMatchObject({ status: 'pending', reason: null, attempts: 1, scored_at: null });
     expect((await listMine(query, WALLET, 50, practice))[0].practiceScore).toMatchObject({ status: 'pending', reason: 'waiting_for_reading' });
     // Ten minutes later: not selected again.
     const soon = fakeNode(tipAt(NOW + 600), gap);
-    expect(await scoreWebsiteForecasts({ ...fast(), query, get: soon.get, nowSec: NOW + 600 })).toMatchObject({ scored: 0, unscored: 0, waiting: 0, retry: 0 });
+    expect(await pass(soon, NOW + 600)).toMatchObject({ scored: 0, unscored: 0, waiting: 0, retry: 0 });
     expect(soon.calls).toEqual({ blocks: 0, observations: 0 });
     const late = VALID_AT + GIVE_UP_S + 60;
-    expect(await scoreWebsiteForecasts({ ...fast(), query, get: fakeNode(tipAt(late), gap).get, nowSec: late })).toMatchObject({ unscored: 1 });
+    expect(await pass(fakeNode(tipAt(late), gap), late)).toMatchObject({ unscored: 1 });
     expect((await sql.unsafe('SELECT status, reason, attempts, skill FROM website_forecast_scores'))[0]).toMatchObject({ status: 'unscored', reason: 'no_reading', attempts: 2, skill: null });
     expect((await listMine(query, WALLET, 50, practice))[0].practiceScore).toMatchObject({ status: 'unscored', text: 'unscored: no reading' });
   });
 
-  it('a pending forecast is scored when its reading shows up; only revealed forecasts are looked at', async () => {
+  it('a node failure is stored as pending with its own reason, and a later good pass scores it; only revealed forecasts are looked at', async () => {
     await insertForecast(COMMIT_ID);
     await insertForecast('d4'.repeat(32), { status: 'failed', day: '2027-01-16' });
     await insertForecast('e5'.repeat(32), { status: 'committed', day: '2027-01-17' });
-    const gap = ramp(VALID_AT + 7200, (j) => j >= 178 && j <= 182);
-    await scoreWebsiteForecasts({ ...fast(), query, get: fakeNode(tipAt(NOW), gap).get, nowSec: NOW });
-    expect(await scoreWebsiteForecasts({ ...fast(), query, get: fakeNode(tipAt(NOW + 3600), ramp()).get, nowSec: NOW + 3600 })).toMatchObject({ scored: 1 });
-    const rows = await sql.unsafe('SELECT commit_id, status, attempts, skill FROM website_forecast_scores');
+    const good = fakeNode(tipAt(NOW), ramp());
+    const flaky: Core4Get = (path, q) => (path.includes('/observations') ? Promise.reject(new Error('down')) : good.get(path, q));
+    expect(await pass({ get: flaky }, NOW)).toMatchObject({ retry: 1, scored: 0 });
+    expect((await sql.unsafe('SELECT status, reason FROM website_forecast_scores'))[0]).toMatchObject({ status: 'pending', reason: 'node_unavailable' });
+    expect((await listMine(query, WALLET, 50, practice)).find((f: any) => f.commitId === COMMIT_ID)?.practiceScore).toMatchObject({ status: 'pending', reason: 'node_unavailable' });
+    expect(await pass(fakeNode(tipAt(NOW + 3600), ramp()), NOW + 3600)).toMatchObject({ scored: 1 });
+    const rows = await sql.unsafe('SELECT commit_id, status, reason, attempts, skill FROM website_forecast_scores');
     expect(rows.length).toBe(1);
-    expect(rows[0]).toMatchObject({ commit_id: COMMIT_ID, status: 'scored', attempts: 2, skill: 500000 });
+    expect(rows[0]).toMatchObject({ commit_id: COMMIT_ID, status: 'scored', reason: null, attempts: 2, skill: 500000 });
+  });
+
+  it('stores an out-of-range forecast as unscored (the table accepts every reason the scorer writes)', async () => {
+    await insertForecast(COMMIT_ID, { value: 60 });
+    await sql.unsafe('UPDATE website_forecasts SET value = 150');
+    expect(await pass(fakeNode(tipAt(NOW), ramp()), NOW)).toMatchObject({ unscored: 1, saveErrors: 0 });
+    expect((await sql.unsafe('SELECT status, reason, forecast_fp FROM website_forecast_scores'))[0]).toMatchObject({ status: 'unscored', reason: 'out_of_range', forecast_fp: null });
   });
 });

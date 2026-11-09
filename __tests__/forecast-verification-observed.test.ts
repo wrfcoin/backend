@@ -141,7 +141,7 @@ describe('chain truth', () => {
   it('reads the station observations route with the node field names', async () => {
     const get = fakeChain(6000, [{ height: 5005, observed_at: VALID + 10, values: { temperature_c: 11, humidity_percent: 70, pressure_hpa: 1000 } }]);
     expect(await stationReadings(get, STATION, 4990, 5100)).toEqual([
-      { commitId: 'c5005', height: 5005, observedAt: VALID + 10, values: { temperature_c: 11, humidity_pct: 70, pressure_hpa: 1000 }, provenanceClass: 'real' },
+      { commitId: 'c5005', height: 5005, observedAt: VALID + 10, values: { temperature_c: 11, humidity_pct: 70, pressure_hpa: 1000 }, provenanceClass: 'real', hasQuorum: false },
     ]);
   });
 
