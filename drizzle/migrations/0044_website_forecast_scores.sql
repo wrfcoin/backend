@@ -4,7 +4,7 @@
 -- No personal data, no coordinates, no station id (the forecast row already names the station).
 --
 -- NOT applied at startup: the deployed backend does not run migrations. Apply by hand before setting
--- WEBSITE_FORECAST_SCORE_ENABLED=true. Rerunnable (IF NOT EXISTS). Needs 0043_website_forecasts.
+-- WEBSITE_FORECAST_SCORE_ENABLED=true. Rerunnable, also over an earlier draft of the table. Needs 0043_website_forecasts.
 --
 -- Down (reversible): DROP TABLE website_forecast_scores;
 CREATE TABLE IF NOT EXISTS website_forecast_scores (
@@ -45,3 +45,14 @@ CREATE TABLE IF NOT EXISTS website_forecast_scores (
   scored_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+--> statement-breakpoint
+-- The statements below bring an earlier draft of this table (no truth reading columns, two reasons only)
+-- up to the shape above. On a table created by the statement above they change nothing.
+ALTER TABLE website_forecast_scores ADD COLUMN IF NOT EXISTS truth_commit_id text CHECK (length(truth_commit_id) <= 128);
+--> statement-breakpoint
+ALTER TABLE website_forecast_scores ADD COLUMN IF NOT EXISTS truth_height bigint;
+--> statement-breakpoint
+ALTER TABLE website_forecast_scores DROP CONSTRAINT IF EXISTS website_forecast_scores_reason_check;
+--> statement-breakpoint
+ALTER TABLE website_forecast_scores ADD CONSTRAINT website_forecast_scores_reason_check
+  CHECK (reason IN ('no_reading', 'no_baseline', 'node_unavailable', 'out_of_range'));

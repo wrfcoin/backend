@@ -9,8 +9,9 @@ import request from 'supertest';
 import { readFileSync } from 'node:fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
 import {
-  LANDING_MARGIN_S, MIN_PERSISTENCE_PAIRS, MIN_WINDOW_SAMPLES, TRUTH_MAX_DISTANCE_S, hourlyWindow, inRange, isqrt, lastReadingBefore, nearestReading,
-  numberToFixedPoint, parseFixedPoint, ratioSkill, referenceFromWindow, skillScore, type Reading, type ScoredVariable,
+  LANDING_MARGIN_S, MIN_PERSISTENCE_PAIRS, MIN_WINDOW_SAMPLES, TRUTH_MAX_DISTANCE_S, countsAsReading, hourlyWindow, inRange, isqrt, lastReadingBefore,
+  nearestReading, numberToFixedPoint, parseFixedPoint, ratioSkill, referenceFromWindow, skillScore, truthCandidates, windowCandidates,
+  type ChainSample, type Reading, type ScoredVariable,
 } from '../server/services/forecast-score/practice-score';
 import {
   BACKOFF_BASE_MS, GIVE_UP_S, PRACTICE_NOTE, SCORE_DELAY_S, newPaceState, publicPracticeScore, readPracticeScores, readsPerMinute, scoreWebsiteForecasts,
@@ -28,21 +29,57 @@ const toReading = (r: any): Reading => ({ observedAt: r.observed_at, value: BigI
 const fromReading = (r: Reading | null) => (r === null ? null : { observed_at: r.observedAt, value: Number(r.value), id: r.id });
 const named = (list: any[]) => list.map((v: any) => [v.name, v] as [string, any]);
 
-describe('integer skill rule against the shared vectors (schema v2)', () => {
+describe('integer skill rule against the shared vectors (schema v3)', () => {
   it('has the expected file shape and constants', () => {
-    expect(vectors.schema).toBe('wrfcoin-forecast-skill-vectors/v2');
+    expect(vectors.schema).toBe('wrfcoin-forecast-skill-vectors/v3');
     expect([vectors.precision, vectors.default_tol, vectors.min_window_samples, vectors.min_persistence_pairs]).toEqual([1_000_000, 5, MIN_WINDOW_SAMPLES, MIN_PERSISTENCE_PAIRS]);
     expect([vectors.truth_max_distance_s, vectors.landing_margin_s, vectors.score_delay_s]).toEqual([TRUTH_MAX_DISTANCE_S, LANDING_MARGIN_S, SCORE_DELAY_S]);
     expect(SCORE_DELAY_S).toBe(35 * 60);
-    expect(['range', 'skill', 'reference', 'hourly_window', 'nearest_reading', 'last_reading_before', 'fixed_point'].map((k) => vectors[k].length)).toEqual([11, 48, 33, 7, 8, 5, 37]);
-    expect(vectors.rule.length).toBeGreaterThan(8);
+    expect(['range', 'rule3_scenarios', 'skill', 'skill_wide_arithmetic', 'reference', 'hourly_window', 'nearest_reading', 'last_reading_before', 'fixed_point']
+      .map((k) => vectors[k].length)).toEqual([11, 10, 47, 2, 33, 7, 8, 5, 37]);
+    // The rule text is the contract: the pinned points must be in it.
+    const rule = vectors.rule.join('\n');
+    for (const pinned of ['AS OF the closing block', '[target - 15 min, target + 35 min)', 'height < commit_height', 'not \'synthetic\' (no class recorded', 'back-dated or future-dated', 'fits i64']) {
+      expect(rule).toContain(pinned);
+    }
+  });
+
+  it('every case in the skill section is inside its variable\'s range, so a twin that range-checks inside its score function passes them all', () => {
+    for (const v of vectors.skill) {
+      for (const k of ['forecast', 'truth', 'mean24', 'last']) expect(inRange(v.variable as ScoredVariable, BigInt(v[k]))).toBe(true);
+    }
+    for (const v of vectors.skill_wide_arithmetic) expect(inRange('pressure_hpa', BigInt(v.forecast))).toBe(false);
+  });
+
+  it.each(named(vectors.rule3_scenarios))('rule 3 (which readings count): %s', (_name, v: any) => {
+    const samples: ChainSample[] = v.readings.map((r: any) => ({
+      id: r.id, observedAt: r.observed_at, value: BigInt(r.value), height: r.height, blockTime: r.block_time, hasQuorum: r.has_quorum, provenance: r.provenance,
+    }));
+    const truth = truthCandidates(samples, v.variable, v.target);
+    const window = windowCandidates(samples, v.variable, v.commit_time, v.commit_height);
+    expect(v.target).toBe(v.commit_time + v.lead_hours * 3600);
+    expect({
+      truth_candidates: truth.map((r) => r.id).sort(), truth: nearestReading(truth, v.target)?.id ?? null,
+      window_candidates: window.map((r) => r.id).sort(), last: lastReadingBefore(window, v.commit_time)?.id ?? null,
+      window: hourlyWindow(window, v.commit_time).map((x) => (x === null ? null : Number(x))),
+    }).toEqual(v.expect);
+  });
+
+  it('a reading counts only with quorum, a provenance that is not synthetic, and a value in range', () => {
+    const ok = { value: 1500n, hasQuorum: true, provenance: 'real' as string | null };
+    expect(countsAsReading('temperature_c', ok)).toBe(true);
+    expect(countsAsReading('temperature_c', { ...ok, provenance: null })).toBe(true);
+    expect(countsAsReading('temperature_c', { ...ok, provenance: 'synthetic' })).toBe(false);
+    expect(countsAsReading('temperature_c', { ...ok, hasQuorum: false })).toBe(false);
+    expect(countsAsReading('temperature_c', { ...ok, value: 10_001n })).toBe(false);
+    expect(countsAsReading('pressure_hpa', ok)).toBe(false);
   });
 
   it.each(vectors.range.map((v: any) => [`${v.variable} ${v.value}`, v]))('range: %s', (_n, v: any) => {
     expect(inRange(v.variable as ScoredVariable, BigInt(v.value))).toBe(v.expect);
   });
 
-  it.each(named(vectors.skill))('skill: %s', (_name, v: any) => {
+  it.each(named([...vectors.skill, ...vectors.skill_wide_arithmetic]))('skill: %s', (_name, v: any) => {
     const r = skillScore({ forecast: BigInt(v.forecast), truth: BigInt(v.truth), reference: BigInt(v.reference), mean24: BigInt(v.mean24), last: BigInt(v.last), tol: BigInt(v.tol) });
     expect({ err: Number(r.err), copy: r.copy, skill: Number(r.skill), beat_baseline: r.beatBaseline }).toEqual(v.expect);
   });
@@ -370,10 +407,30 @@ describe('scoring pass', () => {
     expect(pick(store.saved[1], ['status', 'reason', 'scored_at'])).toEqual(['unscored', 'node_unavailable', late]);
   });
 
-  it('a result that cannot be saved is its own count, and is not reported as a node failure', async () => {
+  it('a result that cannot be saved is its own count, and the forecast is not read from the node again every pass', async () => {
+    const clock = fast();
+    const pace = newPaceState();
     const store = fakeStore([forecastRow()], { failSave: true });
-    expect(await scoreWebsiteForecasts({ ...fast(), query: store.query, get: fakeNode(tipAt(NOW), ramp()).get, nowSec: NOW }))
-      .toMatchObject({ scored: 0, unscored: 0, waiting: 0, retry: 0, saveErrors: 1 });
+    const node = fakeNode(tipAt(NOW), ramp());
+    const run = (query = store.query) => scoreWebsiteForecasts({ ...clock, pace, query, get: node.get, nowSec: NOW });
+    expect(await run()).toMatchObject({ scored: 0, unscored: 0, waiting: 0, retry: 0, saveErrors: 1, deferred: 0 });
+    const readsForOne = node.log.length;
+    expect(readsForOne).toBeGreaterThan(20);
+    // Until its retry time it is left alone: not one node read.
+    clock.advance(BACKOFF_BASE_MS - 5000);
+    expect(await run()).toMatchObject({ saveErrors: 0, deferred: 1, scored: 0, nodeReads: 0 });
+    expect(node.log.length).toBe(readsForOne);
+    // After 5 minutes it is tried again; a second failure doubles the wait.
+    clock.advance(10_000);
+    expect(await run()).toMatchObject({ saveErrors: 1, deferred: 0 });
+    expect(pace.saveFailures.get(COMMIT_ID)?.count).toBe(2);
+    clock.advance(BACKOFF_BASE_MS + 1000);
+    expect(await run()).toMatchObject({ deferred: 1, saveErrors: 0 });
+    // Once the database takes the row again, the mark is cleared.
+    clock.advance(BACKOFF_BASE_MS);
+    const healthy = fakeStore([forecastRow()]);
+    expect(await run(healthy.query)).toMatchObject({ scored: 1, saveErrors: 0, deferred: 0 });
+    expect(pace.saveFailures.size).toBe(0);
   });
 
   const threeForecasts = () => [forecastRow(), forecastRow({ commit_id: 'c2'.repeat(32), value: 18.6 }), forecastRow({ commit_id: 'c3'.repeat(32), value: 19.4, horizon_hours: 1 })];
@@ -439,7 +496,7 @@ describe('scoring pass', () => {
   it('does nothing, and reads nothing from the node, when no forecast is due', async () => {
     const node = fakeNode(tipAt(NOW), ramp());
     expect(await scoreWebsiteForecasts({ ...fast(), query: fakeStore([]).query, get: node.get, nowSec: NOW }))
-      .toEqual({ scored: 0, unscored: 0, waiting: 0, retry: 0, skipped: 0, saveErrors: 0, nodeReads: 0, nodeBusy: false, backingOff: false });
+      .toEqual({ scored: 0, unscored: 0, waiting: 0, retry: 0, skipped: 0, saveErrors: 0, deferred: 0, nodeReads: 0, nodeBusy: false, backingOff: false });
     expect(node.calls).toEqual({ blocks: 0, observations: 0 });
   });
 });
@@ -737,6 +794,42 @@ const PG_URL = process.env.BACKFILL_TEST_PG_URL;
     const rows = await sql.unsafe('SELECT commit_id, status, reason, attempts, skill FROM website_forecast_scores');
     expect(rows.length).toBe(1);
     expect(rows[0]).toMatchObject({ commit_id: COMMIT_ID, status: 'scored', reason: null, attempts: 2, skill: 500000 });
+  });
+
+  it('migration 0044 upgrades an earlier draft of the table in place, and is still rerunnable after that', async () => {
+    const draft = `wf_0044_draft_${process.pid}`;
+    await sql.unsafe(`CREATE SCHEMA ${draft}`);
+    try {
+      await sql.unsafe(`SET search_path TO ${draft}`);
+      // The table as first drafted: no truth reading columns, two reasons only.
+      await sql.unsafe(`CREATE TABLE website_forecast_scores (
+        commit_id text PRIMARY KEY CHECK (commit_id ~ '^[0-9a-f]{64}$'),
+        status text NOT NULL CHECK (status IN ('pending', 'scored', 'unscored')),
+        reason text CHECK (reason IN ('no_reading', 'no_baseline')),
+        unit text NOT NULL CHECK (unit IN ('temp_c_centi', 'pressure_pa')),
+        valid_at timestamptz NOT NULL, valid_at_source text NOT NULL CHECK (valid_at_source IN ('chain', 'draft')),
+        forecast_fp bigint, truth_fp bigint, truth_observed_at timestamptz, err_fp bigint, ref_fp bigint,
+        ref_kind text CHECK (ref_kind IN ('climatology_spread', 'persistence_spread')), mean24_fp bigint, last_fp bigint, window_samples integer, tol integer,
+        copied boolean, skill integer CHECK (skill BETWEEN 0 AND 1000000), beat_baseline boolean, nws_fp bigint, nws_err_fp bigint,
+        nws_skill integer CHECK (nws_skill BETWEEN 0 AND 1000000), nws_lead_hours integer, attempts integer NOT NULL DEFAULT 0, last_attempt_at timestamptz,
+        scored_at timestamptz, created_at timestamptz NOT NULL DEFAULT now())`);
+      await sql.unsafe(`INSERT INTO website_forecast_scores (commit_id, status, reason, unit, valid_at, valid_at_source) VALUES ('${'aa'.repeat(32)}', 'unscored', 'no_reading', 'temp_c_centi', now(), 'chain')`);
+      await expect(sql.unsafe(`INSERT INTO website_forecast_scores (commit_id, status, reason, unit, valid_at, valid_at_source) VALUES ('${'bb'.repeat(32)}', 'unscored', 'node_unavailable', 'temp_c_centi', now(), 'chain')`)).rejects.toThrow(/check constraint/);
+      const migration = readFileSync('drizzle/migrations/0044_website_forecast_scores.sql', 'utf8');
+      for (let i = 0; i < 3; i += 1) for (const statement of migration.split('--> statement-breakpoint')) await sql.unsafe(statement);
+      // The earlier row is kept; the new columns and reasons are accepted; a made-up reason is still refused.
+      await sql.unsafe(`INSERT INTO website_forecast_scores (commit_id, status, reason, unit, valid_at, valid_at_source, truth_commit_id, truth_height)
+        VALUES ('${'bb'.repeat(32)}', 'unscored', 'node_unavailable', 'temp_c_centi', now(), 'chain', 'obs-1', 1790), ('${'cc'.repeat(32)}', 'unscored', 'out_of_range', 'temp_c_centi', now(), 'chain', NULL, NULL)`);
+      await expect(sql.unsafe(`INSERT INTO website_forecast_scores (commit_id, status, reason, unit, valid_at, valid_at_source) VALUES ('${'dd'.repeat(32)}', 'unscored', 'because', 'temp_c_centi', now(), 'chain')`)).rejects.toThrow(/check constraint/);
+      const rows = await sql.unsafe('SELECT commit_id, reason, truth_commit_id, truth_height FROM website_forecast_scores ORDER BY commit_id');
+      expect(rows.map((r: any) => [r.commit_id.slice(0, 2), r.reason, r.truth_commit_id, r.truth_height])).toEqual([['aa', 'no_reading', null, null], ['bb', 'node_unavailable', 'obs-1', '1790'], ['cc', 'out_of_range', null, null]]);
+      // Exactly one reason constraint, not one per run.
+      const checks = await sql.unsafe(`SELECT conname FROM pg_constraint WHERE conrelid = '${draft}.website_forecast_scores'::regclass AND conname LIKE '%reason%'`);
+      expect(checks.map((c: any) => c.conname)).toEqual(['website_forecast_scores_reason_check']);
+    } finally {
+      await sql.unsafe(`SET search_path TO ${schema}`);
+      await sql.unsafe(`DROP SCHEMA ${draft} CASCADE`);
+    }
   });
 
   it('stores an out-of-range forecast as unscored (the table accepts every reason the scorer writes)', async () => {

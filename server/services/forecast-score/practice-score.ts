@@ -3,7 +3,7 @@
  *
  * This is the website's "practice score" for a point forecast. The chain's skill pay is designed to use the
  * same rule, so this module is written to be mirrored exactly by an integer twin in Rust: every function of
- * THE RULE below is checked against `contract-fixtures/forecast-skill-vectors.json` (schema v2), and the twin
+ * THE RULE below is checked against `contract-fixtures/forecast-skill-vectors.json` (schema v3), and the twin
  * runs the same file.
  *
  * THE RULE
@@ -13,13 +13,23 @@
  * 1. Range. A value outside its variable's range is not used: temperature −10000..=10000, pressure
  *    30000..=120000. An out-of-range reading is ignored; an out-of-range forecast is unscored.
  * 2. Times. `commit` is the commit block's time, `target = commit + lead hours`.
- * 3. Which readings count. Station readings that reached the oracle attestation quorum and are not synthetic.
- *      - for the truth: observed within 15 minutes of `target`, landed in a block whose time is before
- *        `target + 35 min`. A forecast is not scored before the chain tip's time has reached
+ * 3. Which readings count (countsAsReading, truthCandidates, windowCandidates). A station reading counts when
+ *    it is in range (rule 1), its provenance class is not "synthetic" (no class recorded, or any other class,
+ *    counts), and it has reached the oracle attestation quorum. Quorum is taken AS OF the first block whose
+ *    time is >= `target + 35 min` (the closing block): a reading that reaches quorum later does not count.
+ *      - for the truth: landed in a block whose time is in [target − 15 min, target + 35 min), and observed
+ *        within 15 minutes of `target`. A forecast is not scored before the chain tip's time has reached
  *        `target + 35 min` (15 minutes of readings plus 20 minutes for them to land and reach quorum), so
  *        the set of candidate readings is closed when the score is taken;
- *      - for the reference window and `last`: observed in the 24 hours before `commit` AND landed in a block
- *        below the commit's height, so only what the forecaster could have seen is used.
+ *      - for the reference window and `last`: landed at a height from the first block whose time is
+ *        >= `commit − 24 h` up to the commit's height − 1, and observed in [commit − 24 h, commit). So only
+ *        what the forecaster could have seen is used.
+ *    A reading that landed in any other block does not count, whatever observation time it claims (a
+ *    back-dated or future-dated reading cannot be slipped in).
+ *    Backend note: the node reports quorum as it stands when asked, not as of the closing block. This
+ *    backend scores at or after the closing block with the state it is given, so its truth can differ from
+ *    the pinned rule when a reading reaches quorum after the closing block. The chain twin uses the pinned
+ *    definition.
  * 4. Truth (nearestReading): the candidate nearest `target`; ties go to the earlier reading, then the
  *    smaller id. No candidate: no score.
  * 5. Window (hourlyWindow): 24 hourly slots, slot k = [commit − (24 − k) h, commit − (23 − k) h); a slot's
@@ -40,7 +50,8 @@
  * Every division is integer division truncating toward zero (BigInt `/`, Rust's integer `/`); isqrt is the
  * floor square root. Widths: with |x| ≤ 120000 (rule 1) and n ≤ 24, n·Σx² ≤ 24 · 24 · 120000² < 8.3e12 and
  * (Σx)² ≤ (24 · 120000)² < 8.3e12; Σ(Δx)² ≤ 24 · 240000² < 1.4e12; 1_000_000 · err ≤ 2.4e11. All fit i64.
- * (skillScore itself is exact for any |value| ≤ 2^31: 1_000_000 · err < 2^53.)
+ * (The arithmetic of skillScore is also exact for any |value| ≤ 2^31, which the vectors check in a section
+ * of its own, `skill_wide_arithmetic`; an implementation that refuses out-of-range values may skip it.)
  *
  * NOT part of the rule: parseFixedPoint / numberToFixedPoint. The node relays readings as JSON decimals
  * today, so the backend needs an adapter from decimal text to fixed point. The chain rule takes integers.
@@ -69,6 +80,44 @@ export const VALUE_RANGE: Record<ScoredVariable, readonly [bigint, bigint]> = {
 export const inRange = (variable: ScoredVariable, value: bigint) => value >= VALUE_RANGE[variable][0] && value <= VALUE_RANGE[variable][1];
 
 const abs = (v: bigint) => (v < 0n ? -v : v);
+
+/** The truth reading must be observed at most this far from the forecast's target time. */
+export const TRUTH_MAX_DISTANCE_S = 15 * 60;
+/** Time allowed for a reading to land in a block and reach quorum after the reading window closes. */
+export const LANDING_MARGIN_S = 20 * 60;
+/** Rule 3: no score before the chain tip's time has reached target + this. */
+export const SCORE_DELAY_S = TRUTH_MAX_DISTANCE_S + LANDING_MARGIN_S;
+
+/** Rule 3, the part that does not depend on where the reading landed. `provenance` null = no class recorded. */
+export function countsAsReading(variable: ScoredVariable, r: { value: bigint; hasQuorum: boolean; provenance: string | null }): boolean {
+  return r.hasQuorum === true && r.provenance !== 'synthetic' && inRange(variable, r.value);
+}
+
+/** A station reading as the chain holds it: when it was observed, and the block it landed in. */
+export interface ChainSample {
+  id: string;
+  /** Unix seconds, as claimed by the submitter. */
+  observedAt: number;
+  value: bigint;
+  /** Height and time (unix seconds) of the block the reading landed in. */
+  height: number;
+  blockTime: number;
+  /** Quorum as of the closing block (the first block whose time is >= target + 35 min). */
+  hasQuorum: boolean;
+  provenance: string | null;
+}
+
+const asReading = (s: ChainSample): Reading => ({ observedAt: s.observedAt, value: s.value, id: s.id });
+
+/** Rule 3: the readings the truth may be picked from (nearestReading then applies the 15-minute distance). */
+export function truthCandidates(samples: ReadonlyArray<ChainSample>, variable: ScoredVariable, target: number): Reading[] {
+  return samples.filter((s) => countsAsReading(variable, s) && s.blockTime >= target - TRUTH_MAX_DISTANCE_S && s.blockTime < target + SCORE_DELAY_S).map(asReading);
+}
+
+/** Rule 3: the readings the reference window and `last` are built from (hourlyWindow / lastReadingBefore apply the observation times). */
+export function windowCandidates(samples: ReadonlyArray<ChainSample>, variable: ScoredVariable, commitTime: number, commitHeight: number): Reading[] {
+  return samples.filter((s) => countsAsReading(variable, s) && s.blockTime >= commitTime - WINDOW_HOURS * 3600 && s.height < commitHeight).map(asReading);
+}
 
 /** Largest r with r·r ≤ n (Newton's method on integers); n must not be negative. */
 export function isqrt(n: bigint): bigint {
@@ -228,13 +277,6 @@ export function lastReadingBefore(readings: ReadonlyArray<Reading>, anchor: numb
   }
   return best;
 }
-
-/** The truth reading must be observed at most this far from the forecast's target time. */
-export const TRUTH_MAX_DISTANCE_S = 15 * 60;
-/** Time allowed for a reading to land in a block and reach quorum after the reading window closes. */
-export const LANDING_MARGIN_S = 20 * 60;
-/** Rule 3: no score before the chain tip's time has reached target + this. */
-export const SCORE_DELAY_S = TRUTH_MAX_DISTANCE_S + LANDING_MARGIN_S;
 
 /** Rule 4: the reading nearest `validAt`, at most 15 minutes away (ties: the earlier reading, then the smaller id). */
 export function nearestReading(readings: ReadonlyArray<Reading>, validAt: number): Reading | null {

@@ -1,17 +1,21 @@
 {
- "schema": "wrfcoin-forecast-skill-vectors/v2",
+ "schema": "wrfcoin-forecast-skill-vectors/v3",
  "about": "Shared vectors for the integer forecast skill rule. A second implementation passes when it reproduces every 'expect' exactly. Every number is an integer.",
  "rule": [
   "Arithmetic: every division is integer division truncating toward zero; isqrt is the floor square root.",
   "Units: temperature in 0.01 degC, pressure in Pa (0.01 hPa); skill in millionths, 0..=1000000.",
   "1 Range ('range'): temperature -10000..=10000, pressure 30000..=120000, inclusive. An out-of-range reading is ignored; an out-of-range forecast is unscored.",
   "2 Times: commit = the commit block's time; target = commit + lead hours.",
-  "3 Readings that count: station readings that reached the oracle attestation quorum and are not synthetic. Truth candidates are observed within 15 minutes of target and landed in a block whose time is before target + 35 min; a forecast is not scored before the chain tip's time has reached target + 35 min (15 minutes of readings plus 20 minutes to land and reach quorum), so the candidate set is closed. Window and 'last' readings are observed in the 24 hours before commit AND landed in a block below the commit's height.",
+  "3 Readings that count ('rule3_scenarios'): a station reading counts when it is in range (rule 1), its provenance class is not 'synthetic' (no class recorded, or any other class, counts), and it has reached the oracle attestation quorum.",
+  "3a Quorum is taken AS OF the closing block: the first block whose time is >= target + 35 min. A reading that reaches quorum later does not count. A forecast is not scored before the chain tip's time has reached target + 35 min (15 minutes of readings plus 20 minutes to land and reach quorum), so the candidate set is closed. In 'rule3_scenarios', has_quorum is the state as of the closing block.",
+  "3b Truth candidates: landed in a block whose time is in [target - 15 min, target + 35 min). nearest_reading then requires |observed_at - target| <= 15 min.",
+  "3c Window candidates (for hourly_window and 'last'): landed at a height from the first block whose time is >= commit - 24 h up to commit_height - 1 (so: block_time >= commit - 24 h and height < commit_height). hourly_window and last_reading_before then require observed_at in [commit - 24 h, commit).",
+  "3d A reading that landed in any other block does not count, whatever observation time it claims (back-dated or future-dated).",
   "4 Truth ('nearest_reading'): the candidate nearest target; ties go to the earlier reading, then the smaller id (byte order). None: no score.",
   "5 Window ('hourly_window'): 24 slots, slot k = [commit - (24-k) h, commit - (23-k) h); sample = sum / count of the slot's readings, or null. 'last' ('last_reading_before') = the newest reading in [commit - 24 h, commit); ties: the smaller id.",
   "6 Reference ('reference'), n = slots with a sample, lag = lead hours: fewer than 12 samples = no baseline (expect null, unscored). mean24 = sum/n. spread = isqrt((n*sum(x^2) - sum(x)^2) / n^2). pairs = slot pairs (i, i+lag) where both have a sample. persistence = isqrt(sum((x[i+lag]-x[i])^2) / pairs) when pairs >= 6, else null. reference = persistence when it is not null and smaller than spread ('persistence_spread'), else spread ('climatology_spread').",
   "7 Score ('skill'): err = |forecast - truth|. copy = |forecast - mean24| <= tol or |forecast - last| <= tol (tol default 5). skill = 0 if copy or reference == 0, else max(0, 1000000 - 1000000*err/reference). beat_baseline = skill > 0.",
-  "Widths: with |x| <= 120000 (rule 1) and n <= 24: n*sum(x^2) <= 24*24*120000^2 < 8.3e12, sum(x)^2 < 8.3e12, sum of squared differences < 1.4e12, 1000000*err <= 2.4e11. Everything fits i64; no 128-bit arithmetic is needed. One 'skill' vector uses values near 2^31 to check exactness; 1000000*err stays below 2^53 there.",
+  "Widths: with |x| <= 120000 (rule 1) and n <= 24: n*sum(x^2) <= 24*24*120000^2 < 8.3e12, sum(x)^2 < 8.3e12, sum of squared differences < 1.4e12, 1000000*err <= 2.4e11. Everything fits i64; no 128-bit arithmetic is needed. The separate 'skill_wide_arithmetic' section uses values near 2^31, outside the range rule, to check the arithmetic alone (1000000*err stays below 2^53); an implementation that range-checks inside its score function may skip that section. Every case in 'skill' names its variable and has forecast, truth, mean24 and last inside that variable's range.",
   "'fixed_point' is NOT part of the rule: it is the backend's adapter from the decimal text the node relays today to fixed point (2 places, round half away from zero; null = refused). The rule itself takes integers."
  ],
  "precision": 1000000,
@@ -78,9 +82,1026 @@
    "expect": false
   }
  ],
+ "rule3_scenarios": [
+  {
+   "name": "quorum: the nearest reading has no quorum, the next nearest is the truth",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "a",
+     "observed_at": 1800121600,
+     "value": 1900,
+     "height": 5282,
+     "block_time": 1800121750,
+     "has_quorum": false,
+     "provenance": "real"
+    },
+    {
+     "id": "b",
+     "observed_at": 1800121000,
+     "value": 1895,
+     "height": 5274,
+     "block_time": 1800121150,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "c",
+     "observed_at": 1800122260,
+     "value": 1906,
+     "height": 5291,
+     "block_time": 1800122410,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [
+     "b",
+     "c"
+    ],
+    "truth": "b",
+    "window_candidates": [],
+    "last": null,
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ]
+   }
+  },
+  {
+   "name": "quorum: no candidate has quorum, no truth",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "a",
+     "observed_at": 1800121600,
+     "value": 1900,
+     "height": 5282,
+     "block_time": 1800121750,
+     "has_quorum": false,
+     "provenance": "real"
+    },
+    {
+     "id": "b",
+     "observed_at": 1800121000,
+     "value": 1895,
+     "height": 5274,
+     "block_time": 1800121150,
+     "has_quorum": false,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [],
+    "truth": null,
+    "window_candidates": [],
+    "last": null,
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ]
+   }
+  },
+  {
+   "name": "provenance: synthetic never counts; no class recorded and other classes count",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "a",
+     "observed_at": 1800121600,
+     "value": 1900,
+     "height": 5282,
+     "block_time": 1800121750,
+     "has_quorum": true,
+     "provenance": "synthetic"
+    },
+    {
+     "id": "b",
+     "observed_at": 1800121630,
+     "value": 1901,
+     "height": 5282,
+     "block_time": 1800121780,
+     "has_quorum": true,
+     "provenance": null
+    },
+    {
+     "id": "c",
+     "observed_at": 1800121560,
+     "value": 1899,
+     "height": 5281,
+     "block_time": 1800121710,
+     "has_quorum": true,
+     "provenance": "unclassified"
+    },
+    {
+     "id": "d",
+     "observed_at": 1800121650,
+     "value": 1902,
+     "height": 5283,
+     "block_time": 1800121800,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "w1",
+     "observed_at": 1800099700,
+     "value": 1700,
+     "height": 4998,
+     "block_time": 1800099850,
+     "has_quorum": true,
+     "provenance": "synthetic"
+    },
+    {
+     "id": "w2",
+     "observed_at": 1800099100,
+     "value": 1690,
+     "height": 4990,
+     "block_time": 1800099250,
+     "has_quorum": true,
+     "provenance": null
+    }
+   ],
+   "expect": {
+    "truth_candidates": [
+     "b",
+     "c",
+     "d"
+    ],
+    "truth": "b",
+    "window_candidates": [
+     "w2"
+    ],
+    "last": "w2",
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     1690
+    ]
+   }
+  },
+  {
+   "name": "range: an out-of-range reading is skipped for the next nearest",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "a",
+     "observed_at": 1800121600,
+     "value": 50000,
+     "height": 5282,
+     "block_time": 1800121750,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "b",
+     "observed_at": 1800121720,
+     "value": 10001,
+     "height": 5284,
+     "block_time": 1800121870,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "c",
+     "observed_at": 1800121300,
+     "value": 10000,
+     "height": 5278,
+     "block_time": 1800121450,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "d",
+     "observed_at": 1800122200,
+     "value": 1900,
+     "height": 5290,
+     "block_time": 1800122350,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [
+     "c",
+     "d"
+    ],
+    "truth": "c",
+    "window_candidates": [],
+    "last": null,
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ]
+   }
+  },
+  {
+   "name": "range: pressure bounds",
+   "variable": "pressure_hpa",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 1,
+   "target": 1800103600,
+   "readings": [
+    {
+     "id": "a",
+     "observed_at": 1800103600,
+     "value": 29999,
+     "height": 5048,
+     "block_time": 1800103750,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "b",
+     "observed_at": 1800103660,
+     "value": 30000,
+     "height": 5049,
+     "block_time": 1800103810,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "c",
+     "observed_at": 1800103510,
+     "value": 120001,
+     "height": 5047,
+     "block_time": 1800103660,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "w1",
+     "observed_at": 1800099940,
+     "value": 120000,
+     "height": 4999,
+     "block_time": 1800099990,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "w2",
+     "observed_at": 1800099970,
+     "value": 120001,
+     "height": 4999,
+     "block_time": 1800099995,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [
+     "b"
+    ],
+    "truth": "b",
+    "window_candidates": [
+     "w1"
+    ],
+    "last": "w1",
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     120000
+    ]
+   }
+  },
+  {
+   "name": "truth landing blocks: [target - 15 min, target + 35 min)",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "in_first",
+     "observed_at": 1800120700,
+     "value": 1880,
+     "height": 5268,
+     "block_time": 1800120700,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "out_before",
+     "observed_at": 1800120710,
+     "value": 1881,
+     "height": 5268,
+     "block_time": 1800120699,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "in_last",
+     "observed_at": 1800121660,
+     "value": 1903,
+     "height": 5307,
+     "block_time": 1800123699,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "out_closing_block",
+     "observed_at": 1800121630,
+     "value": 1902,
+     "height": 5307,
+     "block_time": 1800123700,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "out_later",
+     "observed_at": 1800121600,
+     "value": 1900,
+     "height": 5397,
+     "block_time": 1800130600,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [
+     "in_first",
+     "in_last"
+    ],
+    "truth": "in_last",
+    "window_candidates": [],
+    "last": null,
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ]
+   }
+  },
+  {
+   "name": "truth: a reading landed in time but observed more than 15 minutes away is a candidate, not the truth",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "a",
+     "observed_at": 1800120699,
+     "value": 1880,
+     "height": 5271,
+     "block_time": 1800120900,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "b",
+     "observed_at": 1800122501,
+     "value": 1910,
+     "height": 5293,
+     "block_time": 1800122600,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [
+     "a",
+     "b"
+    ],
+    "truth": null,
+    "window_candidates": [],
+    "last": null,
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ]
+   }
+  },
+  {
+   "name": "window landing height: commit - 1 counts, the commit block and later do not",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "below",
+     "observed_at": 1800099400,
+     "value": 1715,
+     "height": 4999,
+     "block_time": 1800099923,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "at_commit",
+     "observed_at": 1800099940,
+     "value": 1810,
+     "height": 5000,
+     "block_time": 1800100000,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "above",
+     "observed_at": 1800099970,
+     "value": 1811,
+     "height": 5001,
+     "block_time": 1800100077,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "backdated",
+     "observed_at": 1800099997,
+     "value": 1812,
+     "height": 5008,
+     "block_time": 1800100660,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [],
+    "truth": null,
+    "window_candidates": [
+     "below"
+    ],
+    "last": "below",
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     1715
+    ]
+   }
+  },
+  {
+   "name": "window lower bound: landed at or after commit - 24 h",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "in_first",
+     "observed_at": 1800013600,
+     "value": 1000,
+     "height": 3877,
+     "block_time": 1800013600,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "out_before",
+     "observed_at": 1800013600,
+     "value": 1001,
+     "height": 3877,
+     "block_time": 1800013599,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "future_dated",
+     "observed_at": 1800099900,
+     "value": 1002,
+     "height": 3831,
+     "block_time": 1800010000,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "in_mid",
+     "observed_at": 1800060000,
+     "value": 1300,
+     "height": 4482,
+     "block_time": 1800060150,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [],
+    "truth": null,
+    "window_candidates": [
+     "in_first",
+     "in_mid"
+    ],
+    "last": "in_mid",
+    "window": [
+     1000,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     1300,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ]
+   }
+  },
+  {
+   "name": "a full day: 24 hourly samples and a truth",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "h00",
+     "observed_at": 1800014200,
+     "value": 1000,
+     "height": 3887,
+     "block_time": 1800014350,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h01",
+     "observed_at": 1800017800,
+     "value": 1030,
+     "height": 3934,
+     "block_time": 1800017950,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h02",
+     "observed_at": 1800021400,
+     "value": 1060,
+     "height": 3981,
+     "block_time": 1800021550,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h03",
+     "observed_at": 1800025000,
+     "value": 1090,
+     "height": 4027,
+     "block_time": 1800025150,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h04",
+     "observed_at": 1800028600,
+     "value": 1120,
+     "height": 4074,
+     "block_time": 1800028750,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h05",
+     "observed_at": 1800032200,
+     "value": 1150,
+     "height": 4121,
+     "block_time": 1800032350,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h06",
+     "observed_at": 1800035800,
+     "value": 1180,
+     "height": 4168,
+     "block_time": 1800035950,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h07",
+     "observed_at": 1800039400,
+     "value": 1210,
+     "height": 4214,
+     "block_time": 1800039550,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h08",
+     "observed_at": 1800043000,
+     "value": 1240,
+     "height": 4261,
+     "block_time": 1800043150,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h09",
+     "observed_at": 1800046600,
+     "value": 1270,
+     "height": 4308,
+     "block_time": 1800046750,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h10",
+     "observed_at": 1800050200,
+     "value": 1300,
+     "height": 4355,
+     "block_time": 1800050350,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h11",
+     "observed_at": 1800053800,
+     "value": 1330,
+     "height": 4401,
+     "block_time": 1800053950,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h12",
+     "observed_at": 1800057400,
+     "value": 1360,
+     "height": 4448,
+     "block_time": 1800057550,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h13",
+     "observed_at": 1800061000,
+     "value": 1390,
+     "height": 4495,
+     "block_time": 1800061150,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h14",
+     "observed_at": 1800064600,
+     "value": 1420,
+     "height": 4542,
+     "block_time": 1800064750,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h15",
+     "observed_at": 1800068200,
+     "value": 1450,
+     "height": 4588,
+     "block_time": 1800068350,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h16",
+     "observed_at": 1800071800,
+     "value": 1480,
+     "height": 4635,
+     "block_time": 1800071950,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h17",
+     "observed_at": 1800075400,
+     "value": 1510,
+     "height": 4682,
+     "block_time": 1800075550,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h18",
+     "observed_at": 1800079000,
+     "value": 1540,
+     "height": 4729,
+     "block_time": 1800079150,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h19",
+     "observed_at": 1800082600,
+     "value": 1570,
+     "height": 4775,
+     "block_time": 1800082750,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h20",
+     "observed_at": 1800086200,
+     "value": 1600,
+     "height": 4822,
+     "block_time": 1800086350,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h21",
+     "observed_at": 1800089800,
+     "value": 1630,
+     "height": 4869,
+     "block_time": 1800089950,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h22",
+     "observed_at": 1800093400,
+     "value": 1660,
+     "height": 4916,
+     "block_time": 1800093550,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h23",
+     "observed_at": 1800097000,
+     "value": 1690,
+     "height": 4962,
+     "block_time": 1800097150,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "t",
+     "observed_at": 1800121720,
+     "value": 1900,
+     "height": 5284,
+     "block_time": 1800121870,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [
+     "t"
+    ],
+    "truth": "t",
+    "window_candidates": [
+     "h00",
+     "h01",
+     "h02",
+     "h03",
+     "h04",
+     "h05",
+     "h06",
+     "h07",
+     "h08",
+     "h09",
+     "h10",
+     "h11",
+     "h12",
+     "h13",
+     "h14",
+     "h15",
+     "h16",
+     "h17",
+     "h18",
+     "h19",
+     "h20",
+     "h21",
+     "h22",
+     "h23"
+    ],
+    "last": "h23",
+    "window": [
+     1000,
+     1030,
+     1060,
+     1090,
+     1120,
+     1150,
+     1180,
+     1210,
+     1240,
+     1270,
+     1300,
+     1330,
+     1360,
+     1390,
+     1420,
+     1450,
+     1480,
+     1510,
+     1540,
+     1570,
+     1600,
+     1630,
+     1660,
+     1690
+    ]
+   }
+  }
+ ],
  "skill": [
   {
    "name": "perfect forecast",
+   "variable": "temperature_c",
    "forecast": 2137,
    "truth": 2137,
    "reference": 250,
@@ -96,6 +1117,7 @@
   },
   {
    "name": "half the reference error",
+   "variable": "temperature_c",
    "forecast": 2137,
    "truth": 2012,
    "reference": 250,
@@ -111,6 +1133,7 @@
   },
   {
    "name": "error equals the reference: zero",
+   "variable": "temperature_c",
    "forecast": 2137,
    "truth": 1887,
    "reference": 250,
@@ -126,6 +1149,7 @@
   },
   {
    "name": "error one unit under the reference: smallest win",
+   "variable": "temperature_c",
    "forecast": 2137,
    "truth": 1888,
    "reference": 250,
@@ -141,6 +1165,7 @@
   },
   {
    "name": "error above the reference: clamped to zero",
+   "variable": "temperature_c",
    "forecast": 2137,
    "truth": 1500,
    "reference": 250,
@@ -156,6 +1181,7 @@
   },
   {
    "name": "integer division truncates (1/3)",
+   "variable": "temperature_c",
    "forecast": 1001,
    "truth": 1000,
    "reference": 3,
@@ -171,6 +1197,7 @@
   },
   {
    "name": "integer division truncates (2/3)",
+   "variable": "temperature_c",
    "forecast": 1002,
    "truth": 1000,
    "reference": 3,
@@ -186,6 +1213,7 @@
   },
   {
    "name": "copy of the 24 h mean, exactly",
+   "variable": "temperature_c",
    "forecast": 1800,
    "truth": 1800,
    "reference": 250,
@@ -201,6 +1229,7 @@
   },
   {
    "name": "copy of the 24 h mean, at the tolerance",
+   "variable": "temperature_c",
    "forecast": 1805,
    "truth": 1805,
    "reference": 250,
@@ -216,6 +1245,7 @@
   },
   {
    "name": "one past the tolerance of the mean: scored",
+   "variable": "temperature_c",
    "forecast": 1806,
    "truth": 1806,
    "reference": 250,
@@ -231,6 +1261,7 @@
   },
   {
    "name": "copy of the last reading, at the tolerance below",
+   "variable": "temperature_c",
    "forecast": 1495,
    "truth": 1495,
    "reference": 250,
@@ -246,6 +1277,7 @@
   },
   {
    "name": "one past the tolerance of the last reading: scored",
+   "variable": "temperature_c",
    "forecast": 1494,
    "truth": 1494,
    "reference": 250,
@@ -261,6 +1293,7 @@
   },
   {
    "name": "zero reference: zero even when perfect",
+   "variable": "temperature_c",
    "forecast": 2137,
    "truth": 2137,
    "reference": 0,
@@ -276,6 +1309,7 @@
   },
   {
    "name": "zero tolerance still catches an exact copy",
+   "variable": "temperature_c",
    "forecast": 1900,
    "truth": 1900,
    "reference": 250,
@@ -291,6 +1325,7 @@
   },
   {
    "name": "zero tolerance, one unit off the last reading",
+   "variable": "temperature_c",
    "forecast": 1901,
    "truth": 1900,
    "reference": 250,
@@ -306,6 +1341,7 @@
   },
   {
    "name": "negative temperatures",
+   "variable": "temperature_c",
    "forecast": -1250,
    "truth": -1180,
    "reference": 300,
@@ -321,6 +1357,7 @@
   },
   {
    "name": "forecast and truth on either side of zero",
+   "variable": "temperature_c",
    "forecast": -40,
    "truth": 35,
    "reference": 400,
@@ -336,6 +1373,7 @@
   },
   {
    "name": "pressure in Pa",
+   "variable": "pressure_hpa",
    "forecast": 101325,
    "truth": 101290,
    "reference": 180,
@@ -351,6 +1389,7 @@
   },
   {
    "name": "pressure in Pa, large miss",
+   "variable": "pressure_hpa",
    "forecast": 98000,
    "truth": 101290,
    "reference": 180,
@@ -366,6 +1405,7 @@
   },
   {
    "name": "reference of one unit, error zero",
+   "variable": "temperature_c",
    "forecast": 500,
    "truth": 500,
    "reference": 1,
@@ -381,6 +1421,7 @@
   },
   {
    "name": "reference of one unit, error one",
+   "variable": "temperature_c",
    "forecast": 501,
    "truth": 500,
    "reference": 1,
@@ -396,6 +1437,7 @@
   },
   {
    "name": "widest in-range temperature miss",
+   "variable": "temperature_c",
    "forecast": 10000,
    "truth": -10000,
    "reference": 20000,
@@ -411,6 +1453,7 @@
   },
   {
    "name": "widest in-range pressure miss",
+   "variable": "pressure_hpa",
    "forecast": 120000,
    "truth": 30000,
    "reference": 90001,
@@ -425,22 +1468,8 @@
    }
   },
   {
-   "name": "large values stay exact (beyond the range rule; arithmetic check only)",
-   "forecast": 2000000000,
-   "truth": -2000000000,
-   "reference": 2147483647,
-   "mean24": 0,
-   "last": 0,
-   "tol": 5,
-   "expect": {
-    "err": 4000000000,
-    "copy": false,
-    "skill": 0,
-    "beat_baseline": false
-   }
-  },
-  {
    "name": "random 00",
+   "variable": "temperature_c",
    "forecast": -4692,
    "truth": -4650,
    "reference": 597,
@@ -456,6 +1485,7 @@
   },
   {
    "name": "random 01",
+   "variable": "temperature_c",
    "forecast": 4319,
    "truth": 4302,
    "reference": 554,
@@ -471,6 +1501,7 @@
   },
   {
    "name": "random 02",
+   "variable": "temperature_c",
    "forecast": 5714,
    "truth": 5700,
    "reference": 442,
@@ -486,6 +1517,7 @@
   },
   {
    "name": "random 03",
+   "variable": "temperature_c",
    "forecast": -5825,
    "truth": -5631,
    "reference": 541,
@@ -501,6 +1533,7 @@
   },
   {
    "name": "random 04",
+   "variable": "temperature_c",
    "forecast": -2042,
    "truth": -2121,
    "reference": 269,
@@ -516,6 +1549,7 @@
   },
   {
    "name": "random 05",
+   "variable": "temperature_c",
    "forecast": -1019,
    "truth": -1128,
    "reference": 168,
@@ -531,6 +1565,7 @@
   },
   {
    "name": "random 06",
+   "variable": "temperature_c",
    "forecast": -2732,
    "truth": -2511,
    "reference": 234,
@@ -546,6 +1581,7 @@
   },
   {
    "name": "random 07",
+   "variable": "temperature_c",
    "forecast": -2577,
    "truth": -2447,
    "reference": 496,
@@ -561,6 +1597,7 @@
   },
   {
    "name": "random 08",
+   "variable": "temperature_c",
    "forecast": 1155,
    "truth": 1085,
    "reference": 526,
@@ -576,6 +1613,7 @@
   },
   {
    "name": "random 09",
+   "variable": "temperature_c",
    "forecast": 2438,
    "truth": 2192,
    "reference": 38,
@@ -591,6 +1629,7 @@
   },
   {
    "name": "random 10",
+   "variable": "temperature_c",
    "forecast": 301,
    "truth": 407,
    "reference": 215,
@@ -606,6 +1645,7 @@
   },
   {
    "name": "random 11",
+   "variable": "temperature_c",
    "forecast": -1398,
    "truth": -1668,
    "reference": 64,
@@ -621,6 +1661,7 @@
   },
   {
    "name": "random 12",
+   "variable": "temperature_c",
    "forecast": 2164,
    "truth": 2366,
    "reference": 242,
@@ -636,6 +1677,7 @@
   },
   {
    "name": "random 13",
+   "variable": "temperature_c",
    "forecast": -2011,
    "truth": -1637,
    "reference": 468,
@@ -651,6 +1693,7 @@
   },
   {
    "name": "random 14",
+   "variable": "temperature_c",
    "forecast": -4333,
    "truth": -4678,
    "reference": 314,
@@ -666,6 +1709,7 @@
   },
   {
    "name": "random 15",
+   "variable": "temperature_c",
    "forecast": 275,
    "truth": 192,
    "reference": 138,
@@ -681,6 +1725,7 @@
   },
   {
    "name": "random 16",
+   "variable": "temperature_c",
    "forecast": -5437,
    "truth": -5491,
    "reference": 114,
@@ -696,6 +1741,7 @@
   },
   {
    "name": "random 17",
+   "variable": "temperature_c",
    "forecast": 4515,
    "truth": 4233,
    "reference": 104,
@@ -711,6 +1757,7 @@
   },
   {
    "name": "random 18",
+   "variable": "temperature_c",
    "forecast": -5436,
    "truth": -5741,
    "reference": 54,
@@ -726,6 +1773,7 @@
   },
   {
    "name": "random 19",
+   "variable": "temperature_c",
    "forecast": 5351,
    "truth": 5686,
    "reference": 170,
@@ -741,6 +1789,7 @@
   },
   {
    "name": "random 20",
+   "variable": "temperature_c",
    "forecast": -2001,
    "truth": -1835,
    "reference": 486,
@@ -756,6 +1805,7 @@
   },
   {
    "name": "random 21",
+   "variable": "temperature_c",
    "forecast": -5306,
    "truth": -5529,
    "reference": 443,
@@ -771,6 +1821,7 @@
   },
   {
    "name": "random 22",
+   "variable": "temperature_c",
    "forecast": -2599,
    "truth": -2310,
    "reference": 312,
@@ -786,6 +1837,7 @@
   },
   {
    "name": "random 23",
+   "variable": "temperature_c",
    "forecast": 3880,
    "truth": 4117,
    "reference": 267,
@@ -796,6 +1848,38 @@
     "err": 237,
     "copy": false,
     "skill": 112360,
+    "beat_baseline": true
+   }
+  }
+ ],
+ "skill_wide_arithmetic": [
+  {
+   "name": "values near 2^31 stay exact",
+   "forecast": 2000000000,
+   "truth": -2000000000,
+   "reference": 2147483647,
+   "mean24": 0,
+   "last": 0,
+   "tol": 5,
+   "expect": {
+    "err": 4000000000,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "values near 2^31, reference just above the error",
+   "forecast": 2147483647,
+   "truth": -2147483647,
+   "reference": 4294967295,
+   "mean24": 0,
+   "last": 0,
+   "tol": 5,
+   "expect": {
+    "err": 4294967294,
+    "copy": false,
+    "skill": 1,
     "beat_baseline": true
    }
   }

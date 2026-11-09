@@ -27,7 +27,8 @@
  * Node reads are paced: at most WEBSITE_FORECAST_SCORE_READS_PER_MIN (default 20, 1 to 60) a minute in this
  * process, because the node's read limiter is shared with the backend's other reads. Blocks and 64-height
  * reading chunks are read once per pass and shared between forecasts. A 429 from the node stops the pass,
- * marks nothing, and the scorer then stays away for 5 minutes, doubling each time up to an hour.
+ * marks nothing, and the scorer then stays away for 5 minutes, doubling each time up to an hour. A forecast
+ * whose result cannot be written is left alone the same way, so it does not cost node reads every pass.
  *
  * OFF unless WEBSITE_FORECAST_ENABLED=true and WEBSITE_FORECAST_SCORE_ENABLED=true. Needs WRFCOIN_READER_TOKEN.
  * Logs carry counts only, never addresses, stations, coordinates or values.
@@ -38,7 +39,7 @@ import {
 } from '../forecast-verification/observed-verification.js';
 import { websiteForecastEnabled } from '../website-forecast/website-forecast.js';
 import {
-  DEFAULT_COPY_TOLERANCE, FIXED_POINT_UNITS, SCORE_DELAY_S, SCORE_PRECISION, TRUTH_MAX_DISTANCE_S, WINDOW_HOURS, hourlyWindow, inRange,
+  DEFAULT_COPY_TOLERANCE, FIXED_POINT_UNITS, SCORE_DELAY_S, SCORE_PRECISION, TRUTH_MAX_DISTANCE_S, WINDOW_HOURS, countsAsReading, hourlyWindow, inRange,
   isScoredVariable, lastReadingBefore, nearestReading, numberToFixedPoint, ratioSkill, referenceFromWindow, skillScore,
   type Reading, type ScoredVariable,
 } from './practice-score.js';
@@ -69,8 +70,12 @@ export function readsPerMinute(raw: string | undefined = process.env.WEBSITE_FOR
  * Shared between passes (one per process), so the ceiling also holds across the end of one pass and the start
  * of the next, and a 429 is remembered.
  */
-export interface PaceState { nextReadAt: number; busyStreak: number; resumeAt: number }
-export const newPaceState = (): PaceState => ({ nextReadAt: 0, busyStreak: 0, resumeAt: 0 });
+export interface PaceState {
+  nextReadAt: number; busyStreak: number; resumeAt: number;
+  /** Forecasts whose result could not be written: not read from the node again before `retryAt` (in memory). */
+  saveFailures: Map<string, { count: number; retryAt: number }>;
+}
+export const newPaceState = (): PaceState => ({ nextReadAt: 0, busyStreak: 0, resumeAt: 0, saveFailures: new Map() });
 class NodeBusy extends Error { constructor() { super('node read limit'); } }
 
 /**
@@ -102,8 +107,10 @@ export interface PassCounts {
   scored: number; unscored: number; waiting: number; retry: number;
   /** Rows that cannot be scored at all (unknown variable, unreadable value): never silently dropped. */
   skipped: number;
-  /** A result that could not be written; the forecast is looked at again next pass. */
+  /** A result that could not be written. The forecast is left alone for 5 minutes, doubling up to an hour. */
   saveErrors: number;
+  /** Forecasts not looked at this pass because their last result could not be written. */
+  deferred: number;
   nodeReads: number; nodeBusy: boolean;
   /** The pass did not run: the node answered 429 recently. */
   backingOff: boolean;
@@ -120,14 +127,17 @@ function memoBlocks(get: Core4Get): Core4Get {
   };
 }
 
-/** Rule 3 and rule 1: quorum-attested, not synthetic, in range. Also returns each reading's landing height. */
+/**
+ * Rule 3 and rule 1: quorum-attested, not synthetic, in range. Also returns each reading's landing height.
+ * A reading the node no longer holds a provenance class for (null) counts: the node drops that record some
+ * time after the reading is settled, so requiring an explicit class would exclude real readings.
+ */
 function toReadings(rows: ChainReading[], variable: ScoredVariable): { readings: Reading[]; heights: Map<string, number> } {
   const readings: Reading[] = [];
   const heights = new Map<string, number>();
   for (const r of rows) {
-    if (r.provenanceClass === 'synthetic' || !r.hasQuorum) continue;
     const value = numberToFixedPoint(r.values[variable]);
-    if (value === null || !inRange(variable, value)) continue;
+    if (value === null || !countsAsReading(variable, { value, hasQuorum: r.hasQuorum, provenance: r.provenanceClass })) continue;
     readings.push({ observedAt: r.observedAt, value, id: r.commitId });
     heights.set(r.commitId, r.height);
   }
@@ -273,9 +283,12 @@ export async function scoreWebsiteForecasts(deps: PracticeScoreDeps): Promise<Pa
   const { query, nowSec } = deps;
   const now = deps.now ?? Date.now;
   const pace = deps.pace ?? newPaceState();
-  const counts: PassCounts = { scored: 0, unscored: 0, waiting: 0, retry: 0, skipped: 0, saveErrors: 0, nodeReads: 0, nodeBusy: false, backingOff: false };
+  const counts: PassCounts = { scored: 0, unscored: 0, waiting: 0, retry: 0, skipped: 0, saveErrors: 0, deferred: 0, nodeReads: 0, nodeBusy: false, backingOff: false };
   if (now() < pace.resumeAt) { counts.backingOff = true; return counts; }
-  const rows = (await query(PENDING_SQL, [nowSec, SCORE_DELAY_S, RETRY_S, PRACTICE_SCORE_BATCH])).rows;
+  const selected = (await query(PENDING_SQL, [nowSec, SCORE_DELAY_S, RETRY_S, PRACTICE_SCORE_BATCH])).rows;
+  // A forecast whose last result could not be written is left alone until its retry time: no node reads for it.
+  const rows = selected.filter((row) => (pace.saveFailures.get(row.commit_id)?.retryAt ?? 0) <= now());
+  counts.deferred = selected.length - rows.length;
   if (rows.length === 0) return counts;
   const pacer = paced(deps.get, deps.readsPerMin ?? readsPerMinute(), pace, now,
     deps.sleep ?? ((ms) => new Promise<void>((resolve) => { setTimeout(resolve, ms); })));
@@ -293,7 +306,19 @@ export async function scoreWebsiteForecasts(deps: PracticeScoreDeps): Promise<Pa
     return counts;
   };
   const write = async (row: any, unit: string, validAt: number, source: string, result: ScoreRow): Promise<boolean> => {
-    try { await save(query, row.commit_id, unit, validAt, source, nowSec, result); return true; } catch { counts.saveErrors += 1; return false; }
+    try {
+      await save(query, row.commit_id, unit, validAt, source, nowSec, result);
+      pace.saveFailures.delete(row.commit_id);
+      return true;
+    } catch {
+      // No attempt mark could be written, so remember it here: otherwise this forecast would cost a full
+      // set of node reads on every pass for as long as the database refuses the row.
+      counts.saveErrors += 1;
+      const failures = (pace.saveFailures.get(row.commit_id)?.count ?? 0) + 1;
+      if (pace.saveFailures.size > 1000) pace.saveFailures.clear();
+      pace.saveFailures.set(row.commit_id, { count: failures, retryAt: now() + Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (failures - 1)) });
+      return false;
+    }
   };
   let tip: { height: number; time: number };
   try { tip = await chainTip(get); } catch { counts.retry = rows.length; return done(); }
@@ -420,7 +445,7 @@ export async function startWebsiteForecastScoreJob(deps: { query?: Query; get?: 
     if (running || !websiteForecastScoreEnabled()) return;
     running = true;
     scoreWebsiteForecasts({ query, get, nowSec: Math.floor(now() / 1000), pace, now })
-      .then((c) => { if (c.scored + c.unscored + c.retry + c.skipped + c.saveErrors > 0 || c.nodeBusy) deps.logger?.info('website forecast: practice score pass', c); })
+      .then((c) => { if (c.scored + c.unscored + c.retry + c.skipped + c.saveErrors + c.deferred > 0 || c.nodeBusy) deps.logger?.info('website forecast: practice score pass', c); })
       .catch(() => deps.logger?.warn('website forecast: practice score pass failed (details withheld)'))
       .finally(() => { running = false; });
   };
