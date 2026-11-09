@@ -287,7 +287,9 @@ const PG_URL = process.env.BACKFILL_TEST_PG_URL;
     // The node rebuilds the commit id from the payload object: it must reproduce the commit hash.
     expect(forecastCommitId(canonicalJson(node.reveals[0].payload), d.nonce, STATION, d.timestamp)).toBe(d.commitId);
 
-    node.status = { ...node.status, status: 'revealed_pending_attestation', revealed_at: 9002 };
+    // What the node really returns once the reveal is in a block: the commit record is pruned, so
+    // contribution_type and committed_at come back null.
+    node.status = { ...node.status, contribution_type: null, committed_at: null, status: 'revealed_pending_attestation', revealed_at: 9002 };
     clock += 80_000;
     expect(await tick()).toMatchObject({ revealed: 1, filed: 1 });
     const record = (await query('SELECT station_alias, model_id, horizon_hours, forecast_values, status FROM forecast_verification_records WHERE commit_id = $1', [d.commitId])).rows[0];
