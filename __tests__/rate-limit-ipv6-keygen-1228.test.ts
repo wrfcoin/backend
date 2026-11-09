@@ -93,10 +93,14 @@ describe('backend#1228: IP-based keyGenerators bucket IPv6 by subnet', () => {
   it('governance vote/write limiters', () => {
     jest.isolateModules(() => { require('../server/routes/governance-routes.ts'); });
     const custom = mockCaptured.filter((options) => typeof options.keyGenerator === 'function');
-    expect(custom.length).toBe(2);
+    // vote, write, and the advisory relay's per-IP and per-account limiters.
+    expect(custom.length).toBe(4);
     custom.forEach((options) => expectSharedV6Bucket(options.keyGenerator));
     // Authenticated users still key on their id.
     expect(custom[0].keyGenerator({ ...fakeRequest(V6_A), user: { id: 'user-1' } })).toBe('user-1');
+    // The advisory relay's account limiter keys on the signing account when the body names one.
+    const account = Array.from({ length: 20 }, (_, i) => i);
+    expect(custom[3].keyGenerator({ ...fakeRequest(V6_A), body: { account } })).toBe(`adv:${account.join(',')}`);
   });
 
   it('bridge rate limiter', () => {
