@@ -99,6 +99,15 @@ describe('advisory relay contract (pinned by core4 vectors)', () => {
     refuse({ ...pk, passkey: { ...pk.passkey, origin: 'https://evil.example' } }, /unknown member/);
     refuse({ ...pk, passkey: { ...pk.passkey, rp_id_hash: 'zz' } }, /rp_id_hash/);
     refuse({ ...ed, signature: 'ab' }, /signature/);
+    // One encoding per action (core4#146): no null passkey, no empty members, no uppercase hex.
+    refuse({ ...ed, passkey: null }, /not null/);
+    refuse({ ...pk, public_key: '' }, /non-empty/);
+    refuse({ ...pk, signature: '' }, /non-empty/);
+    refuse({ ...ed, public_key: ed.public_key.toUpperCase() }, /lowercase/);
+    refuse({ ...ed, signature: ed.signature.toUpperCase() }, /lowercase/);
+    for (const field of ['public_key_p256', 'rp_id_hash', 'authenticator_data', 'client_data_json', 'signature']) {
+      refuse({ ...pk, passkey: { ...pk.passkey, [field]: pk.passkey[field].toUpperCase() } }, new RegExp(`passkey\\.${field}`));
+    }
     refuse({ ...ed, nonce: -1 }, /nonce/);
     refuse({ ...ed, nonce: 2 ** 53 }, /nonce/);
     refuse({ ...ed, account: [1, 2, 3] }, /20-byte/);

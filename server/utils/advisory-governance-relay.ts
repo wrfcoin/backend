@@ -57,10 +57,11 @@ export type ParsedAdvisory =
 
 const fail = (message: string): ParsedAdvisory => ({ ok: false, message });
 const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+// Lowercase only: core4#146 accepts one encoding per action (no uppercase hex, no empty or null members).
 const isHexOf = (v: unknown, bytes: number): v is string =>
-  typeof v === 'string' && v.length === bytes * 2 && /^[0-9a-fA-F]*$/.test(v);
+  typeof v === 'string' && v.length === bytes * 2 && /^[0-9a-f]*$/.test(v);
 const isHexUpTo = (v: unknown, maxBytes: number): v is string =>
-  typeof v === 'string' && v.length > 0 && v.length % 2 === 0 && v.length <= maxBytes * 2 && /^[0-9a-fA-F]*$/.test(v);
+  typeof v === 'string' && v.length > 0 && v.length % 2 === 0 && v.length <= maxBytes * 2 && /^[0-9a-f]*$/.test(v);
 const sha3 = (buf: Buffer): Buffer => createHash('sha3-256').update(buf).digest();
 
 /** core4 Address::from_public_key (ed25519): 0x + hex(SHA3-256(pubkey)[..20]). */
@@ -157,8 +158,11 @@ export function parseSignedAdvisoryAction(body: unknown): ParsedAdvisory {
   const action = parseAction(body.action);
   if (action.ok === false) return fail(action.message);
   const accountBytes = [...Buffer.from(account.slice(2), 'hex')];
+  // Absent is the only "not this form": explicit null or "" members are refused (core4 one-encoding rule).
+  if (body.passkey === null) return fail('passkey must be absent or an object, not null');
+  if (body.public_key === '' || body.signature === '') return fail('public_key and signature must be absent or non-empty');
   const hasEd = body.public_key !== undefined || body.signature !== undefined;
-  const hasPasskey = body.passkey !== undefined && body.passkey !== null;
+  const hasPasskey = body.passkey !== undefined;
   if (hasEd === hasPasskey) return fail('exactly one of public_key + signature or passkey is required');
   if (hasPasskey) {
     const problem = passkeyProblem(body.passkey);
@@ -176,8 +180,8 @@ export function parseSignedAdvisoryAction(body: unknown): ParsedAdvisory {
       },
     };
   }
-  if (!isHexOf(body.public_key, 32)) return fail('public_key must be a 32-byte ed25519 public key in hex');
-  if (!isHexOf(body.signature, 64)) return fail('signature must be a 64-byte ed25519 signature in hex');
+  if (!isHexOf(body.public_key, 32)) return fail('public_key must be a 32-byte ed25519 public key in lowercase hex');
+  if (!isHexOf(body.signature, 64)) return fail('signature must be a 64-byte ed25519 signature in lowercase hex');
   if (ed25519Address(body.public_key) !== account) return fail('public_key does not derive to account');
   return {
     ok: true, account, kind: action.kind, signer: 'ed25519',
