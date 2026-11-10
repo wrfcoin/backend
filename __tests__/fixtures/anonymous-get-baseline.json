@@ -97,6 +97,7 @@
     "/api/stations/:stationId/observations",
     "/api/stations/:stationId/ownership",
     "/api/stations/:stationId/quality",
+    "/api/stations/:stationId/site-check",
     "/api/stations/:stationId/submissions",
     "/api/storage/weather/realtime/:stationId",
     "/api/v1/weather/wrf-forecast/*",

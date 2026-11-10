@@ -3,6 +3,8 @@
  *
  *   GET /api/stations/:alias/compare/history   how the station has compared with the nearest
  *                                              National Weather Service station over 30 days
+ *   GET /api/stations/:alias/site-check        a private hint that the station's readings have
+ *                                              started to look like a different place
  *
  * Owner only. A comparison over time says things like "this station usually reads 3 degrees
  * warm", which is for the person who runs the station, not for the public page. The caller must
@@ -18,8 +20,9 @@
  * Responses are `Cache-Control: private, no-store` and carry no station id, owner, wallet or
  * coordinate. Errors are fixed text.
  *
- * OFF unless STATION_COMPARE_HISTORY_ENABLED=true (needs migration 0046, see
- * services/station-compare-history.ts).
+ * compare/history: OFF unless STATION_COMPARE_HISTORY_ENABLED=true (needs migration 0046, see
+ * services/station-compare-history.ts). site-check: OFF unless STATION_SITE_CHECK_ENABLED=true
+ * (reads the same table, see services/station-site-check.ts).
  */
 import express from 'express';
 import { peekWalletSubject } from '../middleware/authMiddleware.js';
@@ -32,6 +35,7 @@ import {
   summarizeHistory,
   type Query,
 } from '../services/station-compare-history.js';
+import { BEFORE_DAYS, RECENT_DAYS, checkSite, stationSiteCheckEnabled } from '../services/station-site-check.js';
 
 type DbExecutor = { execute: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }> };
 
@@ -48,6 +52,7 @@ export function createStationOwnerInsightsRouter(deps: {
   walletOf?: (req: express.Request) => string | null;
   isOperator?: (req: express.Request) => boolean;
   historyEnabled?: () => boolean;
+  siteCheckEnabled?: () => boolean;
   limits?: { readPerIp?: number; windowMs?: number };
 } = {}): express.Router {
   const router = express.Router();
@@ -59,6 +64,7 @@ export function createStationOwnerInsightsRouter(deps: {
   const walletOf = deps.walletOf ?? ((req: express.Request) => peekWalletSubject(req));
   const isOperator = deps.isOperator ?? ((req: express.Request) => hasOperatorToken(req));
   const historyEnabled = deps.historyEnabled ?? stationCompareHistoryEnabled;
+  const siteCheckEnabled = deps.siteCheckEnabled ?? stationSiteCheckEnabled;
   const readPerIp = createWindowCounter(deps.limits?.readPerIp ?? 60, deps.limits?.windowMs ?? 15 * 60_000, now);
 
   /**
@@ -109,6 +115,13 @@ export function createStationOwnerInsightsRouter(deps: {
     if (stationId === null) return;
     const samples = await readSamples(query, stationId, now());
     res.json({ ...summarizeHistory(samples, Math.floor(now() / 1000)), source: 'core4+nws' });
+  }));
+
+  router.get('/stations/:stationId/site-check', failSafe(async (req, res) => {
+    const stationId = await ownedStation(req, res, siteCheckEnabled);
+    if (stationId === null) return;
+    const samples = await readSamples(query, stationId, now(), BEFORE_DAYS + RECENT_DAYS + 1);
+    res.json({ ...checkSite(samples, Math.floor(now() / 1000)), source: 'core4+nws' });
   }));
 
   return router;

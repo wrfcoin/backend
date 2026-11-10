@@ -301,7 +301,8 @@ app.use('/api/operators', createOperatorProfileRouter());
 app.use('/api', createStationDetailRouter());
 // Station theft protection: signed owner-action relay + ownership state (spec r23/station-owner-actions-spec.md).
 app.use('/api', createStationOwnerRouter());
-// Epic 8: owner-only station insights. OFF (404) unless STATION_COMPARE_HISTORY_ENABLED=true.
+// Epic 8: owner-only station insights. Each route is OFF (404) unless its flag is true:
+// STATION_COMPARE_HISTORY_ENABLED, STATION_SITE_CHECK_ENABLED.
 app.use('/api', createStationOwnerInsightsRouter());
 // backend#1289 (b3): /api/v1/weather/wrf-forecast/* answers the not-wired 501
 // instead of the catch-all 404.
