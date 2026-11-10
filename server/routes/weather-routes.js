@@ -621,6 +621,86 @@ router.post(
   }
 );
 
+// "My stations" (owner decision 2026-11-10): the stations the signed-in wallet
+// owns, whichever browser connected them. OFF unless MY_STATIONS_ENABLED=true.
+// The session check comes first (401 for every signed-out caller, switch on or
+// off, so the anonymous-GET ratchet sees an auth-required route); a signed-in
+// wallet gets 404 while it is off. The owner is the session's JWT address,
+// never a parameter. Passkey sessions get an empty list until Phase 2
+// (MY_STATIONS_PASSKEY_ENABLED=true), when the chain pays passkey owners.
+// Rows carry the public alias and name, freshness and the on-chain step; never
+// coordinates, raw ids, keys or rewards.
+function myStationsEnabled(env = process.env) {
+  return env.MY_STATIONS_ENABLED === 'true';
+}
+function myStationsPasskeyEnabled(env = process.env) {
+  return env.MY_STATIONS_PASSKEY_ENABLED === 'true';
+}
+function requireMyStations(req, res, next) {
+  if (!myStationsEnabled()) return res.status(404).json(createApiError('NOT_FOUND', 'Not found'));
+  return next();
+}
+const myStationsWalletLimiter = walletRateLimit(60);
+
+function publicChainState(status) {
+  if (status === undefined) return undefined;
+  if (!status || typeof status.state !== 'string') return null;
+  return {
+    state: status.state,
+    ...(typeof status.waitingFor === 'string' ? { waitingFor: status.waitingFor } : {}),
+    ...(typeof status.blockedReason === 'string' ? { blockedReason: status.blockedReason } : {}),
+  };
+}
+
+router.get(
+  '/stations/mine',
+  weatherGetLimiter,
+  authenticateWeatherRequest,
+  requireMyStations,
+  myStationsWalletLimiter,
+  async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const ownerAddress = typeof req.user?.address === 'string' ? req.user.address.trim().toLowerCase() : '';
+    if (!ownerAddress || ownerAddress === 'unknown') {
+      return res.status(401).json(createApiError('UNAUTHORIZED', 'Wallet address required'));
+    }
+    if (req.user?.walletScheme === 'passkey' && !myStationsPasskeyEnabled()) {
+      return res.json({ success: true, stations: [], truncated: false, passkey: 'later' });
+    }
+    try {
+      const { listStationsOwnedBy } = await getStationService();
+      const pool = await getPool();
+      let chainLastSeen;
+      try {
+        chainLastSeen = await getChainLastSeen();
+      } catch (error) {
+        chainLastSeen = undefined;
+      }
+      const owned = await listStationsOwnedBy(pool, ownerAddress, { chainLastSeen });
+      const stations = [];
+      for (const station of owned.stations) {
+        const onChain = publicChainState(await readChainRegistration(pool, station.stationId, ownerAddress));
+        stations.push(
+          scrubRawId(
+            {
+              alias: stationAlias(station.stationId),
+              name: publicStationName(station),
+              status: PUBLIC_STATION_STATUSES.has(station.status) ? station.status : null,
+              lastReadingAt: isoTimestampOrNull(station.lastDataUpdate),
+              ...(onChain === undefined ? {} : { onChain }),
+            },
+            station.stationId
+          )
+        );
+      }
+      return res.json({ success: true, stations, truncated: owned.truncated });
+    } catch (error) {
+      logger.error('Error listing the wallet\'s own stations');
+      return res.status(503).json(createApiError('SERVICE_UNAVAILABLE', 'Your stations are temporarily unavailable'));
+    }
+  }
+);
+
 // The collector's roster: website stations that are registered on chain, with
 // their DECRYPTED provider keys (see services/collector-roster.ts). Internal
 // only: the collector calls the backend on the compose network, and the public

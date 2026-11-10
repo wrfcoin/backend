@@ -45,6 +45,15 @@ export function openStationAliases(open: Set<string> = websiteForecastStations()
 }
 
 export const WEB_MODEL_ID = 'website-manual/v1';
+/**
+ * Forecast programs that relay through the website carry their own model name instead of the website's
+ * (owner, 2026-11-10). A short fixed list, so a name on the forecast page always means a known program:
+ * `gfs-station-bias/v0` is the core4 forecaster worker (tools/forecaster-worker, bias.MODEL_ID). Adding a
+ * program means adding its name here. A name is a label, never a reason to trust or pay a forecast.
+ */
+export const RELAYED_MODEL_IDS: readonly string[] = ['gfs-station-bias/v0'];
+export const isAllowedModelId = (id: unknown): id is string =>
+  typeof id === 'string' && (id === WEB_MODEL_ID || RELAYED_MODEL_IDS.includes(id));
 export const LEAD_HOURS = [1, 6, 12, 24] as const;
 export type LeadHours = typeof LEAD_HOURS[number];
 export const WEB_VARIABLES = ['temperature_c', 'pressure_hpa'] as const;
@@ -98,11 +107,11 @@ export function addressFromPublicKey(pubkeyHex: string): string {
 export const roundValue = (v: number) => Math.round(v * 10) / 10;
 export const utcDay = (unixSeconds: number) => new Date(unixSeconds * 1000).toISOString().slice(0, 10);
 
-export function buildForecastData(input: { stationId: string; variable: WebVariable; value: number; leadHours: LeadHours; issuedAt: number }) {
+export function buildForecastData(input: { stationId: string; variable: WebVariable; value: number; leadHours: LeadHours; issuedAt: number; modelId?: string }) {
   const data = {
     horizon_hours: input.leadHours,
     issued_at: input.issuedAt,
-    model_id: WEB_MODEL_ID,
+    model_id: input.modelId ?? WEB_MODEL_ID,
     station_id: input.stationId,
     valid_at: input.issuedAt + input.leadHours * 3600,
     values: { [input.variable]: roundValue(input.value) },
@@ -115,10 +124,10 @@ export function buildForecastData(input: { stationId: string; variable: WebVaria
  * digest depends on). A website forecast is typed by a person: there are no machine inputs, so input_hash
  * is the hash of an empty input list, as a fixed marker.
  */
-export function buildManifest(record: { data: string; stationId: string; issuedAt: number; horizonHours: number; variable: string }): ForecastManifest {
+export function buildManifest(record: { data: string; stationId: string; issuedAt: number; horizonHours: number; variable: string; modelId?: string }): ForecastManifest {
   return {
     schema_version: 1,
-    model_id: WEB_MODEL_ID,
+    model_id: record.modelId ?? WEB_MODEL_ID,
     input_hash: sha3('[]'),
     output_hash: sha3(record.data),
     produced_at: record.issuedAt,
@@ -129,8 +138,8 @@ export function buildManifest(record: { data: string; stationId: string; issuedA
   };
 }
 
-export interface DraftInput { stationAlias?: unknown; variable?: unknown; leadHours?: unknown; value?: unknown }
-export interface ParsedDraftInput { stationAlias: string; variable: WebVariable; leadHours: LeadHours; value: number }
+export interface DraftInput { stationAlias?: unknown; variable?: unknown; leadHours?: unknown; value?: unknown; modelId?: unknown }
+export interface ParsedDraftInput { stationAlias: string; variable: WebVariable; leadHours: LeadHours; value: number; modelId: string }
 
 export function parseDraftInput(body: DraftInput): { ok: true; value: ParsedDraftInput } | Fail {
   if (typeof body.stationAlias !== 'string' || !ALIAS_RE.test(body.stationAlias)) {
@@ -147,7 +156,14 @@ export function parseDraftInput(body: DraftInput): { ok: true; value: ParsedDraf
   if (!Number.isFinite(value) || value < lo || value > hi) {
     return fail(400, 'VALIDATION_ERROR', `value must be a number from ${lo} to ${hi}`);
   }
-  return { ok: true, value: { stationAlias: body.stationAlias, variable, leadHours: lead as LeadHours, value: roundValue(value) } };
+  let modelId = WEB_MODEL_ID;
+  if (body.modelId !== undefined && body.modelId !== null && body.modelId !== '') {
+    if (!isAllowedModelId(body.modelId)) {
+      return fail(400, 'VALIDATION_ERROR', `modelId must be one of ${[WEB_MODEL_ID, ...RELAYED_MODEL_IDS].join(', ')}`);
+    }
+    modelId = body.modelId;
+  }
+  return { ok: true, value: { stationAlias: body.stationAlias, variable, leadHours: lead as LeadHours, value: roundValue(value), modelId } };
 }
 
 export interface Draft {
@@ -166,9 +182,9 @@ export interface Draft {
 }
 
 /** Write the draft the browser checks and signs. `stationId` is the resolved, registered station. */
-export function makeDraft(input: ParsedDraftInput & { forecaster: string; stationId: string; nowSec: number; nonce?: string }): Draft {
+export function makeDraft(input: Omit<ParsedDraftInput, 'modelId'> & { modelId?: string } & { forecaster: string; stationId: string; nowSec: number; nonce?: string }): Draft {
   const issuedAt = input.nowSec;
-  const data = buildForecastData({ stationId: input.stationId, variable: input.variable, value: input.value, leadHours: input.leadHours, issuedAt });
+  const data = buildForecastData({ stationId: input.stationId, variable: input.variable, value: input.value, leadHours: input.leadHours, issuedAt, modelId: input.modelId });
   const nonce = input.nonce ?? `web-${randomBytes(16).toString('hex')}`;
   return {
     forecaster: input.forecaster,
@@ -233,7 +249,7 @@ export function checkSubmission(body: SubmitInput, walletAddress: string, nowSec
   if (canonical !== data) return fail(400, 'INVALID_DATA', 'data must be canonical JSON (sorted keys, compact)');
   const keys = Object.keys(object).sort().join(',');
   if (keys !== 'horizon_hours,issued_at,model_id,station_id,valid_at,values') return fail(400, 'INVALID_DATA', 'data has unexpected fields');
-  if (record.modelId !== WEB_MODEL_ID) return fail(400, 'INVALID_DATA', `data.model_id must be ${WEB_MODEL_ID}`);
+  if (!isAllowedModelId(record.modelId)) return fail(400, 'INVALID_DATA', `data.model_id must be one of ${[WEB_MODEL_ID, ...RELAYED_MODEL_IDS].join(', ')}`);
   const leadHours = record.horizonHours as LeadHours;
   if (!LEAD_HOURS.includes(leadHours)) return fail(400, 'INVALID_DATA', `data.horizon_hours must be one of ${LEAD_HOURS.join(', ')}`);
   if (record.validAt !== record.issuedAt + leadHours * 3600) return fail(400, 'INVALID_DATA', 'data.valid_at must be issued_at plus the lead');
@@ -256,7 +272,7 @@ export function checkSubmission(body: SubmitInput, walletAddress: string, nowSec
     ok: true,
     value: {
       record, data, nonce: body.nonce as string, timestamp, variable, value, leadHours, forecaster, authPubkey, authSignature,
-      manifest: buildManifest({ data, stationId: record.stationId, issuedAt: record.issuedAt, horizonHours: leadHours, variable }),
+      manifest: buildManifest({ data, stationId: record.stationId, issuedAt: record.issuedAt, horizonHours: leadHours, variable, modelId: record.modelId }),
       forecastDay: utcDay(record.issuedAt),
     },
   };
