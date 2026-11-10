@@ -342,6 +342,7 @@ declare global {
         role?: string;
         roles?: string[];
         permissions?: string[];
+        walletScheme?: string;
         sessionId?: string;
         verified?: boolean;
       };

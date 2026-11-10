@@ -156,6 +156,8 @@ declare namespace Express {
       role?: string;
       roles?: string[];
       permissions?: string[];
+      /** The wallet login scheme from the JWT's wallet_scheme claim (ed25519 | session_key | passkey), when present. */
+      walletScheme?: string;
       sessionId?: string;
       verified?: boolean;
     };
