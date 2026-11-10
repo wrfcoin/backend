@@ -20,10 +20,16 @@
  * public flag.
  *
  * Node reads are paced on the clock every backend job that reads the node shares
- * (node-read-pacer.ts, NODE_JOB_READS_PER_MIN, default 20). One station read is at most 7 node
- * calls (chain-station-tail.ts TAIL_MAX_CALLS), so each station reserves 7 read slots: the total
- * across jobs stays at or under the ceiling even in the worst case. A 429 from the node stops the
- * pass and the sampler then stays away for 5 minutes, doubling up to an hour.
+ * (node-read-pacer.ts, NODE_JOB_READS_PER_MIN, default 20). Each node call the sampler makes
+ * reserves one slot just before it is sent (pacedCore4Fetch), so only reads that really happen
+ * are counted, and a job that is also reading (the forecast score job) gets every other slot. A
+ * 429 from the node stops the pass and the sampler then stays away for 5 minutes, doubling up to
+ * an hour.
+ *
+ * A station the node will not answer for (a refusal other than 429, or an answer in the wrong
+ * shape) has had its turn for the hour and the pass moves on. If the node cannot be reached the
+ * pass also moves on, without using up the station's turn. Either way the pass stops after
+ * MAX_CONSECUTIVE_FAILURES in a row, so a node that is down is not asked for every station.
  *
  * Fair order: each pass starts after the station the last pass stopped at, and a station is
  * tried at most once an hour, so stations with no fresh reading cannot use up every pass.
@@ -42,6 +48,7 @@
 import type { ChainTailReader } from './chain-station-tail.js';
 import { CLOSE_WITHIN, cell, median } from './station-compare.js';
 import { nodeJobReadsPerMinute, processNodeReadClock, reserveNodeReads, type NodeReadClock } from './node-read-pacer.js';
+import { createChainTailReader, type Core4Fetch } from './chain-station-tail.js';
 
 export type Query = (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;
 
@@ -56,10 +63,13 @@ export const MIN_DAYS = 3;
 export const SAMPLE_MAX_AGE_S = 3600;
 export const SAMPLE_MAX_SKEW_S = 90 * 60;
 export const NWS_MAX_AGE_MS = 2 * 3600 * 1000;
-/** Worst-case node calls for one station read (chain-station-tail.ts TAIL_MAX_CALLS). */
-export const NODE_READS_PER_STATION = 7;
-/** At the default ceiling of 20 reads a minute: one station every 21 seconds. */
-export const STATION_GAP_MS = NODE_READS_PER_STATION * 3_000;
+/** A pass stops after this many station reads in a row that the node did not answer. */
+export const MAX_CONSECUTIVE_FAILURES = 3;
+/**
+ * Deadline for one paced station read: up to 7 node calls (chain-station-tail.ts TAIL_MAX_CALLS), each
+ * of which may wait for a slot behind another job at one read a minute at the slowest.
+ */
+export const PACED_READ_DEADLINE_MS = 10 * 60_000;
 export const MAX_STATIONS_PER_PASS = 60;
 export const STATION_LIST_CAP = 500;
 export const BACKOFF_BASE_MS = 5 * 60_000;
@@ -275,8 +285,6 @@ export function readingFromTailItem(item: Record<string, unknown> | undefined) {
 }
 
 export interface SamplerState {
-  /** The clock node reads are reserved on. The running job uses the process-wide one. */
-  clock: NodeReadClock;
   busyStreak: number; resumeAt: number; lastPrunedAt: number;
   /** The hour (epoch ms) `tried` belongs to, and the stations already tried in it. */
   triedHour: number; tried: Set<string>;
@@ -285,8 +293,8 @@ export interface SamplerState {
   /** 0.1-degree cells whose NWS lookup failed: not asked again before `until`. */
   nwsHold: Map<string, { streak: number; until: number }>;
 }
-export const newSamplerState = (clock: NodeReadClock = { nextReadAt: 0 }): SamplerState => ({
-  clock, busyStreak: 0, resumeAt: 0, lastPrunedAt: 0, triedHour: 0, tried: new Set(), cursor: null, nwsHold: new Map(),
+export const newSamplerState = (): SamplerState => ({
+  busyStreak: 0, resumeAt: 0, lastPrunedAt: 0, triedHour: 0, tried: new Set(), cursor: null, nwsHold: new Map(),
 });
 const MAX_NWS_HOLDS = 2000;
 
@@ -295,15 +303,14 @@ export interface SamplerDeps {
   chainTail: ChainTailReader;
   nws: NwsPairSource;
   now?: () => number;
-  sleep?: (ms: number) => Promise<void>;
   state?: SamplerState;
-  /** Node reads a minute (default: the shared ceiling). */
-  readsPerMin?: number;
 }
 
 export interface SamplerCounts {
   stations: number; alreadySampled: number; alreadyTried: number; read: number; stored: number;
   noReading: number; noReference: number; referenceOnHold: number; referenceErrors: number;
+  /** Stations the node refused or answered in the wrong shape (their turn for the hour is used). */
+  refused: number;
   nodeUnavailable: boolean; nodeBusy: boolean; backingOff: boolean;
 }
 
@@ -316,12 +323,10 @@ const INSERT_SQL = `INSERT INTO station_compare_samples
 /** One pass: every registered station that has no sample for the current hour yet, paced. Never throws on a node or NWS failure. */
 export async function sampleStations(deps: SamplerDeps): Promise<SamplerCounts> {
   const now = deps.now ?? Date.now;
-  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms).unref?.(); }));
   const state = deps.state ?? newSamplerState();
-  const readsPerMin = deps.readsPerMin ?? nodeJobReadsPerMinute();
   const counts: SamplerCounts = {
     stations: 0, alreadySampled: 0, alreadyTried: 0, read: 0, stored: 0, noReading: 0, noReference: 0,
-    referenceOnHold: 0, referenceErrors: 0, nodeUnavailable: false, nodeBusy: false, backingOff: false,
+    referenceOnHold: 0, referenceErrors: 0, refused: 0, nodeUnavailable: false, nodeBusy: false, backingOff: false,
   };
   if (state.resumeAt > now()) { counts.backingOff = true; return counts; }
 
@@ -350,6 +355,7 @@ export async function sampleStations(deps: SamplerDeps): Promise<SamplerCounts> 
   // At most one NWS call per cell per pass: later stations in the cell reuse the answer.
   const nwsByCell = new Map<string, Promise<NwsPairReading | null | 'error'>>();
 
+  let failuresInARow = 0;
   for (const row of order) {
     const stationId = String(row.station_id);
     if (done.has(stationId)) { counts.alreadySampled += 1; continue; }
@@ -371,7 +377,6 @@ export async function sampleStations(deps: SamplerDeps): Promise<SamplerCounts> 
       continue;
     }
 
-    await reserveNodeReads(state.clock, NODE_READS_PER_STATION, readsPerMin, now, sleep);
     counts.read += 1;
     const tail = await deps.chainTail.latest(stationId);
     if (tail.kind === 'rejected' && tail.status === 429) {
@@ -380,15 +385,26 @@ export async function sampleStations(deps: SamplerDeps): Promise<SamplerCounts> 
       state.resumeAt = now() + Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (state.busyStreak - 1));
       return counts;
     }
+    // Whatever the node said, the next pass starts after this station: one station can never hold the sampler.
+    state.cursor = stationId;
     if (tail.kind !== 'ok') {
-      // The node cannot be read: asking for the other stations now would only add load.
-      counts.nodeUnavailable = true;
-      return counts;
+      if (tail.kind === 'unavailable') {
+        // The node could not be reached. The station keeps its turn for a later pass this hour.
+        counts.nodeUnavailable = true;
+      } else {
+        // A refusal for this station (not 429) or an answer in the wrong shape: its turn is used.
+        counts.refused += 1;
+        state.tried.add(stationId);
+      }
+      failuresInARow += 1;
+      // Several in a row means the node itself is the problem: asking for more stations only adds load.
+      if (failuresInARow >= MAX_CONSECUTIVE_FAILURES) return counts;
+      continue;
     }
+    failuresInARow = 0;
     state.busyStreak = 0;
     // From here the station has had its turn for this hour, whatever the outcome.
     state.tried.add(stationId);
-    state.cursor = stationId;
     const mine = readingFromTailItem(tail.items[0]);
     const nowS = Math.floor(now() / 1000);
     if (!mine || nowS - mine.observedAt > SAMPLE_MAX_AGE_S || mine.observedAt > nowS + 300
@@ -425,6 +441,25 @@ export async function sampleStations(deps: SamplerDeps): Promise<SamplerCounts> 
   return counts;
 }
 
+/**
+ * A node client that reserves one slot on the shared clock just before each call it sends. Only calls that
+ * really go out are counted, so a job reading at the same time gets every other slot.
+ */
+export function pacedCore4Fetch(fetch: Core4Fetch, opts: {
+  clock: NodeReadClock;
+  readsPerMin?: () => number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+}): Core4Fetch {
+  const now = opts.now ?? Date.now;
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms).unref?.(); }));
+  const readsPerMin = opts.readsPerMin ?? nodeJobReadsPerMinute;
+  return async (path, options) => {
+    await reserveNodeReads(opts.clock, 1, readsPerMin(), now, sleep);
+    return fetch(path, options);
+  };
+}
+
 type Logger = { info: (message: string, meta?: unknown) => void; warn: (message: string, meta?: unknown) => void };
 
 export async function startStationCompareSampler(deps: {
@@ -437,19 +472,27 @@ export async function startStationCompareSampler(deps: {
     const { pool } = await import('../../database/db.js');
     return (sql: string, params?: unknown[]) => pool.query(sql, params ?? []) as Promise<{ rows: any[] }>;
   })();
-  const chainTail = deps.chainTail ?? (await import('./chain-station-tail.js')).getDefaultChainTailReader();
+  // The sampler's own reader: every node call it makes waits for a slot on the clock all jobs share.
+  const chainTail = deps.chainTail ?? createChainTailReader({
+    fetchCore4Json: pacedCore4Fetch(
+      (await import('../../shared/core4-route-client.js')).fetchCore4Json as Core4Fetch,
+      { clock: processNodeReadClock, now: deps.now },
+    ),
+    now: deps.now,
+    readDeadlineMs: PACED_READ_DEADLINE_MS,
+  });
   const nws = deps.nws ?? await (async () => {
     const mod: any = await import('./noaa-nws-api-service.js');
     const NOAAWeatherService = mod.default ?? mod;
     return nwsPairSourceFrom(new NOAAWeatherService());
   })();
-  const state = newSamplerState(processNodeReadClock);
+  const state = newSamplerState();
   let running = false;
   const tick = () => {
     if (running || !stationCompareHistoryEnabled()) return;
     running = true;
     sampleStations({ query, chainTail, nws, now: deps.now, state })
-      .then((c) => { if (c.stored > 0 || c.nodeBusy || c.nodeUnavailable || c.referenceErrors > 0) deps.logger?.info('station compare history: sample pass', c); })
+      .then((c) => { if (c.stored > 0 || c.nodeBusy || c.nodeUnavailable || c.refused > 0 || c.referenceErrors > 0) deps.logger?.info('station compare history: sample pass', c); })
       .catch(() => deps.logger?.warn('station compare history: sample pass failed (details withheld)'))
       .finally(() => { running = false; });
   };

@@ -461,6 +461,8 @@ describe('scoring pass', () => {
   });
 
   it('honours a lower ceiling from the environment and ignores a bad one', async () => {
+    // Its own rate is never above the ceiling all node-reading jobs share.
+    expect([readsPerMinute('40', 20), readsPerMinute('6', 20), readsPerMinute(undefined, 12), readsPerMinute('60', 60)]).toEqual([20, 6, 12, 60]);
     expect([readsPerMinute(undefined), readsPerMinute('6'), readsPerMinute('0'), readsPerMinute('500'), readsPerMinute('abc'), readsPerMinute('2.5')]).toEqual([20, 6, 20, 20, 20, 20]);
     const clock = fast();
     const node = fakeNode(tipAt(NOW), ramp(), { clock: clock.now });
@@ -473,20 +475,17 @@ describe('scoring pass', () => {
     const shared: NodeReadClock = { nextReadAt: 0 };
     const pace = { ...newPaceState(), clock: shared };
     const node = fakeNode(tipAt(NOW), ramp(), { clock: clock.now });
-    // Another job (the station sampler) takes a station's worth of slots, 7 reads, every 30 seconds while this one scores.
+    // Another job (the station sampler) is reading the node the whole time this one scores.
     const other: number[] = [];
-    let nextOther = clock.now();
     const get: typeof node.get = async (path, query) => {
-      while (clock.now() >= nextOther) {
-        await reserveNodeReads(shared, 7, 20, clock.now, clock.sleep);
-        for (let i = 0; i < 7; i += 1) other.push(clock.now() + i * 3_000);
-        nextOther += 30_000;
-      }
+      // The other job reads whenever this one does: one slot each, taken in turn.
+      await reserveNodeReads(shared, 1, 20, clock.now, clock.sleep);
+      other.push(clock.now());
       return node.get(path, query);
     };
     await scoreWebsiteForecasts({ ...clock, pace, query: fakeStore([forecastRow()]).query, get, nowSec: NOW });
     expect(node.log.length).toBeGreaterThan(20);
-    expect(other.length).toBeGreaterThan(7);
+    expect(other.length).toBe(node.log.length);
     // The job's own state is untouched: its reads were reserved on the shared clock.
     expect(pace.nextReadAt).toBe(0);
     expect(shared.nextReadAt).toBeGreaterThan(0);

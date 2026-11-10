@@ -12,11 +12,11 @@ import {
   HISTORY_DAYS,
   MAX_STATIONS_PER_PASS,
   MIN_PAIRS,
-  NODE_READS_PER_STATION,
-  STATION_GAP_MS,
+  MAX_CONSECUTIVE_FAILURES,
   dominantReference,
   newSamplerState,
   nwsPairSourceFrom,
+  pacedCore4Fetch,
   readingFromTailItem,
   sampleStations,
   summarizeHistory,
@@ -25,6 +25,7 @@ import {
 } from '../../server/services/station-compare-history.js';
 import { stationAlias } from '../../server/utils/station-alias.js';
 import { gapMsFor, nodeJobReadsPerMinute, reserveNodeReads, type NodeReadClock } from '../../server/services/node-read-pacer.js';
+import { createChainTailReader } from '../../server/services/chain-station-tail.js';
 
 const NOW_S = 1_790_000_000;
 const HOUR = 3600;
@@ -137,7 +138,7 @@ describe('sampler', () => {
 
   it('stores one pair per station for the current hour, from 0.1-degree cells only', async () => {
     const s = setup();
-    const counts = await sampleStations({ query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, sleep: s.sleep, state: newSamplerState() });
+    const counts = await sampleStations({ query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, state: newSamplerState() });
     expect(counts).toMatchObject({ stations: 3, read: 3, stored: 3, nodeBusy: false });
     expect(s.inserts).toHaveLength(3);
     const [stationId, hour, , t, h, p, nwsStation, , nt, nh, np] = s.inserts[0];
@@ -153,15 +154,9 @@ describe('sampler', () => {
     expect(s.sql.filter(q => /^INSERT/.test(q)).join(' ')).not.toMatch(/latitude|longitude/);
   });
 
-  it('reads stations at most one every 21 seconds', async () => {
-    const s = setup();
-    await sampleStations({ query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, sleep: s.sleep, state: newSamplerState() });
-    expect(s.sleeps).toEqual([STATION_GAP_MS, STATION_GAP_MS]);
-  });
-
   it('skips stations already sampled this hour without reading the node', async () => {
     const s = setup({ done: ['alpha', 'charlie'] });
-    const counts = await sampleStations({ query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, sleep: s.sleep, state: newSamplerState() });
+    const counts = await sampleStations({ query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, state: newSamplerState() });
     expect(counts).toMatchObject({ alreadySampled: 2, read: 1, stored: 1 });
     expect(s.latest.mock.calls.map(c => c[0])).toEqual(['bravo']);
   });
@@ -169,7 +164,7 @@ describe('sampler', () => {
   it('stops on a 429 from the node and stays away, doubling each time', async () => {
     const s = setup({ tail: () => ({ kind: 'rejected', status: 429, payload: null }) });
     const state = newSamplerState();
-    const deps = { query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, sleep: s.sleep, state };
+    const deps = { query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, state };
     const first = await sampleStations(deps);
     expect(first).toMatchObject({ read: 1, stored: 0, nodeBusy: true });
     expect(s.latest).toHaveBeenCalledTimes(1);
@@ -179,20 +174,55 @@ describe('sampler', () => {
     expect(s.latest).toHaveBeenCalledTimes(1);
   });
 
-  it('stops the pass when the node cannot be read', async () => {
-    const s = setup({ tail: () => ({ kind: 'unavailable', reason: 'CORE4_UNREACHABLE' }) });
-    const counts = await sampleStations({ query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, sleep: s.sleep, state: newSamplerState() });
-    expect(counts).toMatchObject({ read: 1, stored: 0, nodeUnavailable: true });
+  it('stops the pass after three stations in a row the node could not be reached for, and they keep their turn', async () => {
+    const stations = Array.from({ length: 8 }, (_, i) => ({ station_id: `s-${i}`, latitude: 0.3, longitude: 0.4 }));
+    const s = setup({ stations, tail: () => ({ kind: 'unavailable', reason: 'CORE4_UNREACHABLE' }) });
+    const state = newSamplerState();
+    const counts = await sampleStations({ query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, state });
+    expect(counts).toMatchObject({ read: MAX_CONSECUTIVE_FAILURES, stored: 0, nodeUnavailable: true, refused: 0 });
+    expect(state.tried.size).toBe(0);
+    expect(state.cursor).toBe('s-2');
+  });
+
+  it('a station the node keeps refusing does not hold up the others, in this pass or the next', async () => {
+    const stations = ['a-live', 'b-refused', 'c-live', 'd-live'].map(station_id => ({ station_id, latitude: 0.3, longitude: 0.4 }));
+    const s = setup({ stations });
+    s.latest.mockImplementation(async (id: string) => (id === 'b-refused'
+      ? { kind: 'rejected' as const, status: 422, payload: { error: { code: 'INVALID_STATION' } } }
+      : s.okTail(Math.floor(s.clock() / 1000) - 60, { temperature_c: 11.5, humidity_percent: 71, pressure_hpa: 998.2 })));
+    const state = newSamplerState();
+    const deps = { query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, state };
+    const first = await sampleStations(deps);
+    expect(first).toMatchObject({ read: 4, stored: 3, refused: 1, nodeBusy: false, nodeUnavailable: false });
+    expect(s.inserts.map(row => row[0])).toEqual(['a-live', 'c-live', 'd-live']);
+    // Its turn for the hour is used: the next pass does not ask for it again.
+    s.latest.mockClear();
+    await sampleStations(deps);
+    expect(s.latest).not.toHaveBeenCalled();
+    // Next hour it is asked once more, and the others are sampled again around it.
+    await s.sleep(3_600_000);
+    const nextHour = await sampleStations(deps);
+    expect(nextHour).toMatchObject({ read: 4, refused: 1, stored: 3 });
+  });
+
+  it('a wrong-shaped answer for one station is treated the same way', async () => {
+    const stations = ['a-odd', 'b-live'].map(station_id => ({ station_id, latitude: 0.3, longitude: 0.4 }));
+    const s = setup({ stations });
+    s.latest.mockImplementation(async (id: string) => (id === 'a-odd'
+      ? { kind: 'mismatch' as const }
+      : s.okTail(Math.floor(s.clock() / 1000) - 60, { temperature_c: 11.5 })));
+    expect(await sampleStations({ query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, state: newSamplerState() }))
+      .toMatchObject({ read: 2, refused: 1, stored: 1 });
   });
 
   it('stores nothing for a stale reading, a missing NWS observation or one too far apart in time', async () => {
     const stale = setup();
     stale.latest.mockImplementation(async () => stale.okTail(Math.floor(stale.clock() / 1000) - 2 * 3600, { temperature_c: 10 }));
-    expect(await sampleStations({ query: stale.query, chainTail: stale.chainTail, nws: stale.nws, now: stale.now, sleep: stale.sleep, state: newSamplerState() }))
+    expect(await sampleStations({ query: stale.query, chainTail: stale.chainTail, nws: stale.nws, now: stale.now, state: newSamplerState() }))
       .toMatchObject({ stored: 0, noReading: 3 });
 
     const none = setup({ nws: { latest: jest.fn(async () => null) } });
-    expect(await sampleStations({ query: none.query, chainTail: none.chainTail, nws: none.nws, now: none.now, sleep: none.sleep, state: newSamplerState() }))
+    expect(await sampleStations({ query: none.query, chainTail: none.chainTail, nws: none.nws, now: none.now, state: newSamplerState() }))
       .toMatchObject({ stored: 0, noReference: 3 });
 
   });
@@ -206,7 +236,7 @@ describe('sampler', () => {
       : { kind: 'ok' as const, items: [], chainHeight: 100, fromHeight: 36, toHeight: 100, complete: true }));
     const state = newSamplerState();
     // No pacing wait here, so three passes fit in one hour of the fake clock.
-    const deps = { query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, sleep: async () => {}, state };
+    const deps = { query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, state };
     const first = await sampleStations(deps);
     expect(first).toMatchObject({ read: MAX_STATIONS_PER_PASS, stored: 0, noReading: MAX_STATIONS_PER_PASS });
     const second = await sampleStations(deps);
@@ -226,7 +256,7 @@ describe('sampler', () => {
     const stations = Array.from({ length: MAX_STATIONS_PER_PASS + 5 }, (_, i) => ({ station_id: `s-${String(i).padStart(3, '0')}`, latitude: 0.3, longitude: 0.4 }));
     const s = setup({ stations });
     const state = newSamplerState();
-    const deps = { query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, sleep: async () => {}, state };
+    const deps = { query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, state };
     await sampleStations(deps);
     expect(state.cursor).toBe(`s-${String(MAX_STATIONS_PER_PASS - 1).padStart(3, '0')}`);
     s.latest.mockClear();
@@ -239,7 +269,7 @@ describe('sampler', () => {
     const failing = { latest: jest.fn(async () => { throw new Error('nws down'); }) };
     const s = setup({ nws: failing });
     const state = newSamplerState();
-    const deps = { query: s.query, chainTail: s.chainTail, nws: failing, now: s.now, sleep: s.sleep, state };
+    const deps = { query: s.query, chainTail: s.chainTail, nws: failing, now: s.now, state };
     const first = await sampleStations(deps);
     // alpha and bravo share a cell: one call for both, one for charlie's cell.
     expect(failing.latest).toHaveBeenCalledTimes(2);
@@ -271,7 +301,7 @@ describe('sampler', () => {
     const s = setup();
     const state = newSamplerState();
     state.nwsHold.set('0.1,0.7', { streak: 3, until: 0 });
-    await sampleStations({ query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, sleep: s.sleep, state });
+    await sampleStations({ query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, state });
     expect(state.nwsHold.has('0.1,0.7')).toBe(false);
   });
 
@@ -294,38 +324,89 @@ describe('sampler', () => {
 });
 
 describe('one pace for every job that reads the node', () => {
-  it('two callers on one clock never get the same slot, and together stay at the ceiling', async () => {
-    let clock = 1_000_000;
-    const now = () => clock;
+  const fakeClock = (start = 1_000_000) => {
+    let t = start;
+    return { now: () => t, sleep: async (ms: number) => { t += ms; } };
+  };
+
+  it('two jobs on one clock take turns, and together stay at the ceiling', async () => {
+    // A small scheduler: sleepers wake one at a time, earliest first, so two jobs can wait at once.
+    let t = 1_000_000;
+    const sleepers: Array<{ wake: number; resume: () => void }> = [];
+    const clock = { now: () => t, sleep: (ms: number) => new Promise<void>(resume => { sleepers.push({ wake: t + ms, resume }); }) };
+    const idle = () => new Promise<void>(resolve => { setImmediate(resolve); });
+    const runUntil = async (work: Promise<unknown>) => {
+      let done = false;
+      void work.then(() => { done = true; });
+      for (;;) {
+        await idle();
+        if (done) return;
+        sleepers.sort((a, b) => a.wake - b.wake);
+        const next = sleepers.shift();
+        if (next) { t = Math.max(t, next.wake); next.resume(); }
+      }
+    };
     const shared: NodeReadClock = { nextReadAt: 0 };
-    const starts: number[] = [];
-    const sleep = async (ms: number) => { clock += ms; };
-    // Job A reserves single reads; job B (the sampler) reserves a station's worth at a time.
-    for (let i = 0; i < 4; i += 1) {
-      await reserveNodeReads(shared, 1, 20, now, sleep); starts.push(clock);
-      await reserveNodeReads(shared, NODE_READS_PER_STATION, 20, now, sleep); starts.push(clock);
-    }
-    // 4 single reads + 4 x 7 reserved reads = 32 slots of 3 s: the last reservation starts at slot 25.
-    expect(starts[0]).toBe(1_000_000);
-    expect(starts[starts.length - 1] - starts[0]).toBe((3 * (1 + NODE_READS_PER_STATION) + 1) * gapMsFor(20));
-    expect(shared.nextReadAt - starts[0]).toBe(32 * gapMsFor(20));
-    for (let i = 1; i < starts.length; i += 1) expect(starts[i]).toBeGreaterThan(starts[i - 1]);
+    const reads: Array<{ job: string; at: number }> = [];
+    const job = async (name: string, count: number) => {
+      for (let i = 0; i < count; i += 1) {
+        await reserveNodeReads(shared, 1, 20, clock.now, clock.sleep);
+        reads.push({ job: name, at: clock.now() });
+      }
+    };
+    await runUntil(Promise.all([job('score', 30), job('sampler', 30)]));
+    reads.sort((a, b) => a.at - b.at);
+    // No two reads share a slot, and slots are one gap apart: 20 a minute in total.
+    for (let i = 1; i < reads.length; i += 1) expect(reads[i].at - reads[i - 1].at).toBe(gapMsFor(20));
+    // While both have work, neither waits more than one turn.
+    for (let i = 2; i < 40; i += 1) expect(new Set([reads[i].job, reads[i - 1].job]).size).toBe(2);
   });
 
-  it('the sampler waits for slots another job has already taken on the shared clock', async () => {
+  it('the sampler reserves one slot per node call it really makes, behind slots another job holds', async () => {
     const HOUR_MS = 3_600_000;
-    let clock = Math.floor((NOW_S * 1000) / HOUR_MS) * HOUR_MS + 60_000;
-    const shared: NodeReadClock = { nextReadAt: clock + 9_000 }; // another job holds the next 9 s
-    const sleeps: number[] = [];
+    const clock = fakeClock(Math.floor((NOW_S * 1000) / HOUR_MS) * HOUR_MS + 60_000);
+    const start = clock.now();
+    const shared: NodeReadClock = { nextReadAt: start + 9_000 }; // another job holds the next 9 s
+    const calls: number[] = [];
+    // A node that answers the height probe and one window: two calls for a live station.
+    const node = jest.fn(async (_path: string, options?: Record<string, unknown>) => {
+      calls.push(clock.now());
+      const query = (options?.query ?? {}) as { limit?: number };
+      const item = { observed_at: Math.floor(clock.now() / 1000) - 60, height: 500, values: { temperature_c: 11.5, humidity_percent: 71, pressure_hpa: 998.2 } };
+      return { ok: true, status: 200, payload: { ok: true, data: { items: query.limit === 1 ? [] : [item], next_after: 500, next_offset: 0, has_more: false, chain_height: 500 } } };
+    });
+    const chainTail = createChainTailReader({
+      fetchCore4Json: pacedCore4Fetch(node, { clock: shared, readsPerMin: () => 20, now: clock.now, sleep: clock.sleep }),
+      readerToken: () => 'reader-token-for-this-test',
+      now: clock.now,
+      readDeadlineMs: 600_000,
+    });
     const query = jest.fn(async (text: string) => (/FROM weather_stations/.test(text)
       ? { rows: [{ station_id: 'alpha', latitude: 0.3, longitude: 0.4 }] } : { rows: [] }));
-    const chainTail = { latest: jest.fn(async () => ({ kind: 'ok' as const, items: [], chainHeight: 1, fromHeight: 0, toHeight: 1, complete: true })), lastSeenMs: async () => null };
-    await sampleStations({
-      query, chainTail: chainTail as any, nws: { latest: async () => null }, now: () => clock,
-      sleep: async (ms) => { sleeps.push(ms); clock += ms; }, state: newSamplerState(shared),
+    const counts = await sampleStations({
+      query, chainTail, nws: { latest: async () => ({ stationIdentifier: 'KAAA', observedAt: Math.floor(clock.now() / 1000) - 600, temperatureC: 10, humidityPct: 75, barometricHpa: 1004 }) },
+      now: clock.now, state: newSamplerState(),
     });
-    expect(sleeps).toEqual([9_000]);
-    expect(shared.nextReadAt).toBe(clock + STATION_GAP_MS);
+    expect(counts).toMatchObject({ read: 1, stored: 1 });
+    // The first call waited for the held slots; each further call took exactly one more slot.
+    expect(calls[0]).toBe(start + 9_000);
+    for (let i = 1; i < calls.length; i += 1) expect(calls[i] - calls[i - 1]).toBe(gapMsFor(20));
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    expect(calls.length).toBeLessThan(7);
+    // Nothing was reserved beyond the calls that went out.
+    expect(shared.nextReadAt).toBe(calls[calls.length - 1] + gapMsFor(20));
+  });
+
+  it('a paced read that has to wait is not cut off by the page-request deadline', async () => {
+    const clock = fakeClock();
+    const shared: NodeReadClock = { nextReadAt: clock.now() + 120_000 }; // two minutes of slots already taken
+    const node = jest.fn(async () => ({ ok: true, status: 200, payload: { ok: true, data: { items: [], next_after: 10, next_offset: 0, has_more: false, chain_height: 10 } } }));
+    const chainTail = createChainTailReader({
+      fetchCore4Json: pacedCore4Fetch(node, { clock: shared, readsPerMin: () => 20, now: clock.now, sleep: clock.sleep }),
+      readerToken: () => 'reader-token-for-this-test', now: clock.now, readDeadlineMs: 600_000,
+    });
+    expect((await chainTail.latest('alpha')).kind).toBe('ok');
+    expect(node).toHaveBeenCalled();
   });
 
   it('reads the shared ceiling from the environment and ignores a bad value', () => {

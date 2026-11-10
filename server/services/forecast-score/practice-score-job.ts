@@ -24,7 +24,8 @@
  * `unscored: node_unavailable` after the same 24 hours. Fewer than 12 hourly samples before the commit =>
  * `unscored: no_baseline`. Nothing is filled in, and nothing here is paid or feeds rewards.
  *
- * Node reads are paced: at most WEBSITE_FORECAST_SCORE_READS_PER_MIN (default 20, 1 to 60) a minute, reserved on the
+ * Node reads are paced: at most WEBSITE_FORECAST_SCORE_READS_PER_MIN (default 20, 1 to 60, never above
+ * NODE_JOB_READS_PER_MIN) a minute, reserved on the
  * clock every backend job that reads the node shares (node-read-pacer.ts), because the node's read limiter counts
  * the backend as one client. Blocks and 64-height
  * reading chunks are read once per pass and shared between forecasts. A 429 from the node stops the pass,
@@ -39,7 +40,7 @@ import {
   blockTime, chainTip, firstHeightAtOrAfter, stationReadings, HOUR_S, type ChainReading, type Query,
 } from '../forecast-verification/observed-verification.js';
 import { websiteForecastEnabled } from '../website-forecast/website-forecast.js';
-import { processNodeReadClock, reserveNodeReads, type NodeReadClock } from '../node-read-pacer.js';
+import { nodeJobReadsPerMinute, processNodeReadClock, reserveNodeReads, type NodeReadClock } from '../node-read-pacer.js';
 import {
   DEFAULT_COPY_TOLERANCE, FIXED_POINT_UNITS, SCORE_DELAY_S, SCORE_PRECISION, TRUTH_MAX_DISTANCE_S, WINDOW_HOURS, countsAsReading, hourlyWindow, inRange,
   isScoredVariable, lastReadingBefore, nearestReading, numberToFixedPoint, ratioSkill, referenceFromWindow, skillScore,
@@ -63,9 +64,13 @@ export const BACKOFF_BASE_MS = 5 * 60_000;
 export const BACKOFF_MAX_MS = 60 * 60_000;
 export const PRACTICE_NOTE = 'Practice score. Nothing is paid for it.';
 
-export function readsPerMinute(raw: string | undefined = process.env.WEBSITE_FORECAST_SCORE_READS_PER_MIN): number {
+/** This job's own rate, never above the ceiling all node-reading jobs share (NODE_JOB_READS_PER_MIN). */
+export function readsPerMinute(
+  raw: string | undefined = process.env.WEBSITE_FORECAST_SCORE_READS_PER_MIN,
+  ceiling: number = nodeJobReadsPerMinute(),
+): number {
   const n = Number(raw);
-  return Number.isInteger(n) && n >= 1 && n <= 60 ? n : DEFAULT_READS_PER_MIN;
+  return Math.min(Number.isInteger(n) && n >= 1 && n <= 60 ? n : DEFAULT_READS_PER_MIN, ceiling);
 }
 
 /**
