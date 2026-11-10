@@ -2,7 +2,10 @@
  * Website station on-chain registration: the migration and every SQL statement,
  * run against a real database. Skipped unless MOBILE_STATION_PG_URL points at a
  * THROWAWAY database (never the live backend DB); the test builds its own
- * per-process schema and drops it. MOBILE_STATION_REQUIRE_PG=1 (set by CI) turns
+ * per-process schema and drops it. The tables this feature only reads
+ * (weather_stations, station_provider_credentials) are STUB tables created here
+ * with the columns the statements use; only migration 0045 is the real file. The
+ * full migration chain is not applied. MOBILE_STATION_REQUIRE_PG=1 (set by CI) turns
  * a missing URL into a failure so these cases cannot silently skip there.
  * Made-up wallets, stations and positions only.
  */
@@ -18,7 +21,8 @@ import {
   submitOwnershipProof,
 } from '../server/services/website-station-chain-registration';
 import {
-  REASON_NO_READING,
+  REASON_PROVIDER_UNREACHABLE,
+  REASON_STATION_REPORT,
   buildWebsiteExportArtifact,
   resolveReporting,
   selectNotReadyWebsiteRows,
@@ -79,12 +83,8 @@ d('website station chain registration against real Postgres', () => {
       station_id text NOT NULL REFERENCES weather_stations(station_id) ON DELETE CASCADE,
       provider text NOT NULL DEFAULT 'ambient',
       encrypted_api_key text NOT NULL, key_iv text NOT NULL, key_tag text NOT NULL,
+      encrypted_app_key text, app_iv text, app_tag text,
       UNIQUE (station_id, provider))`);
-    await pool.query(`CREATE TABLE weather_data (
-      id serial PRIMARY KEY,
-      data_id text NOT NULL UNIQUE,
-      "timestamp" timestamp NOT NULL DEFAULT now(),
-      station_id text)`);
     await pool.query(MIGRATION);
   });
   afterAll(async () => {
@@ -94,27 +94,22 @@ d('website station chain registration against real Postgres', () => {
   });
 
   interface Opts {
-    id?: string; active?: boolean; ingestion?: string; credentials?: boolean; readingAgeMinutes?: number | null;
+    id?: string; active?: boolean; ingestion?: string; credentials?: boolean; mac?: string;
     lat?: number | null; lon?: number | null; owner?: string;
   }
-  /** A website station row, by default one that is ready: credentials, active ingestion, a fresh reading. */
+  /** A website station row, by default one that is ready: credentials, active ingestion, a bound device. */
   async function station(w: ReturnType<typeof wallet>, o: Opts = {}) {
     const id = o.id ?? neutralId();
     await pool.query(
       `INSERT INTO weather_stations (station_id, owner_address, location, is_active, metadata, latitude, longitude)
        VALUES ($1, $2, 'fixture', $3, $4::jsonb, $5, $6)`,
-      [id, o.owner ?? w.address, o.active ?? true, JSON.stringify({ ingestionStatus: o.ingestion ?? 'active' }),
+      [id, o.owner ?? w.address, o.active ?? true, JSON.stringify({ ingestionStatus: o.ingestion ?? 'active', mac: o.mac ?? 'aa:bb:cc:dd:ee:01' }),
         o.lat === undefined ? 10 + 1 / 3 : o.lat, o.lon === undefined ? -(20 + 2 / 3) : o.lon],
     );
     if (o.credentials ?? true) {
       await pool.query(
-        `INSERT INTO station_provider_credentials (station_id, encrypted_api_key, key_iv, key_tag) VALUES ($1, 'x', 'x', 'x')`, [id]);
-    }
-    const age = o.readingAgeMinutes === undefined ? 5 : o.readingAgeMinutes;
-    if (age !== null) {
-      await pool.query(
-        `INSERT INTO weather_data (data_id, station_id, "timestamp") VALUES ($1, $2, (now() - ($3 || ' minutes')::interval)::timestamp)`,
-        [crypto.randomUUID(), id, String(age)]);
+        `INSERT INTO station_provider_credentials (station_id, encrypted_api_key, key_iv, key_tag, encrypted_app_key, app_iv, app_tag)
+         VALUES ($1, 'enc-api', 'iv1', 'tag1', 'enc-app', 'iv2', 'tag2')`, [id]);
     }
     return id;
   }
@@ -176,8 +171,6 @@ d('website station chain registration against real Postgres', () => {
   it('says what a waiting station is waiting for', async () => {
     const w = wallet();
     const cases: Array<[Opts, string]> = [
-      [{ readingAgeMinutes: null }, 'station_report'],
-      [{ readingAgeMinutes: 25 * 60 }, 'station_report'],
       [{ ingestion: 'pending' }, 'station_report'],
       [{ credentials: false }, 'station_report'],
       [{ id: `pws-fixture-named-${crypto.randomBytes(3).toString('hex')}` }, 'operator_review'],
@@ -214,45 +207,54 @@ d('website station chain registration against real Postgres', () => {
     await submit(w, moved);
     await pool.query('UPDATE weather_stations SET owner_address = $2 WHERE station_id = $1', [moved, wallet().address]);
     expected.set(moved, 'the station now belongs to a different owner');
-    // A station with no reading in the database passes the database rules; whether it is
-    // reporting is settled afterwards from the chain tail.
-    const silent = await station(w, { readingAgeMinutes: null });
+    // Stations that pass the database rules; whether each is reporting is settled afterwards
+    // by the provider read (a fake one here).
+    const silent = await station(w, { mac: 'aa:bb:cc:dd:ee:02' });
     await submit(w, silent);
-    const old = await station(w, { readingAgeMinutes: 25 * 60 });
-    await submit(w, old);
+    const down = await station(w, { mac: 'aa:bb:cc:dd:ee:03' });
+    await submit(w, down);
     // The ready station is the NEWEST waiting row, behind all of the above.
-    const ready = await station(w, { readingAgeMinutes: 7 });
+    const ready = await station(w, { mac: 'aa:bb:cc:dd:ee:04' });
     await submit(w, ready);
 
-    const ours = new Set([ready, silent, old, ...expected.keys()]);
+    const ours = new Set([ready, silent, down, ...expected.keys()]);
     const mine = <T extends { stationId: string }>(rows: T[]) => rows.filter((r) => ours.has(r.stationId));
     const all = mine(await selectReadyWebsiteRows(pool as any, 200));
-    // Only the rows that pass the database rules come back, oldest first.
-    expect(all.map((r) => r.stationId)).toEqual([silent, old, ready]);
-    expect(all.map((r) => r.observations24h)).toEqual([0, 0, 1]);
-    // Database only: the one with a fresh reading is ready even with a batch of ONE; the silent
-    // ones do not take its place.
-    const dbOnly = await resolveReporting(all, 1);
-    expect(dbOnly.ready.map((r) => [r.stationId, r.reportingSource])).toEqual([[ready, 'db']]);
-    expect(dbOnly.notReady).toEqual([{ stationId: silent, reason: REASON_NO_READING }, { stationId: old, reason: REASON_NO_READING }]);
-    // With the chain tail: the silent one was seen there, the old one was not.
-    const withChain = await resolveReporting(all, 21, {
-      chainEvidence: async (id) => (id === silent ? { kind: 'ok', count: 4, lastAgeMinutes: 3 } : { kind: 'ok', count: 0, lastAgeMinutes: null }),
+    // Only the rows that pass the database rules come back, oldest first, each with its device
+    // and its stored (still encrypted) keys for the provider read.
+    expect(all.map((r) => r.stationId)).toEqual([silent, down, ready]);
+    expect(all.map((r) => r.mac)).toEqual(['aa:bb:cc:dd:ee:02', 'aa:bb:cc:dd:ee:03', 'aa:bb:cc:dd:ee:04']);
+    expect(all[2].credentials).toEqual({
+      encryptedApiKey: 'enc-api', keyIv: 'iv1', keyTag: 'tag1', encryptedAppKey: 'enc-app', appIv: 'iv2', appTag: 'tag2',
     });
-    expect(withChain.ready.map((r) => [r.stationId, r.reportingSource])).toEqual([[silent, 'chain'], [ready, 'db']]);
-    expect(withChain.notReady).toEqual([{ stationId: old, reason: REASON_NO_READING }]);
-    const got = all.find((r) => r.stationId === ready)!;
-    expect(got).toMatchObject({ ownerAddress: w.address, isActive: true, observations24h: 1 });
-    expect(got.lastObservationAgeMinutes).toBeGreaterThanOrEqual(6);
-    expect(got.lastObservationAgeMinutes).toBeLessThanOrEqual(9);
+    // No provider read available: nothing is exported.
+    const none = await resolveReporting(all, 21);
+    expect(none.ready).toEqual([]);
+    expect(none.notReady.map((r) => r.reason)).toEqual(Array(3).fill(REASON_PROVIDER_UNREACHABLE));
+    // With a provider read: the reporting one is ready even behind the others; they keep their reasons.
+    const asked: string[] = [];
+    const resolved = await resolveReporting(all, 1, {
+      providerCheck: async (r) => {
+        asked.push(r.stationId);
+        if (r.stationId === silent) return { kind: 'stale' };
+        if (r.stationId === down) return { kind: 'unreachable' };
+        return { kind: 'fresh', ageMinutes: 7 };
+      },
+    });
+    expect(asked).toEqual([silent, down, ready]);
+    expect(resolved.ready.map((r) => [r.stationId, r.reportingSource, r.lastObservationAgeMinutes])).toEqual([[ready, 'provider', 7]]);
+    expect(resolved.notReady).toEqual([
+      { stationId: silent, reason: REASON_STATION_REPORT }, { stationId: down, reason: REASON_PROVIDER_UNREACHABLE },
+    ]);
 
     const report = new Map(mine(await selectNotReadyWebsiteRows(pool as any)).map((r) => [r.stationId, (r as any).reason]));
     expect(report).toEqual(expected);
 
     // The allow-list admits exactly the named id, and the export writes the grid point only.
     const allowed = mine(await selectReadyWebsiteRows(pool as any, 200, [named]));
-    expect(allowed.map((r) => r.stationId).sort()).toEqual([named, old, ready, silent].sort());
-    const { artifact, skipped } = buildWebsiteExportArtifact(allowed, { ...CHAIN, batchId: 'b' });
+    expect(allowed.map((r) => r.stationId).sort()).toEqual([named, down, ready, silent].sort());
+    const fresh = (await resolveReporting(allowed, 21, { providerCheck: async () => ({ kind: 'fresh', ageMinutes: 1 }) })).ready;
+    const { artifact, skipped } = buildWebsiteExportArtifact(fresh, { ...CHAIN, batchId: 'b' });
     expect(skipped).toEqual([]);
     for (const s of artifact.stations) expect([s.latitude, s.longitude]).toEqual([10.3, -20.7]);
     // Reading changed nothing.

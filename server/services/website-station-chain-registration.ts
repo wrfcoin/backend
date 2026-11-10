@@ -35,7 +35,10 @@ export interface ChainRegistrationPool {
 
 export type ChainRegistrationState = 'needs_owner_signature' | 'waiting' | 'earning' | 'blocked';
 export type BlockedReason = 'station_id_taken_on_chain' | 'chain_record_not_active';
-/** Why a waiting station is not in a batch yet. `batch` = nothing is missing; it is in the queue. */
+/**
+ * Why a waiting station is not in a batch yet, as far as the database shows. `batch` = nothing
+ * is missing there; `station_report` = no stored credentials or ingestion is not active.
+ */
 export type WaitingFor = 'batch' | 'station_report' | 'operator_review';
 
 export interface WebsiteStationChain {
@@ -114,16 +117,12 @@ function affected(res: { rows?: any[]; rowCount?: number | null; count?: number 
 const NOT_FOUND = () => fail(404, 'NOT_FOUND', 'Station not found');
 
 /**
- * What makes a waiting station ready for a batch, as SQL over `w`
- * (weather_stations). Shared by the owner's status read and the export, so
- * the page and the batch can never disagree about why a station is waiting.
+ * "Provider credentials are stored and ingestion is active", as SQL over `w`
+ * (weather_stations). Shared by the owner's status read and the export. Nothing
+ * here reads `weather_data`: the deployed backend has no writer for it.
  */
 export const ACTIVE_INGESTION_SQL = `(w.metadata->>'ingestionStatus' = 'active'
         AND EXISTS (SELECT 1 FROM station_provider_credentials c WHERE c.station_id = w.station_id))`;
-export const OBSERVATIONS_24H_SQL = `(SELECT count(*)::int FROM weather_data d
-          WHERE d.station_id = w.station_id
-            AND d."timestamp" > now() - interval '${RECENT_OBSERVATION_HOURS} hours'
-            AND d."timestamp" <= now())`;
 
 /**
  * A station the caller owns, with ITS OWN registration row if there is one
@@ -132,30 +131,14 @@ export const OBSERVATIONS_24H_SQL = `(SELECT count(*)::int FROM weather_data d
  * not-yours.
  */
 export const OWNED_STATION_SQL = `SELECT w.station_id, r.status, r.blocked_reason,
-            ${ACTIVE_INGESTION_SQL} AS ingestion_active,
-            ${OBSERVATIONS_24H_SQL} AS observations_24h
+            ${ACTIVE_INGESTION_SQL} AS ingestion_active
        FROM weather_stations w
        LEFT JOIN website_station_chain_registrations r
          ON r.station_id = w.station_id AND r.owner_address = lower(w.owner_address)
       WHERE w.station_id = $1 AND lower(w.owner_address) = $2
       LIMIT 1`;
 
-/**
- * Where a station's readings can be seen. Provider collectors submit readings to the chain node,
- * not to this backend, so `weather_data` may hold nothing for a station that is reporting fine:
- * a reading in the chain tail counts as well.
- */
-export interface ReportingLookup {
-  /** Epoch ms of the station's newest reading in the chain tail, or null when none is known. Never throws. */
-  chainLastSeenMs?: (stationId: string) => Promise<number | null>;
-  now?: () => number;
-}
-
-function statusOf(
-  row: Record<string, unknown>,
-  chain: WebsiteStationChain,
-  seenOnChain = false,
-): ChainRegistrationStatus {
+function statusOf(row: Record<string, unknown>, chain: WebsiteStationChain): ChainRegistrationStatus {
   const stationId = String(row.station_id);
   const base = { stationId, chainId: chain.chainId, networkId: chain.networkId };
   if (row.status === 'on_chain') return { state: 'earning', ...base };
@@ -166,9 +149,10 @@ function statusOf(
     return { state: 'blocked', ...base, blockedReason: reason };
   }
   if (row.status !== 'db_only') return { state: 'needs_owner_signature', ...base };
-  // Waiting: say what, if anything, is still missing. The export applies the same rules.
-  const reporting = row.ingestion_active === true && (Number(row.observations_24h) > 0 || seenOnChain);
-  const waitingFor: WaitingFor = !reporting
+  // Waiting: say what the database already shows is missing. Whether the station has reported
+  // in the last 24 hours is checked only when a batch is prepared (a fresh provider read by the
+  // export), so a station can read "batch" here and still be left out of one for that reason.
+  const waitingFor: WaitingFor = row.ingestion_active !== true
     ? 'station_report'
     : NEUTRAL_STATION_ID_RE.test(stationId) ? 'batch' : 'operator_review';
   return { state: 'waiting', ...base, waitingFor };
@@ -183,30 +167,13 @@ export async function getChainRegistrationStatus(
   stationId: string,
   walletAddress: unknown,
   chain: WebsiteStationChain,
-  lookup: ReportingLookup = {},
 ): Promise<ChainRegistrationStatus | null> {
   const owner = caller(walletAddress);
   if (!owner || !WEBSITE_STATION_ID_RE.test(stationId) || isReservedMobileStationId(stationId)) return null;
   const found = await pool.query(OWNED_STATION_SQL, [stationId, owner]);
   const row = found.rows?.[0];
   if (!row) return null;
-  // Ask the chain only when it can change the answer: a waiting station with active ingestion
-  // and no reading in the database.
-  let seenOnChain = false;
-  if (
-    lookup.chainLastSeenMs && row.status === 'db_only' && row.ingestion_active === true
-    && !(Number(row.observations_24h) > 0)
-  ) {
-    try {
-      const last = await lookup.chainLastSeenMs(String(row.station_id));
-      const now = (lookup.now ?? Date.now)();
-      seenOnChain = typeof last === 'number' && Number.isFinite(last)
-        && last <= now && now - last <= RECENT_OBSERVATION_HOURS * 3_600_000;
-    } catch {
-      seenOnChain = false;
-    }
-  }
-  return statusOf(row, chain, seenOnChain);
+  return statusOf(row, chain);
 }
 
 /**
@@ -244,7 +211,6 @@ export async function submitOwnershipProof(
   stationId: string,
   body: unknown,
   chain: WebsiteStationChain,
-  lookup: ReportingLookup = {},
 ): Promise<ServiceResult> {
   const owner = caller(walletAddress);
   if (!owner) return fail(401, 'UNAUTHORIZED', 'Wallet address required');
@@ -293,7 +259,7 @@ export async function submitOwnershipProof(
     return { status: 200, body: { chainRegistration: statusOf(row, chain) } };
   }
   const written = await pool.query(UPSERT_OWNERSHIP_PROOF_SQL, [rawId, owner, pubkeyHex, signatureHex]);
-  const again = await getChainRegistrationStatus(pool, rawId, owner, chain, lookup);
+  const again = await getChainRegistrationStatus(pool, rawId, owner, chain);
   if (!again) return NOT_FOUND();
   if (affected(written) !== 1 && again.state === 'needs_owner_signature') {
     // The proof was not stored and nothing else explains the state: do not claim it was.

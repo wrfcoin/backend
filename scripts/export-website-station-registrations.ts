@@ -33,19 +33,18 @@
  *     a station id is public on chain for good, so each one is the operator's deliberate choice.
  *
  *   Optional: --confirmed-reporting <station id> (repeatable): the caller saw this station reporting
- *     in a look just before this run; make no node read for it. The batch tool passes these on its
- *     second, stamped export so that one stays quick.
+ *     in a look just before this run; make no provider read for it. The batch tool passes these on
+ *     its second, stamped export so that one stays quick.
  *
  * Only stations that are ready are exported: proof stored, station active and still the signer's,
- * provider credentials stored with ingestion active, and reporting. "Reporting" is a reading in
- * weather_data in the last 24 hours OR a reading in the node's chain tail (provider collectors submit
- * to the node, not to this backend). The node is asked only for stations the database has nothing
- * for, at about 20 calls a minute, so a run with many such stations takes minutes; it stops asking on
- * a 429. A node read that fails never exports a station. Each row's evidence names the source (db,
- * chain or confirmed).
- *   Also needs, for the chain look: the backend's node URL and WRFCOIN_READER_TOKEN.
+ * provider credentials stored with ingestion active, a neutral id, and REPORTING. Reporting is
+ * settled here by a fresh provider read with the station's stored keys: a reading from the station's
+ * own device (its MAC) in the last 24 hours. One request per station, at most one a second
+ * (WEBSITE_STATION_PROVIDER_MIN_INTERVAL_MS, default and minimum 1000), 10 s timeout. A provider
+ * error, timeout or 429 leaves the station waiting (provider_unreachable); it is never exported on
+ * an error. Credentials and provider answers are never printed. Needs API_KEY_ENCRYPTION_KEY.
  * Waiting stations that are not exported are listed by id with the reason, and in the artifact's
- * `not_exported`.
+ * `not_exported`; the artifact is written even when nothing is ready (exit 2).
  *   Optional: --cli-batch-out <file> --submitted-at <unix secs> ALSO writes the bare JSON array that
  *     `wrfcoin station build-registration --batch` accepts (submitted_at is the operator-supplied
  *     value; no clock is read).
@@ -57,12 +56,14 @@ import { writeFileSync } from 'node:fs';
 import postgres from 'postgres';
 import { resolveWebsiteStationChain } from '../server/services/website-station-chain-registration.js';
 import {
-  chainTailEvidence,
+  ambientProviderChecker,
+  resolveProviderMinIntervalMs,
   runWebsiteExportCli,
+  type ProviderChecker,
+  type ProviderFetch,
   type WebsiteExportPool,
 } from '../server/services/website-station-export.js';
-import { createChainTailReader, type Core4Fetch } from '../server/services/chain-station-tail.js';
-import { fetchCore4Json } from '../shared/core4-route-client.js';
+import { decryptData } from '../server/utils/crypto.js';
 
 async function main(): Promise<number> {
   const databaseUrl = process.env.DATABASE_URL;
@@ -79,31 +80,27 @@ async function main(): Promise<number> {
       return { rows: rows as unknown as any[], rowCount: (rows as any).count ?? rows.length };
     },
   };
-  // Readings for a station the database has none for are looked up in the node's chain tail
-  // (provider collectors submit to the node, not to this backend), with the same reader the
-  // station pages use. Needs the node URL and WRFCOIN_READER_TOKEN from the backend's own
-  // environment; without them every such station is reported as "could not check". Node calls
-  // are counted and paced at about 20 a minute.
-  let nodeCalls = 0;
-  const countedFetch: Core4Fetch = (path, options) => {
-    nodeCalls += 1;
-    return (fetchCore4Json as Core4Fetch)(path, options);
-  };
-  const tail = createChainTailReader({ fetchCore4Json: countedFetch });
-  const chainEvidence = chainTailEvidence({
-    latest: (stationId) => tail.latest(stationId),
-    takeCallCount: () => {
-      const n = nodeCalls;
-      nodeCalls = 0;
-      return n;
-    },
-    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  });
+  // Whether a station is reporting is settled by a fresh provider read with its stored keys (the
+  // read the collector makes). That needs API_KEY_ENCRYPTION_KEY, the key the backend stores
+  // them under; without it no station can be shown to be reporting and none is exported.
+  // Requests are paced: WEBSITE_STATION_PROVIDER_MIN_INTERVAL_MS, default and minimum 1000.
+  const encryptionKey = process.env.API_KEY_ENCRYPTION_KEY ?? '';
+  let providerCheck: ProviderChecker | undefined;
+  if (/^[0-9a-fA-F]{64}$/.test(encryptionKey)) {
+    providerCheck = ambientProviderChecker({
+      fetchFn: ((url, init) => globalThis.fetch(url, init)) as ProviderFetch,
+      decrypt: (value) => decryptData(value, encryptionKey),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      minIntervalMs: resolveProviderMinIntervalMs(process.env.WEBSITE_STATION_PROVIDER_MIN_INTERVAL_MS),
+    });
+  } else {
+    console.error('API_KEY_ENCRYPTION_KEY is not set or not 64 hex characters: no station can be checked with its provider');
+  }
   try {
     return await runWebsiteExportCli(process.argv.slice(2), {
       pool,
       chain,
-      chainEvidence,
+      providerCheck,
       writeFile: (path, data) => writeFileSync(path, data, { flag: 'wx', mode: 0o600 }),
       log: (m) => console.log(m),
       error: (m) => console.error(m),

@@ -320,10 +320,15 @@ router.post('/stations', weatherPostLimiter, authenticateWeatherRequest, async (
     // station id is public on chain for good and must not hold the name its
     // owner typed. A client-supplied id is honoured only for a station this
     // wallet already owns (an update).
-    const chainRegistration = await getChainRegistrationService();
-    const neutralStationId = chainRegistration.websiteStationChainRegistrationEnabled()
-      ? chainRegistration.newNeutralStationId
-      : undefined;
+    // The switch is read here, from the environment, so that with it OFF this route
+    // does not even load the registration module and cannot be broken by it. With
+    // it ON a load failure refuses the request (500): issuing a name-based id
+    // would defeat the point of the switch.
+    let neutralStationId;
+    if (process.env.WEBSITE_STATION_CHAIN_REGISTRATION_ENABLED === 'true') {
+      const chainRegistration = await getChainRegistrationService();
+      neutralStationId = chainRegistration.newNeutralStationId;
+    }
     const pool = await getPool();
     // Single connection + explicit transaction: the service takes a per-owner
     // pg_advisory_xact_lock over its count-then-insert section, which only
@@ -536,18 +541,6 @@ async function getChainRegistrationService() {
   return _chainRegistrationService;
 }
 
-// Provider collectors submit readings to the chain node, not to this backend, so a station can be
-// reporting with nothing in weather_data. The shared, cached chain tail reader answers that; any
-// failure there just leaves the database answer.
-async function chainReportingLookup() {
-  try {
-    const chainLastSeen = await getChainLastSeen();
-    return { chainLastSeenMs: (stationId) => chainLastSeen(stationId) };
-  } catch (error) {
-    return {};
-  }
-}
-
 /** undefined = switched off (field omitted); null = could not be read, or no chain is configured. */
 async function readChainRegistration(pool, stationId, ownerAddress) {
   try {
@@ -555,7 +548,7 @@ async function readChainRegistration(pool, stationId, ownerAddress) {
     if (!service.websiteStationChainRegistrationEnabled()) return undefined;
     const chain = service.resolveWebsiteStationChain();
     if (!chain) return null;
-    return await service.getChainRegistrationStatus(pool, stationId, ownerAddress, chain, await chainReportingLookup());
+    return await service.getChainRegistrationStatus(pool, stationId, ownerAddress, chain);
   } catch (error) {
     logger.warn('Station chain registration status unavailable');
     return null;
@@ -616,14 +609,7 @@ router.post(
         }
         stationId = resolved.stationId;
       }
-      const result = await service.submitOwnershipProof(
-        pool,
-        ownerAddress,
-        stationId,
-        req.body,
-        chain,
-        await chainReportingLookup()
-      );
+      const result = await service.submitOwnershipProof(pool, ownerAddress, stationId, req.body, chain);
       const body = result.status < 400 ? { success: true, ...result.body } : result.body;
       return res.status(result.status).json(body);
     } catch (error) {

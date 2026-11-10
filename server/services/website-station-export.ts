@@ -13,20 +13,28 @@
  * the chain station sync sees it in the chain registry, so running the export
  * twice gives the same rows until then.
  *
- * A station is exported only when ALL of this holds, and the filter is in the
- * SQL, so a row that fails never takes a place in the batch window:
+ * A station is exported only when ALL of this holds:
  *  - its proof is stored and the row is waiting (never `blocked`);
  *  - the station is active and still belongs to the wallet that signed;
  *  - its provider credentials are stored and ingestion is active;
- *  - it is reporting: a reading in `weather_data` in the last 24 hours, OR a
- *    reading for its station id in the chain tail (provider collectors submit
- *    to the chain node, not to this backend). The database is asked first; the
- *    node only for stations the database has nothing for, paced, and a node
- *    read that fails never exports a station;
  *  - its id is a neutral server-issued id (`pws-` + 16 hex), or the operator
  *    named it with --allow-id. A station id is public on chain for good, and
- *    older ids hold the name the owner typed.
- * Stations that are waiting but not exported are listed with the reason.
+ *    older ids hold the name the owner typed;
+ *  - it is REPORTING: a fresh read of the provider, made here with the
+ *    station's stored credentials, shows a reading from the station's own
+ *    device (the MAC bound to it) in the last 24 hours.
+ * The first four are in the SQL, so a row that fails one never takes a place
+ * in the batch window. Stations that are waiting but not exported are listed
+ * with a fixed reason.
+ *
+ * Why the provider and not a table: nothing writes `weather_data` on the
+ * deployed backend, and the chain knows nothing of a station before it is
+ * registered. The collector reads a provider station the same way (core4
+ * tests/security/lib/ambient-pipeline.cjs: GET /v1/devices with the station's
+ * keys, the device picked by its exact MAC), so this checks what the collector
+ * will later submit. One provider request per station, paced, 10 s timeout.
+ * Credentials and provider payloads are never logged or printed; a provider
+ * error, timeout or 429 never exports a station.
  *
  * Coordinates leave here at 0.1 degree only (owner ruling: what goes on chain
  * is public forever). Every row is re-verified first; a row that fails is
@@ -38,7 +46,7 @@ import { toStorageGrid } from '../utils/coordinate-grid.js';
 import {
   ACTIVE_INGESTION_SQL,
   NEUTRAL_STATION_ID_RE,
-  OBSERVATIONS_24H_SQL,
+  RECENT_OBSERVATION_HOURS,
   WEBSITE_STATION_ID_RE,
   ownerAddressFromPubkey,
 } from './website-station-chain-registration.js';
@@ -48,6 +56,23 @@ export const WEBSITE_EXPORT_VERSION = 'website_station_registration_export_v1';
 export const WEBSITE_EXPORT_HARDWARE_MODEL = 'personal-weather-station';
 /** A home station nobody has calibrated has earned no tier; raising it is a governance call. */
 export const WEBSITE_EXPORT_DATA_QUALITY_TIER = 'unverified' as const;
+
+/** Stored provider credentials, still encrypted. Never printed, never written to the artifact. */
+export interface EncryptedProviderCredentials {
+  encryptedApiKey: string;
+  keyIv: string;
+  keyTag: string;
+  encryptedAppKey: string | null;
+  appIv: string | null;
+  appTag: string | null;
+}
+
+/**
+ * `provider` = a fresh provider read showed a reading from the station's device in the last
+ * 24 hours; `confirmed` = the caller saw exactly that in a look just before this export (see
+ * --confirmed-reporting).
+ */
+export type ReportingSource = 'provider' | 'confirmed';
 
 export interface WebsiteExportRow {
   stationId: string;
@@ -59,32 +84,19 @@ export interface WebsiteExportRow {
   isActive: boolean;
   latitude: number | null;
   longitude: number | null;
-  /** Readings stored in the last 24 hours, and minutes since the newest one. */
-  observations24h?: number;
-  lastObservationAgeMinutes?: number | null;
-  /** Where the reading was seen; set by resolveReporting. */
+  /** The device this station is bound to, and its stored keys: used for the provider read only. */
+  mac?: string | null;
+  credentials?: EncryptedProviderCredentials | null;
+  /** Set by resolveReporting. */
   reportingSource?: ReportingSource;
+  lastObservationAgeMinutes?: number | null;
 }
 
-/**
- * What the dry run shows per row: where the station was seen reporting and how recently.
- * `db` = weather_data in the last 24 hours; `chain` = the node's chain tail; `confirmed` = the
- * caller checked it in a look just before this export (see --confirmed-reporting). Nothing personal.
- */
-export type ReportingSource = 'db' | 'chain' | 'confirmed';
+/** What the dry run shows per row: the source and the minutes since the last reading. Nothing else. */
 export interface WebsiteExportEvidence {
   source: ReportingSource;
-  /** Readings found: in the last 24 hours (db), or in the chain tail window that held them (chain). */
-  observations_24h: number;
   last_observation_age_minutes: number | null;
 }
-
-/** One paced look at the chain tail for a station. `error` and `rate_limited` never export a station. */
-export type ChainEvidence =
-  | { kind: 'ok'; count: number; lastAgeMinutes: number | null }
-  | { kind: 'error' }
-  | { kind: 'rate_limited' };
-export type ChainEvidenceReader = (stationId: string) => Promise<ChainEvidence>;
 
 export interface WebsiteExportStation {
   station_id: string;
@@ -178,7 +190,7 @@ function rowProblem(row: WebsiteExportRow, chainId: string, networkId: string): 
   return null;
 }
 
-/** Deterministic: rows are ordered by station id, no clock is read. */
+/** Deterministic: rows are ordered by station id, no clock is read. Credentials never reach the artifact. */
 export function buildWebsiteExportArtifact(
   rows: WebsiteExportRow[],
   opts: { chainId: string; networkId: string; batchId: string },
@@ -213,8 +225,7 @@ export function buildWebsiteExportArtifact(
       provenance_class: 'real',
       data_quality_tier: WEBSITE_EXPORT_DATA_QUALITY_TIER,
       evidence: {
-        source: row.reportingSource ?? 'db',
-        observations_24h: Number.isInteger(row.observations24h) ? (row.observations24h as number) : 0,
+        source: row.reportingSource ?? 'provider',
         last_observation_age_minutes:
           typeof row.lastObservationAgeMinutes === 'number' && Number.isFinite(row.lastObservationAgeMinutes)
             ? Math.max(0, Math.floor(row.lastObservationAgeMinutes))
@@ -255,17 +266,18 @@ export interface WebsiteExportPool {
  * Read-only. The oldest waiting stations that pass every rule the database can
  * check, first. Those rules are in the WHERE clause, so a row that fails one
  * never uses a place in the LIMIT window. Whether a station is REPORTING is
- * settled afterwards (resolveReporting): the database count is returned here,
- * and the chain is asked only for a station with none. $2 is the operator's allow-list of ids that are
- * not neutral server-issued ids, comma-joined (a station id has no comma).
+ * settled afterwards by a fresh provider read (resolveReporting), with the
+ * device MAC and the stored (still encrypted) credentials selected here. $2 is
+ * the operator's allow-list of ids that are not neutral server-issued ids,
+ * comma-joined (a station id has no comma).
  */
 export const SELECT_READY_WEBSITE_STATIONS_SQL = `SELECT r.station_id, r.owner_address, r.owner_pubkey, r.ownership_signature,
             w.owner_address AS station_owner_address, w.is_active, w.latitude, w.longitude,
-            ${OBSERVATIONS_24H_SQL} AS observations_24h,
-            (SELECT floor(extract(epoch FROM (now() - max(d."timestamp"))) / 60)::int FROM weather_data d
-              WHERE d.station_id = w.station_id AND d."timestamp" <= now()) AS last_observation_age_minutes
+            w.metadata->>'mac' AS mac,
+            c.encrypted_api_key, c.key_iv, c.key_tag, c.encrypted_app_key, c.app_iv, c.app_tag
        FROM website_station_chain_registrations r
        JOIN weather_stations w ON w.station_id = r.station_id
+       LEFT JOIN station_provider_credentials c ON c.station_id = w.station_id AND c.provider = 'ambient'
       WHERE r.status = 'db_only'
         AND w.is_active = true
         AND lower(w.owner_address) = r.owner_address
@@ -297,120 +309,8 @@ export const NOT_READY_REPORT_LIMIT = 200;
 /** How many waiting stations one export looks at when deciding who is reporting. */
 export const CANDIDATE_WINDOW = 200;
 
-export const REASON_NO_READING = 'no reading in the last 24 hours in the database or the chain tail (source none)';
-export const REASON_CHAIN_READ_FAILED = 'could not check the chain for readings (node read failed); not exported this run';
-export const REASON_RATE_LIMITED = 'not checked: the node asked to slow down (429); run again later';
-
-/**
- * Settle who is reporting, oldest first, until `limit` stations are ready.
- *  - a reading in the database in the last 24 hours: ready, source `db`, no node read;
- *  - otherwise an id the caller confirmed moments ago: ready, source `confirmed`, no node read;
- *  - otherwise ask the chain tail: a reading there: ready, source `chain`; none: not exported
- *    (source none); a failed read: not exported; a 429: stop asking the node for the rest of the run.
- * A station is never exported on an error. With no chain reader, only the database counts.
- */
-export async function resolveReporting(
-  candidates: WebsiteExportRow[],
-  limit: number,
-  options: { chainEvidence?: ChainEvidenceReader; confirmed?: string[] } = {},
-): Promise<{ ready: WebsiteExportRow[]; notReady: WebsiteSkippedRow[] }> {
-  const ready: WebsiteExportRow[] = [];
-  const notReady: WebsiteSkippedRow[] = [];
-  const confirmed = new Set(options.confirmed ?? []);
-  let rateLimited = false;
-  for (const row of candidates) {
-    if (ready.length >= limit) break;
-    if ((row.observations24h ?? 0) > 0) {
-      ready.push({ ...row, reportingSource: 'db' });
-      continue;
-    }
-    if (confirmed.has(row.stationId)) {
-      ready.push({ ...row, reportingSource: 'confirmed', observations24h: 0, lastObservationAgeMinutes: null });
-      continue;
-    }
-    if (!options.chainEvidence) {
-      notReady.push({ stationId: row.stationId, reason: REASON_NO_READING });
-      continue;
-    }
-    if (rateLimited) {
-      notReady.push({ stationId: row.stationId, reason: REASON_RATE_LIMITED });
-      continue;
-    }
-    let seen: ChainEvidence;
-    try {
-      seen = await options.chainEvidence(row.stationId);
-    } catch {
-      seen = { kind: 'error' };
-    }
-    if (seen.kind === 'rate_limited') {
-      rateLimited = true;
-      notReady.push({ stationId: row.stationId, reason: REASON_RATE_LIMITED });
-    } else if (seen.kind === 'error') {
-      notReady.push({ stationId: row.stationId, reason: REASON_CHAIN_READ_FAILED });
-    } else if (Number.isInteger(seen.count) && seen.count > 0) {
-      ready.push({
-        ...row, reportingSource: 'chain', observations24h: seen.count, lastObservationAgeMinutes: seen.lastAgeMinutes,
-      });
-    } else {
-      notReady.push({ stationId: row.stationId, reason: REASON_NO_READING });
-    }
-  }
-  return { ready, notReady };
-}
-
-/**
- * A ChainEvidenceReader over the backend's chain tail reader (the same reads the station pages
- * use). Readings count when stamped within the last 24 hours and not in the future. Node reads
- * are paced: after each station it waits `paceMsPerCall` for every node call that station cost,
- * which keeps a long pass at about 60000 / paceMsPerCall calls a minute.
- */
-export function chainTailEvidence(deps: {
-  latest: (stationId: string) => Promise<
-    | { kind: 'ok'; items: Array<Record<string, unknown>>; complete: boolean }
-    | { kind: 'rejected'; status: number }
-    | { kind: 'unavailable' | 'mismatch' }
-  >;
-  /** Node calls made since the last time this was asked (the caller's fetch wrapper counts them). */
-  takeCallCount: () => number;
-  sleep: (ms: number) => Promise<void>;
-  now?: () => number;
-  paceMsPerCall?: number;
-}): ChainEvidenceReader {
-  const now = deps.now ?? Date.now;
-  const pace = deps.paceMsPerCall ?? 3_000;
-  return async (stationId) => {
-    deps.takeCallCount();
-    let result: ChainEvidence;
-    try {
-      const read = await deps.latest(stationId);
-      if (read.kind === 'rejected') {
-        result = read.status === 429 ? { kind: 'rate_limited' } : { kind: 'error' };
-      } else if (read.kind !== 'ok') {
-        result = { kind: 'error' };
-      } else {
-        const at = now();
-        const stamps = read.items
-          .map((item) => Number(item.observed_at) * 1000)
-          .filter((ms) => Number.isFinite(ms) && ms <= at && at - ms <= 24 * 3_600_000);
-        if (stamps.length === 0 && !read.complete) {
-          // The walk stopped early with nothing found: that is not evidence of silence.
-          result = { kind: 'error' };
-        } else {
-          result = {
-            kind: 'ok',
-            count: stamps.length,
-            lastAgeMinutes: stamps.length ? Math.floor((at - Math.max(...stamps)) / 60_000) : null,
-          };
-        }
-      }
-    } catch {
-      result = { kind: 'error' };
-    }
-    const calls = deps.takeCallCount();
-    if (result.kind !== 'rate_limited' && calls > 0 && pace > 0) await deps.sleep(calls * pace);
-    return result;
-  };
-}
+export const REASON_STATION_REPORT = 'station_report: no reading from this station\'s device in the last 24 hours';
+export const REASON_PROVIDER_UNREACHABLE = 'provider_unreachable: the provider could not be read for this station; not exported this run';
 
 export async function selectReadyWebsiteRows(
   pool: WebsiteExportPool,
@@ -418,6 +318,7 @@ export async function selectReadyWebsiteRows(
   allowIds: string[] = [],
 ): Promise<WebsiteExportRow[]> {
   const res = await pool.query(SELECT_READY_WEBSITE_STATIONS_SQL, [limit, allowIds.join(',')]);
+  const text = (value: unknown): string | null => (typeof value === 'string' && value !== '' ? value : null);
   return (res.rows ?? []).map((r) => ({
     stationId: r.station_id,
     ownerAddress: r.owner_address,
@@ -427,11 +328,13 @@ export async function selectReadyWebsiteRows(
     isActive: r.is_active === true,
     latitude: r.latitude === null || r.latitude === undefined ? null : Number(r.latitude),
     longitude: r.longitude === null || r.longitude === undefined ? null : Number(r.longitude),
-    observations24h: Number(r.observations_24h),
-    lastObservationAgeMinutes:
-      r.last_observation_age_minutes === null || r.last_observation_age_minutes === undefined
-        ? null
-        : Number(r.last_observation_age_minutes),
+    mac: text(r.mac),
+    credentials: text(r.encrypted_api_key) && text(r.key_iv) && text(r.key_tag)
+      ? {
+        encryptedApiKey: r.encrypted_api_key, keyIv: r.key_iv, keyTag: r.key_tag,
+        encryptedAppKey: text(r.encrypted_app_key), appIv: text(r.app_iv), appTag: text(r.app_tag),
+      }
+      : null,
   }));
 }
 
@@ -446,6 +349,148 @@ export async function selectNotReadyWebsiteRows(
   }));
 }
 
+/**
+ * The outcome of one fresh provider read for one station.
+ *  - fresh:       the station's device has a reading in the last 24 hours;
+ *  - stale:       the device is there, its last reading is older (or it has none);
+ *  - no_device:   the account answered, but the station's device (its MAC) is not on it;
+ *  - unreachable: error, timeout, 429, a bad answer, or credentials that could not be read.
+ */
+export type ProviderCheck =
+  | { kind: 'fresh'; ageMinutes: number }
+  | { kind: 'stale' }
+  | { kind: 'no_device' }
+  | { kind: 'unreachable' };
+export type ProviderChecker = (row: WebsiteExportRow) => Promise<ProviderCheck>;
+
+/**
+ * Settle who is reporting, oldest first, until `limit` stations are ready. One provider read per
+ * station. A fresh reading from the station's own device: ready. A stale reading or a missing
+ * device: stays waiting (`station_report`). Anything else, including no checker at all: stays
+ * waiting (`provider_unreachable`). A station is never exported on an error. An id the caller
+ * confirmed a moment ago is ready without a provider read.
+ */
+export async function resolveReporting(
+  candidates: WebsiteExportRow[],
+  limit: number,
+  options: { providerCheck?: ProviderChecker; confirmed?: string[] } = {},
+): Promise<{ ready: WebsiteExportRow[]; notReady: WebsiteSkippedRow[] }> {
+  const ready: WebsiteExportRow[] = [];
+  const notReady: WebsiteSkippedRow[] = [];
+  const confirmed = new Set(options.confirmed ?? []);
+  for (const row of candidates) {
+    if (ready.length >= limit) break;
+    if (confirmed.has(row.stationId)) {
+      ready.push({ ...row, reportingSource: 'confirmed', lastObservationAgeMinutes: null });
+      continue;
+    }
+    let seen: ProviderCheck = { kind: 'unreachable' };
+    if (options.providerCheck) {
+      try {
+        seen = await options.providerCheck(row);
+      } catch {
+        seen = { kind: 'unreachable' };
+      }
+    }
+    if (seen.kind === 'fresh' && Number.isFinite(seen.ageMinutes) && seen.ageMinutes >= 0) {
+      ready.push({ ...row, reportingSource: 'provider', lastObservationAgeMinutes: seen.ageMinutes });
+    } else if (seen.kind === 'stale' || seen.kind === 'no_device') {
+      notReady.push({ stationId: row.stationId, reason: REASON_STATION_REPORT });
+    } else {
+      notReady.push({ stationId: row.stationId, reason: REASON_PROVIDER_UNREACHABLE });
+    }
+  }
+  return { ready, notReady };
+}
+
+/** A MAC with separators and case removed (the same identity the registration uses). */
+function canonicalMac(value: unknown): string {
+  return typeof value === 'string' ? value.toLowerCase().replace(/[^0-9a-f]/g, '') : '';
+}
+
+export const AMBIENT_DEVICES_URL = 'https://rt.ambientweather.net/v1/devices';
+export const PROVIDER_TIMEOUT_MS = 10_000;
+/** Ambient allows one request a second per key; this is also the pace between stations. */
+export const DEFAULT_PROVIDER_MIN_INTERVAL_MS = 1_000;
+
+export function resolveProviderMinIntervalMs(raw: string | undefined): number {
+  const n = Number(raw);
+  // Never faster than the provider's own limit, whatever the setting says.
+  return Number.isFinite(n) && n >= DEFAULT_PROVIDER_MIN_INTERVAL_MS ? Math.floor(n) : DEFAULT_PROVIDER_MIN_INTERVAL_MS;
+}
+
+export type ProviderFetch = (
+  url: string,
+  init: { method: 'GET'; signal: AbortSignal },
+) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
+
+/**
+ * The provider check for Ambient stations: the same read the registration used to validate the
+ * keys and the collector uses to fetch readings (GET /v1/devices with the station's own keys),
+ * then the device picked by its exact MAC and the time of its last reading.
+ *
+ * One request per station; requests start at least `minIntervalMs` apart; each has a 10 s
+ * timeout. Nothing is logged here, and nothing from the request (its URL carries the keys) or
+ * from the answer leaves this function except the outcome and a whole number of minutes.
+ */
+export function ambientProviderChecker(deps: {
+  fetchFn: ProviderFetch;
+  /** Decrypts one stored credential; throws when it cannot. */
+  decrypt: (value: { encrypted: string; iv: string; tag: string }) => string;
+  sleep: (ms: number) => Promise<void>;
+  now?: () => number;
+  minIntervalMs?: number;
+  timeoutMs?: number;
+}): ProviderChecker {
+  const now = deps.now ?? Date.now;
+  const minInterval = deps.minIntervalMs ?? DEFAULT_PROVIDER_MIN_INTERVAL_MS;
+  const timeoutMs = deps.timeoutMs ?? PROVIDER_TIMEOUT_MS;
+  let lastStart: number | null = null;
+  return async (row) => {
+    const mac = canonicalMac(row.mac);
+    const stored = row.credentials;
+    if (!mac || !stored || !stored.encryptedAppKey || !stored.appIv || !stored.appTag) return { kind: 'unreachable' };
+    let apiKey: string;
+    let appKey: string;
+    try {
+      apiKey = deps.decrypt({ encrypted: stored.encryptedApiKey, iv: stored.keyIv, tag: stored.keyTag });
+      appKey = deps.decrypt({ encrypted: stored.encryptedAppKey, iv: stored.appIv, tag: stored.appTag });
+    } catch {
+      return { kind: 'unreachable' };
+    }
+    if (lastStart !== null) {
+      const wait = lastStart + minInterval - now();
+      if (wait > 0) await deps.sleep(wait);
+    }
+    lastStart = now();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let payload: unknown;
+    try {
+      const url = `${AMBIENT_DEVICES_URL}?applicationKey=${encodeURIComponent(appKey)}&apiKey=${encodeURIComponent(apiKey)}`;
+      const res = await deps.fetchFn(url, { method: 'GET', signal: controller.signal });
+      if (!res.ok) return { kind: 'unreachable' };
+      payload = await res.json();
+    } catch {
+      // Error, timeout or abort. The message can carry the URL (and so the keys): it is dropped.
+      return { kind: 'unreachable' };
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!Array.isArray(payload)) return { kind: 'unreachable' };
+    const device = payload.find((d) => canonicalMac((d as { macAddress?: unknown } | null)?.macAddress) === mac) as
+      | { lastData?: { dateutc?: unknown } }
+      | undefined;
+    if (!device) return { kind: 'no_device' };
+    const stamp = Number(device.lastData?.dateutc);
+    const at = now();
+    if (!Number.isFinite(stamp) || stamp <= 0 || stamp > at + 5 * 60_000) return { kind: 'stale' };
+    const ageMs = Math.max(0, at - stamp);
+    if (ageMs > RECENT_OBSERVATION_HOURS * 3_600_000) return { kind: 'stale' };
+    return { kind: 'fresh', ageMinutes: Math.floor(ageMs / 60_000) };
+  };
+}
+
 // The same calibration the phone export uses: 21 complete rows fit under the
 // node's 64 KiB artifact ceiling, 22 do not. The CLI still enforces real bytes.
 export const MAX_WEBSITE_STATION_EXPORT_ROWS = 21;
@@ -455,8 +500,8 @@ export interface WebsiteExportCliDeps {
   pool: WebsiteExportPool;
   /** null = WRFCOIN_CHAIN_ID / WRFCOIN_NETWORK_ID are not set: the export refuses to run. */
   chain: { chainId: string; networkId: string } | null;
-  /** Paced look at the chain tail for a station the database has no reading for. Absent = database only. */
-  chainEvidence?: ChainEvidenceReader;
+  /** The fresh provider read. Absent = nothing can be shown to be reporting. */
+  providerCheck?: ProviderChecker;
   /** Must fail if the file already exists (the wrapper passes flag 'wx'). */
   writeFile: (path: string, data: string) => void;
   log: (message: string) => void;
@@ -473,8 +518,11 @@ const USAGE =
 
 /**
  * Exit codes: 0 exported, 2 nothing to export, 1 usage or database/file error.
- * Output names station ids and counts only: never an owner, a key, a signature
- * or a coordinate. There is no flag that changes a database row.
+ * The artifact is written on exit 2 as well (with no stations), so the reasons
+ * in `not_exported` reach the operator. Output names station ids, counts, the
+ * evidence source and minutes only: never an owner, a key, a signature, a
+ * coordinate, a credential or a reading. There is no flag that changes a
+ * database row.
  */
 export async function runWebsiteExportCli(argv: string[], deps: WebsiteExportCliDeps): Promise<number> {
   const known = new Set(['--out', '--batch-id', '--limit', '--cli-batch-out', '--submitted-at']);
@@ -482,7 +530,7 @@ export async function runWebsiteExportCli(argv: string[], deps: WebsiteExportCli
   // Ids the operator chose to put on chain although they are not neutral ids.
   const allowIds: string[] = [];
   // Ids the caller saw reporting in a look just before this run (the batch tool's stamped
-  // export, which must be quick): no node read is made for them.
+  // export, which must be quick): no provider read is made for them.
   const confirmedIds: string[] = [];
   for (let i = 0; i < argv.length; i += 2) {
     const name = argv[i];
@@ -538,18 +586,14 @@ export async function runWebsiteExportCli(argv: string[], deps: WebsiteExportCli
     const candidates = await selectReadyWebsiteRows(deps.pool, CANDIDATE_WINDOW, allowIds);
     const notReady = await selectNotReadyWebsiteRows(deps.pool, allowIds);
     const reporting = await resolveReporting(candidates, limit, {
-      chainEvidence: deps.chainEvidence, confirmed: confirmedIds,
+      providerCheck: deps.providerCheck, confirmed: confirmedIds,
     });
     const rows = reporting.ready;
     const { artifact, skipped } = buildWebsiteExportArtifact(rows, { chainId, networkId, batchId });
     artifact.not_exported = [...skipped, ...notReady, ...reporting.notReady];
     for (const s of artifact.not_exported) deps.error(`not exported ${s.stationId}: ${s.reason}`);
-    if (artifact.stations.length === 0) {
-      deps.error(`nothing to export (${rows.length} ready row(s) read, ${artifact.not_exported.length} not exported)`);
-      return 2;
-    }
     let cliBatchData: string | undefined;
-    if (cliBatchOut !== undefined) {
+    if (cliBatchOut !== undefined && artifact.stations.length > 0) {
       cliBatchData = JSON.stringify(buildWebsiteCliBatch(artifact.stations, submittedAt as number), null, 2) + '\n';
       const bytes = Buffer.byteLength(cliBatchData, 'utf8');
       if (bytes > MAX_WEBSITE_STATION_CLI_INPUT_BYTES) {
@@ -557,8 +601,13 @@ export async function runWebsiteExportCli(argv: string[], deps: WebsiteExportCli
         return 1;
       }
     }
-    // The whole projection is validated before either file is written.
+    // The whole projection is validated before either file is written. The artifact is written
+    // even with no stations, so the operator can read why each waiting station was left out.
     deps.writeFile(out, JSON.stringify(artifact, null, 2) + '\n');
+    if (artifact.stations.length === 0) {
+      deps.error(`nothing to export (${candidates.length} candidate row(s) read, ${artifact.not_exported.length} not exported); the reasons are in ${out}`);
+      return 2;
+    }
     if (cliBatchOut !== undefined && cliBatchData !== undefined) {
       deps.writeFile(cliBatchOut, cliBatchData);
       deps.log(`wrote ${artifact.stations.length} core4 CLI batch row(s) to ${cliBatchOut}`);
@@ -568,7 +617,7 @@ export async function runWebsiteExportCli(argv: string[], deps: WebsiteExportCli
       const age = s.evidence.last_observation_age_minutes;
       const seen = s.evidence.source === 'confirmed'
         ? 'reporting confirmed by the caller'
-        : `${s.evidence.observations_24h} reading(s) ${s.evidence.source === 'chain' ? 'in the chain tail' : 'in 24 h'}, last ${age === null ? 'unknown' : `${age} min ago`}`;
+        : `last reading ${age === null ? 'unknown' : `${age} min ago`}`;
       deps.log(
         `station ${s.station_id}: source ${s.evidence.source}; ${seen}`
         + (NEUTRAL_STATION_ID_RE.test(s.station_id) ? '' : ' (allowed by --allow-id)'),
