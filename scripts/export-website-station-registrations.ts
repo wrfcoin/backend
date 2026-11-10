@@ -32,9 +32,18 @@
  *     not a neutral server-issued id (`pws-` + 16 hex). Older ids hold the name the owner typed and
  *     a station id is public on chain for good, so each one is the operator's deliberate choice.
  *
- *   Optional: --confirmed-reporting <station id> (repeatable): the caller saw this station reporting
- *     in a look just before this run; make no provider read for it. The batch tool passes these on
- *     its second, stamped export so that one stays quick.
+ *   Optional: --confirmed-reporting <station id> (repeatable): the caller saw these stations reporting
+ *     in a look just before this run. When ANY is given, NO provider read is made at all and only
+ *     these ids are exported (every database rule still applies). The batch tool passes them on its
+ *     second, stamped export, which runs inside the signing window and must take no time.
+ *   Optional: --not-after <unix secs>: past that time no provider read is started and nothing is
+ *     written (exit 1). The batch tool passes the time at which it stops waiting for the look.
+ *
+ * A look makes at most 3 provider reads per requested station (63 for a full batch of 21), oldest
+ * first from a start that moves on every ten minutes; stations it does not reach are listed as
+ * not_checked. A station with no bound device or no stored application key is listed as
+ * credentials_incomplete and is never read. Redirects are refused (the keys are in the query
+ * string) and at most 1 MB of a provider answer is read.
  *
  * Only stations that are ready are exported: proof stored, station active and still the signer's,
  * provider credentials stored with ingestion active, a neutral id, and REPORTING. Reporting is
@@ -52,15 +61,16 @@
  * Exit codes: 0 = exported (skipped rows, if any, are listed); 2 = nothing to
  * export or every row skipped; 1 = usage/connection error.
  */
-import { writeFileSync } from 'node:fs';
+import { linkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import postgres from 'postgres';
 import { resolveWebsiteStationChain } from '../server/services/website-station-chain-registration.js';
 import {
   ambientProviderChecker,
+  cappedProviderFetch,
   resolveProviderMinIntervalMs,
   runWebsiteExportCli,
   type ProviderChecker,
-  type ProviderFetch,
   type WebsiteExportPool,
 } from '../server/services/website-station-export.js';
 import { decryptData } from '../server/utils/crypto.js';
@@ -88,7 +98,8 @@ async function main(): Promise<number> {
   let providerCheck: ProviderChecker | undefined;
   if (/^[0-9a-fA-F]{64}$/.test(encryptionKey)) {
     providerCheck = ambientProviderChecker({
-      fetchFn: ((url, init) => globalThis.fetch(url, init)) as ProviderFetch,
+      // Redirects are refused and at most 1 MB of the answer is read (see cappedProviderFetch).
+      fetchFn: cappedProviderFetch((url, init) => globalThis.fetch(url, init) as any),
       decrypt: (value) => decryptData(value, encryptionKey),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       minIntervalMs: resolveProviderMinIntervalMs(process.env.WEBSITE_STATION_PROVIDER_MIN_INTERVAL_MS),
@@ -101,7 +112,19 @@ async function main(): Promise<number> {
       pool,
       chain,
       providerCheck,
-      writeFile: (path, data) => writeFileSync(path, data, { flag: 'wx', mode: 0o600 }),
+      // Whole file or no file, and never over an existing one: write a private temporary name
+      // beside the target, link it into place (link fails if the target exists), drop the name.
+      writeFile: (path, data) => {
+        const partial = `${path}.${randomBytes(6).toString('hex')}.partial`;
+        writeFileSync(partial, data, { flag: 'wx', mode: 0o600 });
+        try {
+          linkSync(partial, path);
+        } finally {
+          unlinkSync(partial);
+        }
+      },
+      // The look starts from a station that moves on every ten minutes.
+      rotation: Math.floor(Date.now() / 600_000),
       log: (m) => console.log(m),
       error: (m) => console.error(m),
     });

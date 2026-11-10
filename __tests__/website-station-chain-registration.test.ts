@@ -29,9 +29,15 @@ import {
   SELECT_NOT_READY_WEBSITE_STATIONS_SQL,
   SELECT_READY_WEBSITE_STATIONS_SQL,
   WEBSITE_EXPORT_VERSION,
+  PROVIDER_CHECKS_PER_LIMIT,
+  PROVIDER_MAX_BODY_BYTES,
+  REASON_CREDENTIALS_INCOMPLETE,
+  REASON_NOT_CHECKED,
   REASON_PROVIDER_UNREACHABLE,
   REASON_STATION_REPORT,
   ambientProviderChecker,
+  cappedProviderFetch,
+  resolveReporting,
   resolveProviderMinIntervalMs,
   buildWebsiteCliBatch,
   buildWebsiteExportArtifact,
@@ -668,6 +674,173 @@ describe('runWebsiteExportCli', () => {
     });
   });
 
+  describe('the stamped export (inside the signing window) makes no provider read at all', () => {
+    it('with --confirmed-reporting, forty stale and five unreachable stations ahead cost nothing: zero reads, only the confirmed ids', async () => {
+      const ahead: Station[] = [
+        ...Array.from({ length: 40 }, (_, i) => ({ station_id: `pws-0000000000001${String(i).padStart(3, '0')}`, owner_address: w.address, provider: { kind: 'stale' } as ProviderCheck })),
+        ...Array.from({ length: 5 }, (_, i) => ({ station_id: `pws-0000000000002${String(i).padStart(3, '0')}`, owner_address: w.address, provider: { kind: 'unreachable' } as ProviderCheck })),
+      ];
+      const db = await dbWith([...ahead, { station_id: ID, owner_address: w.address }]);
+      let calls = 0;
+      const h = harness(db, CHAIN, async () => { calls += 1; throw new Error('the stamped export must not read a provider'); });
+      const code = await runWebsiteExportCli(
+        ['--out', '/x/a.json', '--batch-id', 'b1', '--cli-batch-out', '/x/a-cli.json', '--submitted-at', '1800000000', '--confirmed-reporting', ID], h.deps);
+      expect(code).toBe(0);
+      expect(calls).toBe(0);
+      const artifact = JSON.parse(h.files.get('/x/a.json')!);
+      expect(artifact.stations.map((s: { station_id: string }) => s.station_id)).toEqual([ID]);
+      expect(artifact.stations[0].evidence).toEqual({ source: 'confirmed', last_observation_age_minutes: null });
+      // The stations ahead are simply not part of this run: no reason is invented for them.
+      expect(artifact.not_exported).toEqual([]);
+      expect(JSON.parse(h.files.get('/x/a-cli.json')!)).toHaveLength(1);
+    });
+
+    it('only confirmed ids are ready, even when others would be fresh; a confirmed id that fails a database rule is still left out', async () => {
+      const db = await dbWith([
+        { station_id: 'pws-00000000000000e1', owner_address: w.address },
+        { station_id: 'pws-00000000000000e2', owner_address: w.address },
+        { station_id: 'pws-00000000000000e3', owner_address: w.address, is_active: false },
+      ]);
+      const h = harness(db);
+      const code = await runWebsiteExportCli(
+        ['--out', '/x/a.json', '--batch-id', 'b1', '--confirmed-reporting', 'pws-00000000000000e2', '--confirmed-reporting', 'pws-00000000000000e3'], h.deps);
+      expect(code).toBe(0);
+      expect(db.asked).toEqual([]);
+      expect(JSON.parse(h.files.get('/x/a.json')!).stations.map((s: { station_id: string }) => s.station_id)).toEqual(['pws-00000000000000e2']);
+    });
+  });
+
+  describe('the look is bounded: a check budget, a moving start, incomplete credentials, a deadline', () => {
+    const many = (n: number, provider: ProviderCheck): Station[] =>
+      Array.from({ length: n }, (_, i) => ({ station_id: `pws-0000000000003${String(i).padStart(3, '0')}`, owner_address: w.address, provider }));
+
+    it('at most 3 provider reads per requested station; the rest are listed as not_checked', async () => {
+      expect(PROVIDER_CHECKS_PER_LIMIT).toBe(3);
+      const db = await dbWith(many(10, { kind: 'stale' }));
+      const h = harness(db);
+      expect(await runWebsiteExportCli(['--out', '/x/a.json', '--batch-id', 'b1', '--limit', '2'], h.deps)).toBe(2);
+      expect(db.asked).toHaveLength(6);
+      const reasons = JSON.parse(h.files.get('/x/a.json')!).not_exported.map((s: { reason: string }) => s.reason);
+      expect(reasons.filter((r: string) => r === REASON_STATION_REPORT)).toHaveLength(6);
+      expect(reasons.filter((r: string) => r === REASON_NOT_CHECKED)).toHaveLength(4);
+      expect(REASON_NOT_CHECKED).toMatch(/^not_checked: /);
+    });
+
+    it('the start moves on from run to run, so the same stale stations do not use up every look', async () => {
+      const db = await dbWith([...many(9, { kind: 'stale' }), { station_id: ID, owner_address: w.address }]);
+      const first = harness(db);
+      first.deps.rotation = 0;
+      expect(await runWebsiteExportCli(['--out', '/x/a.json', '--batch-id', 'b1', '--limit', '1'], first.deps)).toBe(2);
+      const firstAsked = [...db.asked];
+      expect(firstAsked).toHaveLength(3);
+      db.asked.length = 0;
+      const later = harness(db);
+      later.deps.rotation = 3;
+      expect(await runWebsiteExportCli(['--out', '/x/b.json', '--batch-id', 'b2', '--limit', '1'], later.deps)).toBe(0);
+      // Rotation 3 starts at station 9 of 10: the ready one is reached on the first read.
+      expect(db.asked).toEqual([ID]);
+      expect(db.asked.some((id) => firstAsked.includes(id))).toBe(false);
+      // A queue that fits in the budget is always walked from the oldest.
+      const small = await dbWith(many(2, { kind: 'stale' }));
+      const h = harness(small);
+      h.deps.rotation = 7;
+      await runWebsiteExportCli(['--out', '/x/c.json', '--batch-id', 'b3', '--limit', '1'], h.deps);
+      expect(small.asked).toEqual(['pws-0000000000003000', 'pws-0000000000003001']);
+    });
+
+    it('no bound device or no stored application key: its own reason, no provider read, and no budget used', async () => {
+      const db = await dbWith([{ station_id: 'pws-00000000000000f1', owner_address: w.address, mac: null }, { station_id: ID, owner_address: w.address }]);
+      const h = harness(db);
+      expect(await runWebsiteExportCli(['--out', '/x/a.json', '--batch-id', 'b1', '--limit', '1'], h.deps)).toBe(0);
+      expect(db.asked).toEqual([ID]);
+      expect(JSON.parse(h.files.get('/x/a.json')!).not_exported).toEqual([{ stationId: 'pws-00000000000000f1', reason: REASON_CREDENTIALS_INCOMPLETE }]);
+      expect(REASON_CREDENTIALS_INCOMPLETE).toMatch(/^credentials_incomplete: /);
+
+      const base = {
+        stationId: ID, ownerAddress: w.address, ownerPubkey: w.publicKey, ownershipSignature: 'ab'.repeat(64),
+        stationOwnerAddress: w.address, isActive: true, latitude: 10.3, longitude: -20.7, mac: 'aa:bb:cc:dd:ee:01',
+      };
+      const keys = { encryptedApiKey: 'a', keyIv: 'i', keyTag: 't', encryptedAppKey: 'b', appIv: 'i', appTag: 't' };
+      let reads = 0;
+      const providerCheck = async (): Promise<ProviderCheck> => { reads += 1; return { kind: 'fresh', ageMinutes: 1 }; };
+      for (const row of [
+        { ...base, credentials: { ...keys, encryptedAppKey: null } }, { ...base, credentials: { ...keys, appTag: null } },
+        { ...base, credentials: null }, { ...base, mac: 'aa:bb', credentials: keys }, { ...base, mac: null, credentials: keys },
+      ]) {
+        const res = await resolveReporting([row], 1, { providerCheck });
+        expect(res.notReady).toEqual([{ stationId: ID, reason: REASON_CREDENTIALS_INCOMPLETE }]);
+        expect(res.checks).toBe(0);
+      }
+      expect(reads).toBe(0);
+    });
+
+    it('--not-after: past that time no provider read is started and nothing is written', async () => {
+      const db = await dbWith(many(5, { kind: 'fresh', ageMinutes: 1 }));
+      // Already past: no read, no file.
+      const late = harness(db);
+      late.deps.now = () => 1_800_000_000_000;
+      expect(await runWebsiteExportCli(['--out', '/x/a.json', '--batch-id', 'b1', '--not-after', '1800000000'], late.deps)).toBe(1);
+      expect(db.asked).toEqual([]);
+      expect(late.files.size).toBe(0);
+      expect(late.err.join('\n')).toContain('the --not-after time passed before this export finished; nothing written');
+      // Passing during the walk: the reads stop, and still nothing is written.
+      let clock = 1_799_999_990_000;
+      const during = harness(db, CHAIN, async (row) => { db.asked.push(row.stationId); clock += 6_000; return { kind: 'fresh', ageMinutes: 1 }; });
+      during.deps.now = () => clock;
+      expect(await runWebsiteExportCli(['--out', '/x/b.json', '--batch-id', 'b2', '--not-after', '1800000000'], during.deps)).toBe(1);
+      expect(db.asked).toHaveLength(2);
+      expect(during.files.size).toBe(0);
+      // In time: written as usual.
+      db.asked.length = 0;
+      const ok = harness(db);
+      ok.deps.now = () => 1_799_999_000_000;
+      expect(await runWebsiteExportCli(['--out', '/x/c.json', '--batch-id', 'b3', '--not-after', '1800000000'], ok.deps)).toBe(0);
+      for (const bad of ['0', '-5', 'soon', '1.5']) {
+        expect(await runWebsiteExportCli(['--out', '/x/d.json', '--batch-id', 'b4', '--not-after', bad], harness(db).deps)).toBe(1);
+      }
+    });
+  });
+
+  describe('cappedProviderFetch (the body cap on the real fetch)', () => {
+    const streamOf = (chunks: Uint8Array[]) => {
+      let i = 0;
+      const state = { cancelled: false, reads: 0 };
+      return {
+        state,
+        body: { getReader: () => ({
+          read: async () => { state.reads += 1; return i < chunks.length ? { done: false, value: chunks[i++] } : { done: true }; },
+          cancel: async () => { state.cancelled = true; },
+        }) },
+      };
+    };
+    const init = { method: 'GET' as const, signal: new AbortController().signal, redirect: 'error' as const };
+
+    it('passes the init through, and reads a small answer whole', async () => {
+      const seen: unknown[] = [];
+      const s = streamOf([Buffer.from('[{"a"'), Buffer.from(':1}]')]);
+      const fetchFn = cappedProviderFetch(async (url, i) => { seen.push([url, i.redirect]); return { ok: true, status: 200, body: s.body }; });
+      const res = await fetchFn('https://provider.example/x', init);
+      expect(await res.text(100)).toBe('[{"a":1}]');
+      expect(seen).toEqual([['https://provider.example/x', 'error']]);
+    });
+
+    it('a declared length over the cap is refused before reading; a stream is cancelled the moment it passes the cap', async () => {
+      const declared = streamOf([Buffer.alloc(10)]);
+      const a = await cappedProviderFetch(async () => ({ ok: true, status: 200, headers: { get: () => '5000' }, body: declared.body }))('u', init);
+      await expect(a.text(100)).rejects.toThrow('too large');
+      expect(declared.state.reads).toBe(0);
+
+      const endless = streamOf(Array.from({ length: 50 }, () => Buffer.alloc(40)));
+      const b = await cappedProviderFetch(async () => ({ ok: true, status: 200, headers: { get: () => null }, body: endless.body }))('u', init);
+      await expect(b.text(100)).rejects.toThrow('too large');
+      expect(endless.state.cancelled).toBe(true);
+      expect(endless.state.reads).toBe(3);
+
+      const noStream = await cappedProviderFetch(async () => ({ ok: true, status: 200, text: async () => 'x'.repeat(101) }))('u', init);
+      await expect(noStream.text(100)).rejects.toThrow('too large');
+    });
+  });
+
   describe('ambientProviderChecker (the provider read itself, with a fake provider)', () => {
     const NOW = 1_800_000_000_000;
     const MAC = 'AA:BB:CC:DD:EE:01';
@@ -684,19 +857,31 @@ describe('runWebsiteExportCli', () => {
       macAddress: mac, lastData: minutesAgo === null ? {} : { dateutc: NOW - minutesAgo * 60_000, tempf: 71.3, baromabsin: 29.1 },
       info: { name: 'Jane Doe back yard', coords: { coords: { lat: 44.98765, lon: -93.26543 } } },
     });
-    function checker(answer: unknown, opts: { status?: number; throws?: Error; hang?: boolean } = {}) {
+    function checker(answer: unknown, opts: { status?: number; throws?: Error; hang?: boolean; raw?: string } = {}) {
       const urls: string[] = [];
+      const inits: Array<{ redirect?: string; method?: string }> = [];
+      const caps: number[] = [];
       const sleeps: number[] = [];
       let clock = NOW;
       const check = ambientProviderChecker({
         fetchFn: async (url, init) => {
           urls.push(url);
+          inits.push({ redirect: init.redirect, method: init.method });
           if (opts.throws) throw opts.throws;
           if (opts.hang) {
             await new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => reject(new Error('aborted'))));
           }
           const status = opts.status ?? 200;
-          return { ok: status >= 200 && status < 300, status, json: async () => answer };
+          return {
+            ok: status >= 200 && status < 300,
+            status,
+            text: async (maxBytes: number) => {
+              caps.push(maxBytes);
+              const body = opts.raw ?? JSON.stringify(answer);
+              if (Buffer.byteLength(body, 'utf8') > maxBytes) throw new Error('provider answer too large');
+              return body;
+            },
+          };
         },
         decrypt: (value) => {
           if (!value.encrypted.startsWith('enc:')) throw new Error('bad key');
@@ -706,7 +891,7 @@ describe('runWebsiteExportCli', () => {
         now: () => clock,
         timeoutMs: 25,
       });
-      return { check, urls, sleeps, advance: (ms: number) => { clock += ms; } };
+      return { check, urls, sleeps, inits, caps, advance: (ms: number) => { clock += ms; } };
     }
 
     it('a fresh reading from the station\'s own device: fresh, with whole minutes; one request, with the stored keys', async () => {
@@ -748,6 +933,18 @@ describe('runWebsiteExportCli', () => {
         expect(await c.check(row(over))).toEqual({ kind: 'unreachable' });
         expect(c.urls).toEqual([]);
       }
+    });
+
+    it('a redirect is never followed (the keys are in the query string), and at most 1 MB of the answer is read', async () => {
+      const c = checker([device(7)]);
+      await c.check(row());
+      expect(c.inits).toEqual([{ redirect: 'error', method: 'GET' }]);
+      expect(c.caps).toEqual([PROVIDER_MAX_BODY_BYTES]);
+      expect(PROVIDER_MAX_BODY_BYTES).toBe(1024 * 1024);
+      // An answer over the cap, or one that is not JSON, is a failed read.
+      const big = checker(null, { raw: `[${' '.repeat(PROVIDER_MAX_BODY_BYTES)}]` });
+      expect(await big.check(row())).toEqual({ kind: 'unreachable' });
+      expect(await checker(null, { raw: '<html>moved</html>' }).check(row())).toEqual({ kind: 'unreachable' });
     });
 
     it('pacing: requests start at least a second apart, and only the missing time is waited', async () => {

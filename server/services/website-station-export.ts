@@ -311,6 +311,10 @@ export const CANDIDATE_WINDOW = 200;
 
 export const REASON_STATION_REPORT = 'station_report: no reading from this station\'s device in the last 24 hours';
 export const REASON_PROVIDER_UNREACHABLE = 'provider_unreachable: the provider could not be read for this station; not exported this run';
+export const REASON_CREDENTIALS_INCOMPLETE = 'credentials_incomplete: the station has no bound device or no stored application key; its owner must connect it again';
+export const REASON_NOT_CHECKED = 'not_checked: this run had used its provider checks before reaching this station; run again';
+/** One look makes at most this many provider reads per requested station. */
+export const PROVIDER_CHECKS_PER_LIMIT = 3;
 
 export async function selectReadyWebsiteRows(
   pool: WebsiteExportPool,
@@ -363,29 +367,64 @@ export type ProviderCheck =
   | { kind: 'unreachable' };
 export type ProviderChecker = (row: WebsiteExportRow) => Promise<ProviderCheck>;
 
+/** True when the row has what a provider read needs: a bound device and both stored keys. */
+export function hasProviderCredentials(row: WebsiteExportRow): boolean {
+  const stored = row.credentials;
+  return canonicalMac(row.mac).length === 12 && !!stored && !!stored.encryptedAppKey && !!stored.appIv && !!stored.appTag;
+}
+
 /**
- * Settle who is reporting, oldest first, until `limit` stations are ready. One provider read per
- * station. A fresh reading from the station's own device: ready. A stale reading or a missing
- * device: stays waiting (`station_report`). Anything else, including no checker at all: stays
- * waiting (`provider_unreachable`). A station is never exported on an error. An id the caller
- * confirmed a moment ago is ready without a provider read.
+ * Settle who is reporting.
+ *
+ * WITH confirmed ids (the batch tool's stamped export, inside the signing window): NO provider
+ * read is made, for anyone. Only the confirmed ids are ready; every other candidate is simply
+ * not part of this run. However many stale stations are ahead in the queue, this takes no time.
+ *
+ * WITHOUT confirmed ids (the look): one provider read per station until `limit` stations are
+ * ready or the look has made `limit x PROVIDER_CHECKS_PER_LIMIT` reads. The walk is oldest first
+ * from a start that `rotation` moves on, so the same stale stations do not use up every look.
+ * A fresh reading from the station's own device: ready. A stale reading or a missing device:
+ * `station_report`. No bound device or no application key: `credentials_incomplete` (no read is
+ * made). An error, or no checker: `provider_unreachable`. Not reached: `not_checked`. A station
+ * is never exported on an error. `shouldStop` ends the walk early (the caller's deadline).
  */
 export async function resolveReporting(
   candidates: WebsiteExportRow[],
   limit: number,
-  options: { providerCheck?: ProviderChecker; confirmed?: string[] } = {},
-): Promise<{ ready: WebsiteExportRow[]; notReady: WebsiteSkippedRow[] }> {
+  options: {
+    providerCheck?: ProviderChecker; confirmed?: string[]; rotation?: number; shouldStop?: () => boolean;
+  } = {},
+): Promise<{ ready: WebsiteExportRow[]; notReady: WebsiteSkippedRow[]; checks: number; stopped: boolean }> {
   const ready: WebsiteExportRow[] = [];
   const notReady: WebsiteSkippedRow[] = [];
   const confirmed = new Set(options.confirmed ?? []);
-  for (const row of candidates) {
+  if (confirmed.size > 0) {
+    for (const row of candidates) {
+      if (ready.length >= limit) break;
+      if (confirmed.has(row.stationId)) ready.push({ ...row, reportingSource: 'confirmed', lastObservationAgeMinutes: null });
+    }
+    return { ready, notReady, checks: 0, stopped: false };
+  }
+  const maxChecks = limit * PROVIDER_CHECKS_PER_LIMIT;
+  const rotation = Number.isSafeInteger(options.rotation) && (options.rotation as number) > 0 ? (options.rotation as number) : 0;
+  const start = candidates.length > maxChecks ? (rotation * maxChecks) % candidates.length : 0;
+  const walk = [...candidates.slice(start), ...candidates.slice(0, start)];
+  let checks = 0;
+  let stopped = false;
+  for (const row of walk) {
     if (ready.length >= limit) break;
-    if (confirmed.has(row.stationId)) {
-      ready.push({ ...row, reportingSource: 'confirmed', lastObservationAgeMinutes: null });
+    if (!hasProviderCredentials(row)) {
+      notReady.push({ stationId: row.stationId, reason: REASON_CREDENTIALS_INCOMPLETE });
+      continue;
+    }
+    if (!stopped && options.shouldStop?.()) stopped = true;
+    if (stopped || checks >= maxChecks) {
+      notReady.push({ stationId: row.stationId, reason: REASON_NOT_CHECKED });
       continue;
     }
     let seen: ProviderCheck = { kind: 'unreachable' };
     if (options.providerCheck) {
+      checks += 1;
       try {
         seen = await options.providerCheck(row);
       } catch {
@@ -400,7 +439,7 @@ export async function resolveReporting(
       notReady.push({ stationId: row.stationId, reason: REASON_PROVIDER_UNREACHABLE });
     }
   }
-  return { ready, notReady };
+  return { ready, notReady, checks, stopped };
 }
 
 /** A MAC with separators and case removed (the same identity the registration uses). */
@@ -419,10 +458,65 @@ export function resolveProviderMinIntervalMs(raw: string | undefined): number {
   return Number.isFinite(n) && n >= DEFAULT_PROVIDER_MIN_INTERVAL_MS ? Math.floor(n) : DEFAULT_PROVIDER_MIN_INTERVAL_MS;
 }
 
+/** The provider's answer is never read past this many bytes. */
+export const PROVIDER_MAX_BODY_BYTES = 1024 * 1024;
+
+/**
+ * `redirect: 'error'`: the keys are in the query string, so a redirect is never followed.
+ * `text(maxBytes)` must reject when the body is larger than `maxBytes`.
+ */
 export type ProviderFetch = (
   url: string,
-  init: { method: 'GET'; signal: AbortSignal },
-) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
+  init: { method: 'GET'; signal: AbortSignal; redirect: 'error' },
+) => Promise<{ ok: boolean; status: number; text: (maxBytes: number) => Promise<string> }>;
+
+interface FetchLikeResponse {
+  ok: boolean;
+  status: number;
+  headers?: { get: (name: string) => string | null };
+  body?: { getReader: () => { read: () => Promise<{ done: boolean; value?: Uint8Array }>; cancel: () => Promise<unknown> } } | null;
+  text?: () => Promise<string>;
+}
+
+/**
+ * Wraps the platform `fetch` as a ProviderFetch whose body read stops at the cap: a declared
+ * length over the cap is refused before reading, and a streamed body is cancelled the moment it
+ * passes the cap.
+ */
+export function cappedProviderFetch(
+  fetchImpl: (url: string, init: { method: 'GET'; signal: AbortSignal; redirect: 'error' }) => Promise<FetchLikeResponse>,
+): ProviderFetch {
+  return async (url, init) => {
+    const res = await fetchImpl(url, init);
+    return {
+      ok: res.ok,
+      status: res.status,
+      text: async (maxBytes) => {
+        const declared = Number(res.headers?.get('content-length'));
+        if (Number.isFinite(declared) && declared > maxBytes) throw new Error('provider answer too large');
+        const reader = res.body?.getReader();
+        if (!reader) {
+          const whole = await (res.text ? res.text() : Promise.resolve(''));
+          if (Buffer.byteLength(whole, 'utf8') > maxBytes) throw new Error('provider answer too large');
+          return whole;
+        }
+        const chunks: Uint8Array[] = [];
+        let total = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          total += value?.byteLength ?? 0;
+          if (total > maxBytes) {
+            await reader.cancel().catch(() => undefined);
+            throw new Error('provider answer too large');
+          }
+          if (value) chunks.push(value);
+        }
+        return Buffer.concat(chunks).toString('utf8');
+      },
+    };
+  };
+}
 
 /**
  * The provider check for Ambient stations: the same read the registration used to validate the
@@ -449,7 +543,8 @@ export function ambientProviderChecker(deps: {
   return async (row) => {
     const mac = canonicalMac(row.mac);
     const stored = row.credentials;
-    if (!mac || !stored || !stored.encryptedAppKey || !stored.appIv || !stored.appTag) return { kind: 'unreachable' };
+    // resolveReporting reports these as `credentials_incomplete` and never gets here with them.
+    if (!hasProviderCredentials(row) || !stored || !stored.encryptedAppKey || !stored.appIv || !stored.appTag) return { kind: 'unreachable' };
     let apiKey: string;
     let appKey: string;
     try {
@@ -468,9 +563,11 @@ export function ambientProviderChecker(deps: {
     let payload: unknown;
     try {
       const url = `${AMBIENT_DEVICES_URL}?applicationKey=${encodeURIComponent(appKey)}&apiKey=${encodeURIComponent(apiKey)}`;
-      const res = await deps.fetchFn(url, { method: 'GET', signal: controller.signal });
+      // A redirect is an error: the keys are in the query string and are sent nowhere else.
+      const res = await deps.fetchFn(url, { method: 'GET', signal: controller.signal, redirect: 'error' });
       if (!res.ok) return { kind: 'unreachable' };
-      payload = await res.json();
+      // At most PROVIDER_MAX_BODY_BYTES are read; a larger or unparsable answer is a failed read.
+      payload = JSON.parse(await res.text(PROVIDER_MAX_BODY_BYTES));
     } catch {
       // Error, timeout or abort. The message can carry the URL (and so the keys): it is dropped.
       return { kind: 'unreachable' };
@@ -502,8 +599,15 @@ export interface WebsiteExportCliDeps {
   chain: { chainId: string; networkId: string } | null;
   /** The fresh provider read. Absent = nothing can be shown to be reporting. */
   providerCheck?: ProviderChecker;
-  /** Must fail if the file already exists (the wrapper passes flag 'wx'). */
+  /**
+   * Must never overwrite, and must never leave a half-written file under `path`: the wrapper
+   * writes a temporary name beside it and links it into place.
+   */
   writeFile: (path: string, data: string) => void;
+  /** Milliseconds since the epoch; needed only for --not-after. */
+  now?: () => number;
+  /** Moves the look's starting station on from run to run (the wrapper derives it from the clock). */
+  rotation?: number;
   log: (message: string) => void;
   error: (message: string) => void;
 }
@@ -514,7 +618,7 @@ function safeCode(error: unknown): string {
 }
 
 const USAGE =
-  'usage: export-website-station-registrations.ts --out <file> --batch-id <id> [--limit <1-21>] [--allow-id <station id>]... [--confirmed-reporting <station id>]... [--cli-batch-out <file> --submitted-at <unix secs>]';
+  'usage: export-website-station-registrations.ts --out <file> --batch-id <id> [--limit <1-21>] [--allow-id <station id>]... [--confirmed-reporting <station id>]... [--not-after <unix secs>] [--cli-batch-out <file> --submitted-at <unix secs>]';
 
 /**
  * Exit codes: 0 exported, 2 nothing to export, 1 usage or database/file error.
@@ -525,7 +629,7 @@ const USAGE =
  * database row.
  */
 export async function runWebsiteExportCli(argv: string[], deps: WebsiteExportCliDeps): Promise<number> {
-  const known = new Set(['--out', '--batch-id', '--limit', '--cli-batch-out', '--submitted-at']);
+  const known = new Set(['--out', '--batch-id', '--limit', '--cli-batch-out', '--submitted-at', '--not-after']);
   const values = new Map<string, string>();
   // Ids the operator chose to put on chain although they are not neutral ids.
   const allowIds: string[] = [];
@@ -581,13 +685,27 @@ export async function runWebsiteExportCli(argv: string[], deps: WebsiteExportCli
     deps.error('--cli-batch-out <file> (different from --out) and --submitted-at <positive unix secs> must be given together');
     return 1;
   }
+  // --not-after: the caller stops waiting for this run at that time and cleans up after it. Past
+  // it, no further provider read is started and NOTHING is written, so a run whose caller was
+  // killed cannot leave a file behind after the caller's cleanup.
+  const notAfterRaw = values.get('--not-after');
+  if (notAfterRaw !== undefined && (!/^[0-9]{1,15}$/.test(notAfterRaw) || !Number.isSafeInteger(Number(notAfterRaw)) || Number(notAfterRaw) <= 0)) {
+    deps.error('--not-after must be a positive unix time in seconds');
+    return 1;
+  }
+  const now = deps.now ?? Date.now;
+  const pastDeadline = (): boolean => notAfterRaw !== undefined && now() >= Number(notAfterRaw) * 1000;
   try {
     const { chainId, networkId } = deps.chain;
     const candidates = await selectReadyWebsiteRows(deps.pool, CANDIDATE_WINDOW, allowIds);
     const notReady = await selectNotReadyWebsiteRows(deps.pool, allowIds);
     const reporting = await resolveReporting(candidates, limit, {
-      providerCheck: deps.providerCheck, confirmed: confirmedIds,
+      providerCheck: deps.providerCheck, confirmed: confirmedIds, rotation: deps.rotation, shouldStop: pastDeadline,
     });
+    if (reporting.stopped || pastDeadline()) {
+      deps.error('the --not-after time passed before this export finished; nothing written');
+      return 1;
+    }
     const rows = reporting.ready;
     const { artifact, skipped } = buildWebsiteExportArtifact(rows, { chainId, networkId, batchId });
     artifact.not_exported = [...skipped, ...notReady, ...reporting.notReady];
