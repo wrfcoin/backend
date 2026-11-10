@@ -17,6 +17,7 @@ import {
   BACKOFF_BASE_MS, GIVE_UP_S, PRACTICE_NOTE, SCORE_DELAY_S, newPaceState, publicPracticeScore, readPracticeScores, readsPerMinute, scoreWebsiteForecasts,
   websiteForecastScoreEnabled,
 } from '../server/services/forecast-score/practice-score-job';
+import { reserveNodeReads, type NodeReadClock } from '../server/services/node-read-pacer.js';
 import { createWebsiteForecastRouter } from '../server/routes/website-forecast-routes';
 import { createPublicForecastVerificationRouter } from '../server/routes/forecast-verification-routes';
 import { listMine } from '../server/services/website-forecast/website-forecast-store';
@@ -460,11 +461,36 @@ describe('scoring pass', () => {
   });
 
   it('honours a lower ceiling from the environment and ignores a bad one', async () => {
+    // Its own rate is never above the ceiling all node-reading jobs share.
+    expect([readsPerMinute('40', 20), readsPerMinute('6', 20), readsPerMinute(undefined, 12), readsPerMinute('60', 60)]).toEqual([20, 6, 12, 60]);
     expect([readsPerMinute(undefined), readsPerMinute('6'), readsPerMinute('0'), readsPerMinute('500'), readsPerMinute('abc'), readsPerMinute('2.5')]).toEqual([20, 6, 20, 20, 20, 20]);
     const clock = fast();
     const node = fakeNode(tipAt(NOW), ramp(), { clock: clock.now });
     await scoreWebsiteForecasts({ ...clock, readsPerMin: 6, query: fakeStore([forecastRow()]).query, get: node.get, nowSec: NOW });
     expect(mostInAnyMinute(node.log.map((l) => l.at))).toBeLessThanOrEqual(6);
+  });
+
+  it('shares one clock with other jobs that read the node: together they stay at 20 a minute', async () => {
+    const clock = fast();
+    const shared: NodeReadClock = { nextReadAt: 0 };
+    const pace = { ...newPaceState(), clock: shared };
+    const node = fakeNode(tipAt(NOW), ramp(), { clock: clock.now });
+    // Another job (the station sampler) is reading the node the whole time this one scores.
+    const other: number[] = [];
+    const get: typeof node.get = async (path, query) => {
+      // The other job reads whenever this one does: one slot each, taken in turn.
+      await reserveNodeReads(shared, 1, 20, clock.now, clock.sleep);
+      other.push(clock.now());
+      return node.get(path, query);
+    };
+    await scoreWebsiteForecasts({ ...clock, pace, query: fakeStore([forecastRow()]).query, get, nowSec: NOW });
+    expect(node.log.length).toBeGreaterThan(20);
+    expect(other.length).toBe(node.log.length);
+    // The job's own state is untouched: its reads were reserved on the shared clock.
+    expect(pace.nextReadAt).toBe(0);
+    expect(shared.nextReadAt).toBeGreaterThan(0);
+    // mostInAnyMinute expects times in order.
+    expect(mostInAnyMinute([...node.log.map((l) => l.at), ...other].sort((a, b) => a - b))).toBeLessThanOrEqual(20);
   });
 
   it('a 429 stops the pass at once, marks nothing, and the scorer backs off 5 minutes, then 10', async () => {

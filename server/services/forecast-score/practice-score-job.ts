@@ -24,8 +24,10 @@
  * `unscored: node_unavailable` after the same 24 hours. Fewer than 12 hourly samples before the commit =>
  * `unscored: no_baseline`. Nothing is filled in, and nothing here is paid or feeds rewards.
  *
- * Node reads are paced: at most WEBSITE_FORECAST_SCORE_READS_PER_MIN (default 20, 1 to 60) a minute in this
- * process, because the node's read limiter is shared with the backend's other reads. Blocks and 64-height
+ * Node reads are paced: at most WEBSITE_FORECAST_SCORE_READS_PER_MIN (default 20, 1 to 60, never above
+ * NODE_JOB_READS_PER_MIN) a minute, reserved on the
+ * clock every backend job that reads the node shares (node-read-pacer.ts), because the node's read limiter counts
+ * the backend as one client. Blocks and 64-height
  * reading chunks are read once per pass and shared between forecasts. A 429 from the node stops the pass,
  * marks nothing, and the scorer then stays away for 5 minutes, doubling each time up to an hour. A forecast
  * whose result cannot be written is left alone the same way, so it does not cost node reads every pass.
@@ -38,6 +40,7 @@ import {
   blockTime, chainTip, firstHeightAtOrAfter, stationReadings, HOUR_S, type ChainReading, type Query,
 } from '../forecast-verification/observed-verification.js';
 import { websiteForecastEnabled } from '../website-forecast/website-forecast.js';
+import { nodeJobReadsPerMinute, processNodeReadClock, reserveNodeReads, type NodeReadClock } from '../node-read-pacer.js';
 import {
   DEFAULT_COPY_TOLERANCE, FIXED_POINT_UNITS, SCORE_DELAY_S, SCORE_PRECISION, TRUTH_MAX_DISTANCE_S, WINDOW_HOURS, countsAsReading, hourlyWindow, inRange,
   isScoredVariable, lastReadingBefore, nearestReading, numberToFixedPoint, ratioSkill, referenceFromWindow, skillScore,
@@ -61,9 +64,13 @@ export const BACKOFF_BASE_MS = 5 * 60_000;
 export const BACKOFF_MAX_MS = 60 * 60_000;
 export const PRACTICE_NOTE = 'Practice score. Nothing is paid for it.';
 
-export function readsPerMinute(raw: string | undefined = process.env.WEBSITE_FORECAST_SCORE_READS_PER_MIN): number {
+/** This job's own rate, never above the ceiling all node-reading jobs share (NODE_JOB_READS_PER_MIN). */
+export function readsPerMinute(
+  raw: string | undefined = process.env.WEBSITE_FORECAST_SCORE_READS_PER_MIN,
+  ceiling: number = nodeJobReadsPerMinute(),
+): number {
   const n = Number(raw);
-  return Number.isInteger(n) && n >= 1 && n <= 60 ? n : DEFAULT_READS_PER_MIN;
+  return Math.min(Number.isInteger(n) && n >= 1 && n <= 60 ? n : DEFAULT_READS_PER_MIN, ceiling);
 }
 
 /**
@@ -72,6 +79,11 @@ export function readsPerMinute(raw: string | undefined = process.env.WEBSITE_FOR
  */
 export interface PaceState {
   nextReadAt: number; busyStreak: number; resumeAt: number;
+  /**
+   * The clock read slots are reserved on. Unset = this state's own nextReadAt (tests). The running job sets the
+   * process-wide clock (node-read-pacer.ts), so its reads and every other job's reads share one ceiling.
+   */
+  clock?: NodeReadClock;
   /** Forecasts whose result could not be written: not read from the node again before `retryAt` (in memory). */
   saveFailures: Map<string, { count: number; retryAt: number }>;
 }
@@ -83,13 +95,10 @@ class NodeBusy extends Error { constructor() { super('node read limit'); } }
  * in this pass is refused without reaching the node.
  */
 function paced(get: Core4Get, perMin: number, state: PaceState, now: () => number, sleep: (ms: number) => Promise<void>) {
-  const gapMs = Math.ceil(60_000 / perMin);
   const status = { limited: false, reads: 0 };
   const pacedGet: Core4Get = async (path, query) => {
     if (status.limited) throw new NodeBusy();
-    const wait = state.nextReadAt - now();
-    if (wait > 0) await sleep(wait);
-    state.nextReadAt = Math.max(now(), state.nextReadAt) + gapMs;
+    await reserveNodeReads(state.clock ?? state, 1, perMin, now, sleep);
     status.reads += 1;
     const reply = await get(path, query);
     if (reply.status === 429) { status.limited = true; throw new NodeBusy(); }
@@ -439,7 +448,7 @@ export async function startWebsiteForecastScoreJob(deps: { query?: Query; get?: 
   const query = deps.query ?? await job.defaultQuery();
   const get = deps.get ?? await job.defaultCore4Get();
   const now = deps.now ?? Date.now;
-  const pace = newPaceState();
+  const pace: PaceState = { ...newPaceState(), clock: processNodeReadClock };
   let running = false;
   const tick = () => {
     if (running || !websiteForecastScoreEnabled()) return;
