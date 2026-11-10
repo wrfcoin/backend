@@ -42,6 +42,10 @@ import {
 } from './chain-station-backfill.js';
 import { isReservedMobileStationId } from '../../shared/mobile-station-messages.js';
 import { cellCentreDegrees, toStorageGrid } from '../utils/coordinate-grid.js';
+import {
+  reconcileWebsiteStations,
+  websiteStationChainRegistrationEnabled,
+} from './website-station-chain-registration.js';
 
 export interface ChainStationListEntry extends ChainStationRegistration {
   latitude: number;
@@ -370,6 +374,14 @@ export interface SyncSummary {
   mobileOnChain: number;
   mobileRefused: number;
   refusedIds: string[];
+  /**
+   * Website stations newly marked `on_chain` this pass (the row the owner's
+   * station page reads as "earning"), newly marked `blocked`, and entries whose
+   * statements failed. Present only when the website reconcile is switched on.
+   */
+  websiteOnChain?: number;
+  websiteBlocked?: number;
+  websiteFailed?: number;
 }
 
 /**
@@ -380,6 +392,8 @@ export async function runStationSyncOnce(deps: {
   listStations: () => Promise<ChainStationListEntry[]>;
   labels: StationLabelMap;
   pool: BackfillPool;
+  /** Also mark website stations `on_chain` (WEBSITE_STATION_CHAIN_REGISTRATION_ENABLED). */
+  websiteStations?: boolean;
 }): Promise<SyncSummary & { plan: BackfillPlanItem[]; results: ApplyResult[]; mobile: MobileSyncResult[] }> {
   const chain: unknown[] = await deps.listStations();
   // Whole-list validation BEFORE any database access: one malformed entry
@@ -390,6 +404,7 @@ export async function runStationSyncOnce(deps: {
 
   const inputs: unknown[] = [];
   const mobileEntries: ChainStationListEntry[] = [];
+  const websiteEntries: ChainStationListEntry[] = [];
   let unlabelled = 0;
   for (const [stationId, entry] of byId) {
     // The reserved prefix never goes through the generic path (no label needed
@@ -398,6 +413,9 @@ export async function runStationSyncOnce(deps: {
       mobileEntries.push(entry);
       continue;
     }
+    // A website station needs no label either: its row already exists, and the
+    // reconcile below only records that the chain now shows it registered.
+    websiteEntries.push(entry);
     const label = Object.prototype.hasOwnProperty.call(deps.labels, stationId) ? deps.labels[stationId] : undefined;
     if (!label) {
       unlabelled += 1;
@@ -440,6 +458,12 @@ export async function runStationSyncOnce(deps: {
   const mobile: MobileSyncResult[] = [];
   for (const entry of mobileEntries) mobile.push(await syncOneMobileStation(entry, deps.pool));
 
+  // Website stations: the chain registry is the only thing that makes one
+  // "earning". A missing table (migration 0045 not applied) or a write error
+  // never fails the rest of the pass: each entry is tried on its own and the
+  // failures are counted.
+  const website = deps.websiteStations ? await reconcileWebsiteStations(websiteEntries, deps.pool) : undefined;
+
   const summary: SyncSummary = {
     chainStations: byId.size,
     unlabelled,
@@ -455,6 +479,7 @@ export async function runStationSyncOnce(deps: {
       ...plan.filter((p) => p.action === 'refuse').map((p) => p.stationId),
       ...mobile.filter((m) => m.outcome === 'refused').map((m) => idLabel(m.stationId)),
     ],
+    ...(website ? { websiteOnChain: website.onChain, websiteBlocked: website.blocked, websiteFailed: website.failed } : {}),
   };
   return { ...summary, plan, results, mobile };
 }
@@ -534,9 +559,10 @@ export async function startChainStationSync(options: StartSyncOptions = {}): Pro
       listStations: () => fetchChainStationList(nodeUrl, token, fetchImpl),
       labels,
       pool: activePool,
+      websiteStations: websiteStationChainRegistrationEnabled(env),
     })
       .then(({ plan: _plan, results: _results, mobile: _mobile, ...summary }) => {
-        if (summary.refused > 0 || summary.notWritten > 0 || summary.mobileRefused > 0) {
+        if (summary.refused > 0 || summary.notWritten > 0 || summary.mobileRefused > 0 || (summary.websiteFailed ?? 0) > 0) {
           logger.warn('Chain station sync pass refused or skipped stations', { ...summary });
         } else {
           logger.info('Chain station sync pass complete', { ...summary });

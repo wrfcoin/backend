@@ -1,0 +1,79 @@
+/**
+ * Export website stations that are waiting for their on-chain registration, for
+ * the owner's registration batch.
+ *
+ * Reads website_station_chain_registrations WHERE status = 'db_only' (joined to
+ * weather_stations for the position) and writes a
+ * `website_station_registration_export_v1` JSON file. Each `stations[]` entry has
+ * station_id, owner_address, owner_pubkey, owner_signature (the owner's signature
+ * over core4's `station_ownership_message`), latitude/longitude at 0.1 degree,
+ * hardware_model `personal-weather-station`, data_quality_tier `unverified`,
+ * provenance_class `real`, chain_id and network_id. Each row is re-verified
+ * first; failures are skipped and listed by station id only.
+ *
+ * NO governance key is read, held or needed here. Signing is the owner's step.
+ *
+ * It never changes a row and has no flag that does. A station leaves the waiting
+ * list only when the chain station sync sees it registered on chain, so a second
+ * run exports the same rows until then.
+ *
+ * The output holds station positions (0.1 degree) and owner proofs: never commit
+ * a real one. Files are created 0600 and never overwritten.
+ *
+ * Environment:
+ *   DATABASE_URL          postgres connection string
+ *   WRFCOIN_CHAIN_ID      required, no default (the chain the owners signed for)
+ *   WRFCOIN_NETWORK_ID    required, no default
+ *
+ * Usage:
+ *   npx tsx scripts/export-website-station-registrations.ts --out /path/batch.json --batch-id <id>
+ *   Optional: --limit <n> (default and maximum 21).
+ *   Optional: --allow-id <station id> (repeatable): also export this station although its id is
+ *     not a neutral server-issued id (`pws-` + 16 hex). Older ids hold the name the owner typed and
+ *     a station id is public on chain for good, so each one is the operator's deliberate choice.
+ *
+ * Only stations that are ready are exported: proof stored, station active and still the signer's,
+ * provider credentials stored with ingestion active, and at least one reading in the last 24 hours.
+ * Waiting stations that are not exported are listed by id with the reason, and in the artifact's
+ * `not_exported`.
+ *   Optional: --cli-batch-out <file> --submitted-at <unix secs> ALSO writes the bare JSON array that
+ *     `wrfcoin station build-registration --batch` accepts (submitted_at is the operator-supplied
+ *     value; no clock is read).
+ *
+ * Exit codes: 0 = exported (skipped rows, if any, are listed); 2 = nothing to
+ * export or every row skipped; 1 = usage/connection error.
+ */
+import { writeFileSync } from 'node:fs';
+import postgres from 'postgres';
+import { resolveWebsiteStationChain } from '../server/services/website-station-chain-registration.js';
+import { runWebsiteExportCli, type WebsiteExportPool } from '../server/services/website-station-export.js';
+
+async function main(): Promise<number> {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    console.error('DATABASE_URL is required');
+    return 1;
+  }
+  // No default chain: an unset WRFCOIN_CHAIN_ID / WRFCOIN_NETWORK_ID makes the export refuse to run.
+  const chain = resolveWebsiteStationChain();
+  const sql = postgres(databaseUrl, { max: 1 });
+  const pool: WebsiteExportPool = {
+    query: async (text, params = []) => {
+      const rows = await sql.unsafe(text, params as any[]);
+      return { rows: rows as unknown as any[], rowCount: (rows as any).count ?? rows.length };
+    },
+  };
+  try {
+    return await runWebsiteExportCli(process.argv.slice(2), {
+      pool,
+      chain,
+      writeFile: (path, data) => writeFileSync(path, data, { flag: 'wx', mode: 0o600 }),
+      log: (m) => console.log(m),
+      error: (m) => console.error(m),
+    });
+  } finally {
+    await sql.end({ timeout: 5 });
+  }
+}
+
+main().then((code) => process.exit(code));
