@@ -261,14 +261,18 @@ d('website station chain registration against real Postgres', () => {
     expect((await row(ready)).status).toBe('db_only');
   });
 
-  it('reconcile: same owner, active and real becomes on_chain; nothing downgrades it', async () => {
+  it('reconcile: same owner, active and real becomes on_chain; transferred or deactivated on chain, it is blocked', async () => {
     const w = wallet();
     const id = await station(w);
     await submit(w, id);
     expect(await reconcileWebsiteStations([chain(id, '0x' + w.address.slice(2).toUpperCase())], pool as any))
       .toEqual({ onChain: 1, blocked: 0, failed: 0 });
     expect((await status(w, id))!.state).toBe('earning');
-    await reconcileWebsiteStations([chain(id, wallet().address), chain(id, w.address, { is_active: false })], pool as any);
+    expect(await reconcileWebsiteStations([chain(id, wallet().address)], pool as any)).toEqual({ onChain: 0, blocked: 1, failed: 0 });
+    expect(await row(id)).toMatchObject({ status: 'blocked', blocked_reason: 'station_id_taken_on_chain' });
+    expect(await reconcileWebsiteStations([chain(id, w.address, { is_active: false })], pool as any)).toEqual({ onChain: 0, blocked: 1, failed: 0 });
+    expect(await row(id)).toMatchObject({ status: 'blocked', blocked_reason: 'chain_record_not_active' });
+    expect(await reconcileWebsiteStations([chain(id, w.address)], pool as any)).toEqual({ onChain: 1, blocked: 0, failed: 0 });
     expect(await row(id)).toMatchObject({ status: 'on_chain', blocked_reason: null });
     expect((await selectReadyWebsiteRows(pool as any, 200)).some((r) => r.stationId === id)).toBe(false);
   });

@@ -621,6 +621,56 @@ router.post(
   }
 );
 
+// The collector's roster: website stations that are registered on chain, with
+// their DECRYPTED provider keys (see services/collector-roster.ts). Internal
+// only: the collector calls the backend on the compose network, and the public
+// edge does not admit this path.
+//  - The operator token only, checked first. A reader token, a wallet session,
+//    no token and a wrong token all get the same 403, switch on or off, so a
+//    caller without the token learns nothing about the switch.
+//  - OFF unless COLLECTOR_ROSTER_ENABLED=true: 404 even with the token.
+//  - Never cached, rate limited, and no key, provider answer or raw error
+//    message reaches a log line or a response body.
+const collectorRosterLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 12,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' },
+});
+router.get('/stations/collector-roster', collectorRosterLimiter, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  const operatorToken = process.env.WRFCOIN_OPERATOR_TOKEN;
+  const auth = req.header('authorization') || '';
+  const presented = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if (!operatorToken || !presented || !secureCompare(presented, operatorToken)) {
+    return res.status(403).json(createApiError('FORBIDDEN', 'Operator token required'));
+  }
+  if (process.env.COLLECTOR_ROSTER_ENABLED !== 'true') {
+    return res.status(404).json(createApiError('NOT_FOUND', 'Not found'));
+  }
+  try {
+    let encryptionKey;
+    try {
+      encryptionKey = getEncryptionKey();
+    } catch {
+      logger.error('Collector roster misconfigured: encryption key not usable');
+      return res.status(500).json(createApiError('SERVER_MISCONFIGURED', 'Encryption key not configured'));
+    }
+    const { listCollectorRoster } = await import('../services/collector-roster.js');
+    const pool = await getPool();
+    const roster = await listCollectorRoster(pool, encryptionKey);
+    if (roster.skipped > 0) {
+      logger.warn('Collector roster left stations out', { skipped: roster.skipped, served: roster.stations.length });
+    }
+    return res.json(roster);
+  } catch (error) {
+    // The error's code only: its message could quote a row.
+    logger.error('Collector roster unavailable', { code: typeof error?.code === 'string' ? error.code : 'UNKNOWN' });
+    return res.status(503).json(createApiError('SERVICE_UNAVAILABLE', 'Collector roster temporarily unavailable'));
+  }
+});
+
 // Internal endpoint for the multi-tenant collector (core4#1732). Returns
 // DECRYPTED provider credentials. Guarded by the operator bearer token.
 router.get('/stations/credentials', async (req, res) => {

@@ -276,7 +276,14 @@ export async function submitOwnershipProof(
  *  - same owner, active and real          -> on_chain
  *  - another owner                        -> blocked (station_id_taken_on_chain)
  *  - same owner, not active or not real   -> blocked (chain_record_not_active)
- * The owner comparisons are in the SQL. `on_chain` is never downgraded.
+ * The owner comparisons are in the SQL. This applies to an `on_chain` row too:
+ * a station transferred to another owner on chain, or deactivated or no longer
+ * real there, is moved from `on_chain` to `blocked` with the matching reason,
+ * so the collector roster (which serves `on_chain` rows only) drops it on its
+ * next read. A blocked row whose reason no longer fits is given the one that
+ * does. A station the chain later shows live under the same owner becomes
+ * `on_chain` again. (A registry entry that disappears entirely is not seen
+ * here; the chain deactivates stations rather than removing them.)
  *
  * A station with NO registration row gets an `on_chain` row (no proof) only if
  * it is a website station: its backend row has provider credentials and the
@@ -290,7 +297,7 @@ export const MARK_REGISTERED_ON_CHAIN_SQL = `UPDATE website_station_chain_regist
 export const MARK_BLOCKED_SQL = `UPDATE website_station_chain_registrations
         SET status = 'blocked', blocked_reason = $3, updated_at = now()
       WHERE station_id = $1
-        AND status = 'db_only'
+        AND (status IN ('db_only', 'on_chain') OR (status = 'blocked' AND blocked_reason <> $3))
         AND (($3 = 'station_id_taken_on_chain' AND owner_address <> lower($2))
           OR ($3 = 'chain_record_not_active' AND owner_address = lower($2)))
       RETURNING station_id`;
@@ -314,7 +321,7 @@ export interface WebsiteChainEntry {
 export interface WebsiteReconcileResult {
   /** Stations newly marked `on_chain` (earning) this pass. */
   onChain: number;
-  /** Waiting stations newly marked `blocked` this pass. */
+  /** Stations newly marked `blocked` this pass (waiting ones, and earning ones the chain moved or stopped). */
   blocked: number;
   /** Entries whose statements failed; the rest of the pass still ran. */
   failed: number;

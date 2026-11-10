@@ -140,7 +140,8 @@ function fakeDb(stations: Station[], regs: Reg[] = []) {
         const [id, owner, reason] = params as [string, string, string];
         const r = reg.get(id);
         const same = r?.owner_address === owner.toLowerCase();
-        if (!r || r.status !== 'db_only' || (reason === 'station_id_taken_on_chain' ? same : !same)) return { rows: [], rowCount: 0 };
+        const movable = r && (r.status === 'db_only' || r.status === 'on_chain' || (r.status === 'blocked' && r.blocked_reason !== reason));
+        if (!r || !movable || (reason === 'station_id_taken_on_chain' ? same : !same)) return { rows: [], rowCount: 0 };
         r.status = 'blocked'; r.blocked_reason = reason;
         return { rows: [{ station_id: id }], rowCount: 1 };
       }
@@ -1097,12 +1098,33 @@ describe('reconcile: earning and blocked come only from the chain registry', () 
     expect((await state(db)).state).toBe('earning');
   });
 
-  it('never downgrades an earning station', async () => {
+  it('an earning station the chain transfers to another owner is blocked (so the collector roster drops it)', async () => {
     const db = await waitingDb();
     await run(db, [entry()]);
-    await run(db, [entry({ owner_address: other.address })]);
-    await run(db, [entry({ is_active: false })]);
     expect(db.reg.get(ID)!.status).toBe('on_chain');
+    expect((await run(db, [entry({ owner_address: other.address })])).websiteBlocked).toBe(1);
+    expect(db.reg.get(ID)).toMatchObject({ status: 'blocked', blocked_reason: 'station_id_taken_on_chain' });
+    expect((await state(db)).state).toBe('blocked');
+  });
+
+  it('an earning station the chain deactivates, or no longer shows as real, is blocked; live again under the same owner, it earns again', async () => {
+    for (const over of [{ is_active: false }, { provenance_class: 'synthetic' }]) {
+      const db = await waitingDb();
+      await run(db, [entry()]);
+      expect((await run(db, [entry(over)])).websiteBlocked).toBe(1);
+      expect(db.reg.get(ID)).toMatchObject({ status: 'blocked', blocked_reason: 'chain_record_not_active' });
+      expect((await run(db, [entry()])).websiteOnChain).toBe(1);
+      expect(db.reg.get(ID)).toMatchObject({ status: 'on_chain', blocked_reason: null });
+    }
+  });
+
+  it('a blocked station gets the reason that fits now; the same reason twice is not counted again', async () => {
+    const db = await waitingDb();
+    await run(db, [entry()]);
+    await run(db, [entry({ is_active: false })]);
+    expect((await run(db, [entry({ owner_address: other.address })])).websiteBlocked).toBe(1);
+    expect(db.reg.get(ID)!.blocked_reason).toBe('station_id_taken_on_chain');
+    expect((await run(db, [entry({ owner_address: other.address })])).websiteBlocked).toBe(0);
   });
 
   it('matches the chain owner case-insensitively', async () => {
