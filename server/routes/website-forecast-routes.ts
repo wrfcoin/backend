@@ -7,7 +7,10 @@
  *   POST /api/forecasts/submit   wallet login. { data, nonce, timestamp, commitId, authPubkey, authSignature }:
  *                                checks the commit (see checkSubmission), relays it to the node and keeps the
  *                                reveal package; the reveal worker reveals in the next block
- *   GET  /api/forecasts/mine     wallet login. The wallet's forecasts, chain progress and practice score
+ *   GET  /api/forecasts/mine     wallet login. The wallet's forecasts, chain progress and practice score.
+ *                                With WEBSITE_FORECAST_SCORE_ENABLED=true (default off; migration 0044) each
+ *                                row also has `practiceScore`: the integer skill score once the target time
+ *                                has passed (services/forecast-score). Nothing is paid by it.
  *
  * Only stations listed in WEBSITE_FORECAST_STATIONS (ids or public aliases; empty = none) take a draft or a submit:
  * any other answers 403 STATION_NOT_OPEN. GET /status lists the open stations' aliases.
@@ -30,6 +33,7 @@ import {
 import {
   findForecastForDay, insertCommitting, listMine, resolveRegisteredStation, setStatus,
 } from '../services/website-forecast/website-forecast-store.js';
+import { publicPracticeScore, readPracticeScores, websiteForecastScoreEnabled } from '../services/forecast-score/practice-score-job.js';
 
 export const WEBSITE_FORECAST_RATE_LIMIT = { windowMs: 60 * 1000, maxRequests: 30, keyPrefix: 'ratelimit:website-forecast' };
 export const WALLET_ACTIONS_PER_WINDOW = 10;
@@ -191,7 +195,19 @@ export function createWebsiteForecastRouter(deps: WebsiteForecastRouterDeps = {}
   router.get('/mine', authenticate, handle(async (req, res, query) => {
     const forecaster = walletOf(req);
     if (!forecaster) return fail(res, 401, 'WALLET_REQUIRED', 'Log in with a 12-word wallet to see your forecasts.');
-    return res.json({ forecasts: await listMine(query, forecaster) });
+    if (!websiteForecastScoreEnabled()) return res.json({ forecasts: await listMine(query, forecaster) });
+    // Practice scores (default off). A missing score table must not take the list down with it.
+    const practice = async (rows: any[]) => {
+      const out = new Map<string, unknown>();
+      let scores = new Map<string, any>();
+      try { scores = await readPracticeScores(query, rows.map((r) => String(r.commit_id))); } catch { return out; }
+      for (const r of rows) {
+        const validAt = r.valid_at ? Math.floor(new Date(r.valid_at).getTime() / 1000) : null;
+        out.set(String(r.commit_id), r.status === 'revealed' ? publicPracticeScore(scores.get(String(r.commit_id)) ?? null, r.status, r.variable, validAt) : null);
+      }
+      return out;
+    };
+    return res.json({ forecasts: await listMine(query, forecaster, 50, practice) });
   }));
 
   return router;

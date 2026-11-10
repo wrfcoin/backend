@@ -295,6 +295,85 @@ router.get('/proposals/:id', governanceGetLimiter, async (req: Request, res: Res
   }
 });
 
+// ── Advisory governance (core4 `advisory_governance`) ──────────────────────
+// Signed, text-only proposals: a passed proposal is only recorded, nothing is
+// executed. Read-only here; wallets sign and submit to the node directly.
+// The node refuses every write until the feature is scheduled, and answers
+// an empty list until then, so these routes are safe to ship first.
+const ADVISORY_ID_RE = /^adv-[0-9a-f]{16}$/;
+const ADVISORY_STATUSES = new Set(['all', 'active', 'passed', 'rejected', 'failed_quorum']);
+const ADVISORY_DEFAULT_LIMIT = 20;
+const ADVISORY_MAX_LIMIT = 100;
+
+function readAdvisoryPage(payload: unknown) {
+  const data = extractCore4Data(payload) as Record<string, unknown> | null;
+  if (!data || typeof data !== 'object' || !Array.isArray(data.proposals)) return null;
+  return data;
+}
+
+router.get('/advisory/proposals', governanceGetLimiter, async (req: Request, res: Response) => {
+  const status = typeof req.query.status === 'string' ? req.query.status : 'all';
+  if (!ADVISORY_STATUSES.has(status)) {
+    return res.status(400).json({ success: false, error: 'Invalid status' });
+  }
+  try {
+    const { limit, offset } = parseListPagination(req.query, {
+      defaultLimit: ADVISORY_DEFAULT_LIMIT,
+      maxLimit: ADVISORY_MAX_LIMIT,
+    });
+    const response = await fetchCore4Json('/governance/advisory/proposals', {
+      query: { offset, limit, status },
+    });
+    if (!response.ok) {
+      return sendCore4Error(res, response, 'Failed to retrieve advisory proposals');
+    }
+    const page = readAdvisoryPage(response.payload);
+    if (!page) {
+      return res.status(502).json({ success: false, error: 'Unexpected advisory proposal shape from the node' });
+    }
+    const proposals = page.proposals as unknown[];
+    const total = typeof page.total === 'number' ? page.total : proposals.length;
+    return res.json({
+      success: true,
+      featureActive: page.feature_active_next_height === true,
+      observedAtHeight: toNullable(page.observed_at_height),
+      count: proposals.length,
+      total,
+      offset,
+      limit,
+      hasMore: offset + proposals.length < total,
+      proposals,
+      limits: toNullable(page.limits),
+    });
+  } catch (error) {
+    logger.error('Error retrieving advisory proposals', { error });
+    return sendCore4Unavailable(res, error, 'Failed to retrieve advisory proposals');
+  }
+});
+
+router.get('/advisory/proposals/:id', governanceGetLimiter, async (req: Request, res: Response) => {
+  const { id } = req.params;
+  if (!ADVISORY_ID_RE.test(id)) {
+    return res.status(400).json({ success: false, error: 'Invalid advisory proposal id' });
+  }
+  try {
+    const response = await fetchCore4Json(`/governance/advisory/proposals/${id}`);
+    if (!response.ok) {
+      return sendCore4Error(res, response, 'Failed to retrieve advisory proposal');
+    }
+    const data = extractCore4Data(response.payload) as Record<string, unknown> | null;
+    return res.json({
+      success: true,
+      observedAtHeight: toNullable(data?.observed_at_height),
+      proposal: toNullable(data?.proposal),
+      limits: toNullable(data?.limits),
+    });
+  } catch (error) {
+    logger.error(`Error retrieving advisory proposal ${id}`, { error });
+    return sendCore4Unavailable(res, error, 'Failed to retrieve advisory proposal');
+  }
+});
+
 router.post(
   '/proposals',
   authMiddleware.requireAdmin,

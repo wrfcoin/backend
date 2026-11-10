@@ -14,6 +14,7 @@ import {
 } from '../services/forecast-commit-record.js';
 import { insertVerificationRecord, readRecord, readSummary, type Query } from '../services/forecast-verification/observed-verification.js';
 import { defaultCore4Get, defaultQuery, forecastVerificationEnabled } from '../services/forecast-verification/observed-verification-job.js';
+import { publicPracticeScore, readPracticeScores, websiteForecastScoreEnabled } from '../services/forecast-score/practice-score-job.js';
 
 const MAX_VERIFY_PAYLOAD_BYTES = 2 * 1024 * 1024;
 
@@ -189,7 +190,15 @@ export function createPublicForecastVerificationRouter(deps: PublicForecastVerif
     if (!COMMIT_ID_RE.test(commitId)) return failWith(res, 400, 'VALIDATION_ERROR', 'Expected a 64-character lowercase hex commit id.');
     const record = await readRecord(await getQuery(), commitId);
     if (!record) return failWith(res, 404, 'NOT_FOUND', 'No forecast record has been handed in for this commit id.');
-    return res.json(record);
+    if (!websiteForecastScoreEnabled()) return res.json(record);
+    // A website forecast's practice score (default off), once the scorer has looked at it.
+    let practiceScore: unknown = null;
+    try {
+      const row = (await readPracticeScores(await getQuery(), [commitId])).get(commitId);
+      const variable = row ? Object.keys(record.forecast ?? {})[0] : undefined;
+      if (row && variable) practiceScore = publicPracticeScore(row, 'revealed', variable, null);
+    } catch { /* no score table: the record is still the answer */ }
+    return res.json({ ...record, practiceScore });
   }));
 
   router.post('/forecasts', express.json({ limit: '8kb' }), gate(async (req, res) => {

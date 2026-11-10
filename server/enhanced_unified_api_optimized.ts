@@ -1823,6 +1823,16 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
     } catch {
       appLogger.warn('Website forecast worker not started');
     }
+    // Website forecast practice scores. OFF unless WEBSITE_FORECAST_ENABLED=true and
+    // WEBSITE_FORECAST_SCORE_ENABLED=true; needs migration 0044_website_forecast_scores and WRFCOIN_READER_TOKEN.
+    try {
+      const { startWebsiteForecastScoreJob } = require('./services/forecast-score/practice-score-job');
+      startWebsiteForecastScoreJob({ logger: appLogger }).catch(() => {
+        appLogger.warn('Website forecast practice score job not started');
+      });
+    } catch {
+      appLogger.warn('Website forecast practice score job not started');
+    }
     // Friend challenges counting job (backend#249). OFF unless FRIEND_CHALLENGES_ENABLED=true; needs
     // WRFCOIN_READER_TOKEN and migration 0040_friend_challenges.
     try {

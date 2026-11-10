@@ -309,6 +309,13 @@
       "when": 1792800000000,
       "tag": "0043_website_forecasts",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "5",
+      "when": 1792900000000,
+      "tag": "0044_website_forecast_scores",
+      "breakpoints": true
     }
   ]
 }
