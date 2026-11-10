@@ -18,7 +18,11 @@
  *  - its proof is stored and the row is waiting (never `blocked`);
  *  - the station is active and still belongs to the wallet that signed;
  *  - its provider credentials are stored and ingestion is active;
- *  - it has at least one reading in the last 24 hours;
+ *  - it is reporting: a reading in `weather_data` in the last 24 hours, OR a
+ *    reading for its station id in the chain tail (provider collectors submit
+ *    to the chain node, not to this backend). The database is asked first; the
+ *    node only for stations the database has nothing for, paced, and a node
+ *    read that fails never exports a station;
  *  - its id is a neutral server-issued id (`pws-` + 16 hex), or the operator
  *    named it with --allow-id. A station id is public on chain for good, and
  *    older ids hold the name the owner typed.
@@ -58,13 +62,29 @@ export interface WebsiteExportRow {
   /** Readings stored in the last 24 hours, and minutes since the newest one. */
   observations24h?: number;
   lastObservationAgeMinutes?: number | null;
+  /** Where the reading was seen; set by resolveReporting. */
+  reportingSource?: ReportingSource;
 }
 
-/** What the dry run shows per row: how recently the station reported. Nothing personal. */
+/**
+ * What the dry run shows per row: where the station was seen reporting and how recently.
+ * `db` = weather_data in the last 24 hours; `chain` = the node's chain tail; `confirmed` = the
+ * caller checked it in a look just before this export (see --confirmed-reporting). Nothing personal.
+ */
+export type ReportingSource = 'db' | 'chain' | 'confirmed';
 export interface WebsiteExportEvidence {
+  source: ReportingSource;
+  /** Readings found: in the last 24 hours (db), or in the chain tail window that held them (chain). */
   observations_24h: number;
   last_observation_age_minutes: number | null;
 }
+
+/** One paced look at the chain tail for a station. `error` and `rate_limited` never export a station. */
+export type ChainEvidence =
+  | { kind: 'ok'; count: number; lastAgeMinutes: number | null }
+  | { kind: 'error' }
+  | { kind: 'rate_limited' };
+export type ChainEvidenceReader = (stationId: string) => Promise<ChainEvidence>;
 
 export interface WebsiteExportStation {
   station_id: string;
@@ -193,6 +213,7 @@ export function buildWebsiteExportArtifact(
       provenance_class: 'real',
       data_quality_tier: WEBSITE_EXPORT_DATA_QUALITY_TIER,
       evidence: {
+        source: row.reportingSource ?? 'db',
         observations_24h: Number.isInteger(row.observations24h) ? (row.observations24h as number) : 0,
         last_observation_age_minutes:
           typeof row.lastObservationAgeMinutes === 'number' && Number.isFinite(row.lastObservationAgeMinutes)
@@ -231,9 +252,11 @@ export interface WebsiteExportPool {
 }
 
 /**
- * Read-only. The oldest waiting stations that are READY, first. Every
- * eligibility rule is in the WHERE clause, so a row that fails one never uses
- * a place in the LIMIT window. $2 is the operator's allow-list of ids that are
+ * Read-only. The oldest waiting stations that pass every rule the database can
+ * check, first. Those rules are in the WHERE clause, so a row that fails one
+ * never uses a place in the LIMIT window. Whether a station is REPORTING is
+ * settled afterwards (resolveReporting): the database count is returned here,
+ * and the chain is asked only for a station with none. $2 is the operator's allow-list of ids that are
  * not neutral server-issued ids, comma-joined (a station id has no comma).
  */
 export const SELECT_READY_WEBSITE_STATIONS_SQL = `SELECT r.station_id, r.owner_address, r.owner_pubkey, r.ownership_signature,
@@ -248,7 +271,6 @@ export const SELECT_READY_WEBSITE_STATIONS_SQL = `SELECT r.station_id, r.owner_a
         AND lower(w.owner_address) = r.owner_address
         AND w.latitude IS NOT NULL AND w.longitude IS NOT NULL
         AND ${ACTIVE_INGESTION_SQL}
-        AND ${OBSERVATIONS_24H_SQL} > 0
         AND (r.station_id ~ '^pws-[0-9a-f]{16}$' OR r.station_id = ANY(string_to_array($2::text, ',')))
       ORDER BY r.created_at, r.station_id
       LIMIT $1`;
@@ -261,7 +283,6 @@ export const SELECT_NOT_READY_WEBSITE_STATIONS_SQL = `SELECT station_id, reason 
                 WHEN lower(w.owner_address) <> r.owner_address THEN 'the station now belongs to a different owner'
                 WHEN w.latitude IS NULL OR w.longitude IS NULL THEN 'station has no usable position'
                 WHEN NOT ${ACTIVE_INGESTION_SQL} THEN 'provider credentials are not verified or ingestion is not active'
-                WHEN ${OBSERVATIONS_24H_SQL} = 0 THEN 'no reading in the last 24 hours'
                 WHEN NOT (r.station_id ~ '^pws-[0-9a-f]{16}$' OR r.station_id = ANY(string_to_array($2::text, ',')))
                   THEN 'station id is not a neutral id (it may hold a name); pass --allow-id to include it'
               END AS reason
@@ -273,6 +294,123 @@ export const SELECT_NOT_READY_WEBSITE_STATIONS_SQL = `SELECT station_id, reason 
       LIMIT $1`;
 
 export const NOT_READY_REPORT_LIMIT = 200;
+/** How many waiting stations one export looks at when deciding who is reporting. */
+export const CANDIDATE_WINDOW = 200;
+
+export const REASON_NO_READING = 'no reading in the last 24 hours in the database or the chain tail (source none)';
+export const REASON_CHAIN_READ_FAILED = 'could not check the chain for readings (node read failed); not exported this run';
+export const REASON_RATE_LIMITED = 'not checked: the node asked to slow down (429); run again later';
+
+/**
+ * Settle who is reporting, oldest first, until `limit` stations are ready.
+ *  - a reading in the database in the last 24 hours: ready, source `db`, no node read;
+ *  - otherwise an id the caller confirmed moments ago: ready, source `confirmed`, no node read;
+ *  - otherwise ask the chain tail: a reading there: ready, source `chain`; none: not exported
+ *    (source none); a failed read: not exported; a 429: stop asking the node for the rest of the run.
+ * A station is never exported on an error. With no chain reader, only the database counts.
+ */
+export async function resolveReporting(
+  candidates: WebsiteExportRow[],
+  limit: number,
+  options: { chainEvidence?: ChainEvidenceReader; confirmed?: string[] } = {},
+): Promise<{ ready: WebsiteExportRow[]; notReady: WebsiteSkippedRow[] }> {
+  const ready: WebsiteExportRow[] = [];
+  const notReady: WebsiteSkippedRow[] = [];
+  const confirmed = new Set(options.confirmed ?? []);
+  let rateLimited = false;
+  for (const row of candidates) {
+    if (ready.length >= limit) break;
+    if ((row.observations24h ?? 0) > 0) {
+      ready.push({ ...row, reportingSource: 'db' });
+      continue;
+    }
+    if (confirmed.has(row.stationId)) {
+      ready.push({ ...row, reportingSource: 'confirmed', observations24h: 0, lastObservationAgeMinutes: null });
+      continue;
+    }
+    if (!options.chainEvidence) {
+      notReady.push({ stationId: row.stationId, reason: REASON_NO_READING });
+      continue;
+    }
+    if (rateLimited) {
+      notReady.push({ stationId: row.stationId, reason: REASON_RATE_LIMITED });
+      continue;
+    }
+    let seen: ChainEvidence;
+    try {
+      seen = await options.chainEvidence(row.stationId);
+    } catch {
+      seen = { kind: 'error' };
+    }
+    if (seen.kind === 'rate_limited') {
+      rateLimited = true;
+      notReady.push({ stationId: row.stationId, reason: REASON_RATE_LIMITED });
+    } else if (seen.kind === 'error') {
+      notReady.push({ stationId: row.stationId, reason: REASON_CHAIN_READ_FAILED });
+    } else if (Number.isInteger(seen.count) && seen.count > 0) {
+      ready.push({
+        ...row, reportingSource: 'chain', observations24h: seen.count, lastObservationAgeMinutes: seen.lastAgeMinutes,
+      });
+    } else {
+      notReady.push({ stationId: row.stationId, reason: REASON_NO_READING });
+    }
+  }
+  return { ready, notReady };
+}
+
+/**
+ * A ChainEvidenceReader over the backend's chain tail reader (the same reads the station pages
+ * use). Readings count when stamped within the last 24 hours and not in the future. Node reads
+ * are paced: after each station it waits `paceMsPerCall` for every node call that station cost,
+ * which keeps a long pass at about 60000 / paceMsPerCall calls a minute.
+ */
+export function chainTailEvidence(deps: {
+  latest: (stationId: string) => Promise<
+    | { kind: 'ok'; items: Array<Record<string, unknown>>; complete: boolean }
+    | { kind: 'rejected'; status: number }
+    | { kind: 'unavailable' | 'mismatch' }
+  >;
+  /** Node calls made since the last time this was asked (the caller's fetch wrapper counts them). */
+  takeCallCount: () => number;
+  sleep: (ms: number) => Promise<void>;
+  now?: () => number;
+  paceMsPerCall?: number;
+}): ChainEvidenceReader {
+  const now = deps.now ?? Date.now;
+  const pace = deps.paceMsPerCall ?? 3_000;
+  return async (stationId) => {
+    deps.takeCallCount();
+    let result: ChainEvidence;
+    try {
+      const read = await deps.latest(stationId);
+      if (read.kind === 'rejected') {
+        result = read.status === 429 ? { kind: 'rate_limited' } : { kind: 'error' };
+      } else if (read.kind !== 'ok') {
+        result = { kind: 'error' };
+      } else {
+        const at = now();
+        const stamps = read.items
+          .map((item) => Number(item.observed_at) * 1000)
+          .filter((ms) => Number.isFinite(ms) && ms <= at && at - ms <= 24 * 3_600_000);
+        if (stamps.length === 0 && !read.complete) {
+          // The walk stopped early with nothing found: that is not evidence of silence.
+          result = { kind: 'error' };
+        } else {
+          result = {
+            kind: 'ok',
+            count: stamps.length,
+            lastAgeMinutes: stamps.length ? Math.floor((at - Math.max(...stamps)) / 60_000) : null,
+          };
+        }
+      }
+    } catch {
+      result = { kind: 'error' };
+    }
+    const calls = deps.takeCallCount();
+    if (result.kind !== 'rate_limited' && calls > 0 && pace > 0) await deps.sleep(calls * pace);
+    return result;
+  };
+}
 
 export async function selectReadyWebsiteRows(
   pool: WebsiteExportPool,
@@ -317,6 +455,8 @@ export interface WebsiteExportCliDeps {
   pool: WebsiteExportPool;
   /** null = WRFCOIN_CHAIN_ID / WRFCOIN_NETWORK_ID are not set: the export refuses to run. */
   chain: { chainId: string; networkId: string } | null;
+  /** Paced look at the chain tail for a station the database has no reading for. Absent = database only. */
+  chainEvidence?: ChainEvidenceReader;
   /** Must fail if the file already exists (the wrapper passes flag 'wx'). */
   writeFile: (path: string, data: string) => void;
   log: (message: string) => void;
@@ -329,7 +469,7 @@ function safeCode(error: unknown): string {
 }
 
 const USAGE =
-  'usage: export-website-station-registrations.ts --out <file> --batch-id <id> [--limit <1-21>] [--allow-id <station id>]... [--cli-batch-out <file> --submitted-at <unix secs>]';
+  'usage: export-website-station-registrations.ts --out <file> --batch-id <id> [--limit <1-21>] [--allow-id <station id>]... [--confirmed-reporting <station id>]... [--cli-batch-out <file> --submitted-at <unix secs>]';
 
 /**
  * Exit codes: 0 exported, 2 nothing to export, 1 usage or database/file error.
@@ -341,15 +481,19 @@ export async function runWebsiteExportCli(argv: string[], deps: WebsiteExportCli
   const values = new Map<string, string>();
   // Ids the operator chose to put on chain although they are not neutral ids.
   const allowIds: string[] = [];
+  // Ids the caller saw reporting in a look just before this run (the batch tool's stamped
+  // export, which must be quick): no node read is made for them.
+  const confirmedIds: string[] = [];
   for (let i = 0; i < argv.length; i += 2) {
     const name = argv[i];
     const value = argv[i + 1];
-    if (name === '--allow-id') {
-      if (value === undefined || !WEBSITE_STATION_ID_RE.test(value) || isReservedMobileStationId(value) || allowIds.includes(value)) {
+    if (name === '--allow-id' || name === '--confirmed-reporting') {
+      const list = name === '--allow-id' ? allowIds : confirmedIds;
+      if (value === undefined || !WEBSITE_STATION_ID_RE.test(value) || isReservedMobileStationId(value) || list.includes(value)) {
         deps.error(USAGE);
         return 1;
       }
-      allowIds.push(value);
+      list.push(value);
       continue;
     }
     if (!known.has(name) || values.has(name) || value === undefined || value.startsWith('--')) {
@@ -391,10 +535,14 @@ export async function runWebsiteExportCli(argv: string[], deps: WebsiteExportCli
   }
   try {
     const { chainId, networkId } = deps.chain;
-    const rows = await selectReadyWebsiteRows(deps.pool, limit, allowIds);
+    const candidates = await selectReadyWebsiteRows(deps.pool, CANDIDATE_WINDOW, allowIds);
     const notReady = await selectNotReadyWebsiteRows(deps.pool, allowIds);
+    const reporting = await resolveReporting(candidates, limit, {
+      chainEvidence: deps.chainEvidence, confirmed: confirmedIds,
+    });
+    const rows = reporting.ready;
     const { artifact, skipped } = buildWebsiteExportArtifact(rows, { chainId, networkId, batchId });
-    artifact.not_exported = [...skipped, ...notReady];
+    artifact.not_exported = [...skipped, ...notReady, ...reporting.notReady];
     for (const s of artifact.not_exported) deps.error(`not exported ${s.stationId}: ${s.reason}`);
     if (artifact.stations.length === 0) {
       deps.error(`nothing to export (${rows.length} ready row(s) read, ${artifact.not_exported.length} not exported)`);
@@ -418,8 +566,11 @@ export async function runWebsiteExportCli(argv: string[], deps: WebsiteExportCli
     deps.log(`wrote ${artifact.stations.length} station(s) to ${out} (batch ${batchId}, chain ${chainId}/${networkId})`);
     for (const s of artifact.stations) {
       const age = s.evidence.last_observation_age_minutes;
+      const seen = s.evidence.source === 'confirmed'
+        ? 'reporting confirmed by the caller'
+        : `${s.evidence.observations_24h} reading(s) ${s.evidence.source === 'chain' ? 'in the chain tail' : 'in 24 h'}, last ${age === null ? 'unknown' : `${age} min ago`}`;
       deps.log(
-        `station ${s.station_id}: ${s.evidence.observations_24h} reading(s) in 24 h, last ${age === null ? 'unknown' : `${age} min ago`}`
+        `station ${s.station_id}: source ${s.evidence.source}; ${seen}`
         + (NEUTRAL_STATION_ID_RE.test(s.station_id) ? '' : ' (allowed by --allow-id)'),
       );
     }

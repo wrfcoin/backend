@@ -140,7 +140,22 @@ export const OWNED_STATION_SQL = `SELECT w.station_id, r.status, r.blocked_reaso
       WHERE w.station_id = $1 AND lower(w.owner_address) = $2
       LIMIT 1`;
 
-function statusOf(row: Record<string, unknown>, chain: WebsiteStationChain): ChainRegistrationStatus {
+/**
+ * Where a station's readings can be seen. Provider collectors submit readings to the chain node,
+ * not to this backend, so `weather_data` may hold nothing for a station that is reporting fine:
+ * a reading in the chain tail counts as well.
+ */
+export interface ReportingLookup {
+  /** Epoch ms of the station's newest reading in the chain tail, or null when none is known. Never throws. */
+  chainLastSeenMs?: (stationId: string) => Promise<number | null>;
+  now?: () => number;
+}
+
+function statusOf(
+  row: Record<string, unknown>,
+  chain: WebsiteStationChain,
+  seenOnChain = false,
+): ChainRegistrationStatus {
   const stationId = String(row.station_id);
   const base = { stationId, chainId: chain.chainId, networkId: chain.networkId };
   if (row.status === 'on_chain') return { state: 'earning', ...base };
@@ -152,7 +167,7 @@ function statusOf(row: Record<string, unknown>, chain: WebsiteStationChain): Cha
   }
   if (row.status !== 'db_only') return { state: 'needs_owner_signature', ...base };
   // Waiting: say what, if anything, is still missing. The export applies the same rules.
-  const reporting = row.ingestion_active === true && Number(row.observations_24h) > 0;
+  const reporting = row.ingestion_active === true && (Number(row.observations_24h) > 0 || seenOnChain);
   const waitingFor: WaitingFor = !reporting
     ? 'station_report'
     : NEUTRAL_STATION_ID_RE.test(stationId) ? 'batch' : 'operator_review';
@@ -168,13 +183,30 @@ export async function getChainRegistrationStatus(
   stationId: string,
   walletAddress: unknown,
   chain: WebsiteStationChain,
+  lookup: ReportingLookup = {},
 ): Promise<ChainRegistrationStatus | null> {
   const owner = caller(walletAddress);
   if (!owner || !WEBSITE_STATION_ID_RE.test(stationId) || isReservedMobileStationId(stationId)) return null;
   const found = await pool.query(OWNED_STATION_SQL, [stationId, owner]);
   const row = found.rows?.[0];
   if (!row) return null;
-  return statusOf(row, chain);
+  // Ask the chain only when it can change the answer: a waiting station with active ingestion
+  // and no reading in the database.
+  let seenOnChain = false;
+  if (
+    lookup.chainLastSeenMs && row.status === 'db_only' && row.ingestion_active === true
+    && !(Number(row.observations_24h) > 0)
+  ) {
+    try {
+      const last = await lookup.chainLastSeenMs(String(row.station_id));
+      const now = (lookup.now ?? Date.now)();
+      seenOnChain = typeof last === 'number' && Number.isFinite(last)
+        && last <= now && now - last <= RECENT_OBSERVATION_HOURS * 3_600_000;
+    } catch {
+      seenOnChain = false;
+    }
+  }
+  return statusOf(row, chain, seenOnChain);
 }
 
 /**
@@ -212,6 +244,7 @@ export async function submitOwnershipProof(
   stationId: string,
   body: unknown,
   chain: WebsiteStationChain,
+  lookup: ReportingLookup = {},
 ): Promise<ServiceResult> {
   const owner = caller(walletAddress);
   if (!owner) return fail(401, 'UNAUTHORIZED', 'Wallet address required');
@@ -260,7 +293,7 @@ export async function submitOwnershipProof(
     return { status: 200, body: { chainRegistration: statusOf(row, chain) } };
   }
   const written = await pool.query(UPSERT_OWNERSHIP_PROOF_SQL, [rawId, owner, pubkeyHex, signatureHex]);
-  const again = await getChainRegistrationStatus(pool, rawId, owner, chain);
+  const again = await getChainRegistrationStatus(pool, rawId, owner, chain, lookup);
   if (!again) return NOT_FOUND();
   if (affected(written) !== 1 && again.state === 'needs_owner_signature') {
     // The proof was not stored and nothing else explains the state: do not claim it was.

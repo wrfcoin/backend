@@ -9,6 +9,7 @@
  * website-station-chain-registration-pg.integration.test.ts.
  */
 import crypto from 'node:crypto';
+import { jest } from '@jest/globals';
 import {
   ADOPT_WEBSITE_STATION_ON_CHAIN_SQL,
   MARK_BLOCKED_SQL,
@@ -28,10 +29,15 @@ import {
   SELECT_NOT_READY_WEBSITE_STATIONS_SQL,
   SELECT_READY_WEBSITE_STATIONS_SQL,
   WEBSITE_EXPORT_VERSION,
+  REASON_CHAIN_READ_FAILED,
+  REASON_NO_READING,
+  REASON_RATE_LIMITED,
   buildWebsiteCliBatch,
   buildWebsiteExportArtifact,
+  chainTailEvidence,
   onTenthGrid,
   runWebsiteExportCli,
+  type ChainEvidence,
   type WebsiteExportCliDeps,
   type WebsiteExportRow,
 } from '../server/services/website-station-export';
@@ -88,7 +94,6 @@ function fakeDb(stations: Station[], regs: Reg[] = []) {
     if (s.owner_address.toLowerCase() !== r.owner_address) return 'the station now belongs to a different owner';
     if (s.latitude == null || s.longitude == null) return 'station has no usable position';
     if (!ingestionActive(s)) return 'provider credentials are not verified or ingestion is not active';
-    if (!s.observations24h) return 'no reading in the last 24 hours';
     if (!NEUTRAL_STATION_ID_RE.test(r.station_id) && !allow.includes(r.station_id)) {
       return 'station id is not a neutral id (it may hold a name); pass --allow-id to include it';
     }
@@ -149,7 +154,8 @@ function fakeDb(stations: Station[], regs: Reg[] = []) {
               station_id: r.station_id, owner_address: r.owner_address, owner_pubkey: r.owner_pubkey,
               ownership_signature: r.ownership_signature, station_owner_address: s.owner_address,
               is_active: s.is_active, latitude: s.latitude, longitude: s.longitude,
-              observations_24h: s.observations24h, last_observation_age_minutes: s.lastAgeMinutes,
+              observations_24h: s.observations24h,
+              last_observation_age_minutes: s.observations24h ? s.lastAgeMinutes : null,
             };
           });
         return { rows, rowCount: rows.length };
@@ -240,6 +246,33 @@ describe('submitOwnershipProof', () => {
     const db = fakeDb([{ station_id: NAMED, owner_address: w.address }]);
     await submitOwnershipProof(db.pool, w.address, NAMED, proofFor(w, NAMED), CHAIN);
     expect((await getChainRegistrationStatus(db.pool, NAMED, w.address, CHAIN))!.waitingFor).toBe('operator_review');
+  });
+
+  it('a station whose readings are only on the chain is not told to "report": the chain tail counts', async () => {
+    const NOW = 1_800_000_000_000;
+    const db = fakeDb([{ station_id: ID, owner_address: w.address, observations24h: 0 }]);
+    await submitOwnershipProof(db.pool, w.address, ID, proofFor(w, ID), CHAIN);
+    const at = (last: number | null | Error) => getChainRegistrationStatus(db.pool, ID, w.address, CHAIN, {
+      now: () => NOW,
+      chainLastSeenMs: async () => { if (last instanceof Error) throw last; return last; },
+    });
+    expect((await at(NOW - 10 * 60_000))!.waitingFor).toBe('batch');
+    // Nothing on chain, older than 24 hours, stamped in the future, or a failed read: still waiting to report.
+    for (const last of [null, NOW - 25 * 3_600_000, NOW + 60_000, new Error('node down')]) {
+      expect((await at(last))!.waitingFor).toBe('station_report');
+    }
+    // Ingestion not active is not something a chain reading can waive, and the chain is not asked.
+    const off = fakeDb([{ station_id: ID, owner_address: w.address, observations24h: 0, ingestion: false }]);
+    await submitOwnershipProof(off.pool, w.address, ID, proofFor(w, ID), CHAIN);
+    const asked = jest.fn(async () => NOW);
+    expect((await getChainRegistrationStatus(off.pool, ID, w.address, CHAIN, { now: () => NOW, chainLastSeenMs: asked }))!.waitingFor)
+      .toBe('station_report');
+    expect(asked).not.toHaveBeenCalled();
+    // A station with database readings never costs a node read either.
+    const fine = fakeDb([{ station_id: ID, owner_address: w.address }]);
+    await submitOwnershipProof(fine.pool, w.address, ID, proofFor(w, ID), CHAIN);
+    await getChainRegistrationStatus(fine.pool, ID, w.address, CHAIN, { chainLastSeenMs: asked });
+    expect(asked).not.toHaveBeenCalled();
   });
 
   it('answers the same 404 for an unknown station and for somebody else\'s station, and stores nothing', async () => {
@@ -363,7 +396,7 @@ describe('buildWebsiteExportArtifact', () => {
       network_id: 'testnet',
       provenance_class: 'real',
       data_quality_tier: 'unverified',
-      evidence: { observations_24h: 3, last_observation_age_minutes: 12 },
+      evidence: { source: 'db', observations_24h: 3, last_observation_age_minutes: 12 },
     }]);
   });
 
@@ -442,13 +475,18 @@ describe('runWebsiteExportCli', () => {
   const w = wallet(31);
   const ID = NEUTRAL;
 
-  function harness(db: ReturnType<typeof fakeDb>, chain: WebsiteExportCliDeps['chain'] = CHAIN) {
+  function harness(
+    db: ReturnType<typeof fakeDb>,
+    chain: WebsiteExportCliDeps['chain'] = CHAIN,
+    chainEvidence?: WebsiteExportCliDeps['chainEvidence'],
+  ) {
     const files = new Map<string, string>();
     const out: string[] = [];
     const err: string[] = [];
     const deps: WebsiteExportCliDeps = {
       pool: db.pool as WebsiteExportCliDeps['pool'],
       chain,
+      chainEvidence,
       writeFile: (path, data) => {
         if (files.has(path)) throw Object.assign(new Error('exists'), { code: 'EEXIST' });
         files.set(path, data);
@@ -482,7 +520,7 @@ describe('runWebsiteExportCli', () => {
     expect(artifact.not_exported).toEqual([]);
     expect(batch).toEqual([expect.objectContaining({ station_id: ID, latitude: 10.3, longitude: -20.7, submitted_at: 1800000000 })]);
     expect(JSON.stringify([...db.reg.values()])).toBe(before);
-    // The export issued two statements, and both are reads.
+    // The export issued two statements, both reads (and no node read: the database had a reading).
     const issued = db.statements.slice(statementsBefore);
     expect(issued).toEqual([SELECT_READY_WEBSITE_STATIONS_SQL, SELECT_NOT_READY_WEBSITE_STATIONS_SQL]);
     for (const sql of issued) {
@@ -500,7 +538,7 @@ describe('runWebsiteExportCli', () => {
     const h = harness(db);
     await runWebsiteExportCli(['--out', '/x/a.json', '--batch-id', 'b1'], h.deps);
     const printed = [...h.out, ...h.err].join('\n');
-    expect(printed).toContain(`station ${ID}: 3 reading(s) in 24 h, last 12 min ago`);
+    expect(printed).toContain(`station ${ID}: source db; 3 reading(s) in 24 h, last 12 min ago`);
     expect(printed).not.toContain(w.address);
     expect(printed).not.toContain(w.publicKey);
     expect(printed).not.toMatch(/[0-9a-f]{64}/);
@@ -520,12 +558,12 @@ describe('runWebsiteExportCli', () => {
     const artifact = JSON.parse(h.files.get('/x/a.json')!);
     expect(artifact.stations.map((s: { station_id: string }) => s.station_id)).toEqual([ID]);
     expect(artifact.not_exported).toEqual([
-      { stationId: 'pws-00000000000000a1', reason: 'no reading in the last 24 hours' },
       { stationId: 'pws-00000000000000a2', reason: 'provider credentials are not verified or ingestion is not active' },
       { stationId: 'pws-00000000000000a3', reason: 'provider credentials are not verified or ingestion is not active' },
       { stationId: 'pws-00000000000000a4', reason: 'station is not active' },
+      { stationId: 'pws-00000000000000a1', reason: REASON_NO_READING },
     ]);
-    expect(h.err.join('\n')).toContain('not exported pws-00000000000000a1: no reading in the last 24 hours');
+    expect(h.err.join('\n')).toContain(`not exported pws-00000000000000a1: ${REASON_NO_READING}`);
   });
 
   it('an id that may hold a name is exported only when the operator names it with --allow-id', async () => {
@@ -543,7 +581,154 @@ describe('runWebsiteExportCli', () => {
     const second = JSON.parse(allowed.files.get('/x/b.json')!);
     expect(second.stations.map((s: { station_id: string }) => s.station_id).sort()).toEqual([ID, NAMED].sort());
     expect(second.not_exported).toEqual([]);
-    expect(allowed.out.join('\n')).toContain(`station ${NAMED}: 3 reading(s) in 24 h, last 12 min ago (allowed by --allow-id)`);
+    expect(allowed.out.join('\n')).toContain(`station ${NAMED}: source db; 3 reading(s) in 24 h, last 12 min ago (allowed by --allow-id)`);
+  });
+
+  describe('reporting: the database or the chain tail', () => {
+    const SILENT = 'pws-00000000000000b1';
+    const silentDb = () => dbWith([{ station_id: SILENT, owner_address: w.address, observations24h: 0 }]);
+    const run = async (chainEvidence: WebsiteExportCliDeps['chainEvidence'] | undefined, argv: string[] = []) => {
+      const db = await silentDb();
+      const h = harness(db, CHAIN, chainEvidence);
+      const code = await runWebsiteExportCli(['--out', '/x/a.json', '--batch-id', 'b1', ...argv], h.deps);
+      return { code, h, db, artifact: h.files.has('/x/a.json') ? JSON.parse(h.files.get('/x/a.json')!) : null };
+    };
+
+    it('source db: a reading in the database is enough, and the node is never asked', async () => {
+      const asked = jest.fn(async (): Promise<ChainEvidence> => ({ kind: 'error' }));
+      const db = await waitingDb();
+      const h = harness(db, CHAIN, asked);
+      expect(await runWebsiteExportCli(['--out', '/x/a.json', '--batch-id', 'b1'], h.deps)).toBe(0);
+      expect(JSON.parse(h.files.get('/x/a.json')!).stations[0].evidence)
+        .toEqual({ source: 'db', observations_24h: 3, last_observation_age_minutes: 12 });
+      expect(asked).not.toHaveBeenCalled();
+    });
+
+    it('source chain: nothing in the database, a reading in the chain tail: exported, and the line says so', async () => {
+      const asked = jest.fn(async (): Promise<ChainEvidence> => ({ kind: 'ok', count: 5, lastAgeMinutes: 4 }));
+      const { code, h, artifact } = await run(asked);
+      expect(code).toBe(0);
+      expect(asked).toHaveBeenCalledWith(SILENT);
+      expect(artifact.stations[0].evidence).toEqual({ source: 'chain', observations_24h: 5, last_observation_age_minutes: 4 });
+      expect(h.out.join('\n')).toContain(`station ${SILENT}: source chain; 5 reading(s) in the chain tail, last 4 min ago`);
+    });
+
+    it('source none: nothing in the database and nothing in the chain tail: stays waiting, with the reason', async () => {
+      const { code, h, artifact } = await run(async () => ({ kind: 'ok', count: 0, lastAgeMinutes: null }));
+      expect(code).toBe(2);
+      expect(artifact).toBeNull();
+      expect(h.err.join('\n')).toContain(`not exported ${SILENT}: ${REASON_NO_READING}`);
+      expect(REASON_NO_READING).toContain('source none');
+    });
+
+    it('a node read that fails, or throws, never exports the station', async () => {
+      for (const reader of [
+        async (): Promise<ChainEvidence> => ({ kind: 'error' }),
+        async (): Promise<ChainEvidence> => { throw new Error('socket hang up at 10.0.0.9'); },
+      ]) {
+        const { code, h, artifact, db } = await run(reader);
+        expect(code).toBe(2);
+        expect(artifact).toBeNull();
+        expect(h.err.join('\n')).toContain(`not exported ${SILENT}: ${REASON_CHAIN_READ_FAILED}`);
+        expect(h.err.join('\n')).not.toContain('10.0.0.9');
+        expect(db.reg.get(SILENT)!.status).toBe('db_only');
+      }
+    });
+
+    it('no chain reader at all: only the database counts', async () => {
+      const { code, h } = await run(undefined);
+      expect(code).toBe(2);
+      expect(h.err.join('\n')).toContain(REASON_NO_READING);
+    });
+
+    it('a 429 stops every further node read; stations with database readings are still exported', async () => {
+      const stations: Station[] = [
+        { station_id: 'pws-00000000000000c1', owner_address: w.address, observations24h: 0 },
+        { station_id: 'pws-00000000000000c2', owner_address: w.address, observations24h: 0 },
+        { station_id: 'pws-00000000000000c3', owner_address: w.address, observations24h: 0 },
+        { station_id: ID, owner_address: w.address },
+      ];
+      const db = await dbWith(stations);
+      const asked = jest.fn(async (id: string): Promise<ChainEvidence> =>
+        (id.endsWith('c1') ? { kind: 'ok', count: 2, lastAgeMinutes: 9 } : { kind: 'rate_limited' }));
+      const h = harness(db, CHAIN, asked);
+      expect(await runWebsiteExportCli(['--out', '/x/a.json', '--batch-id', 'b1'], h.deps)).toBe(0);
+      const artifact = JSON.parse(h.files.get('/x/a.json')!);
+      expect(artifact.stations.map((s: { station_id: string; evidence: { source: string } }) => [s.station_id, s.evidence.source]))
+        .toEqual([['pws-00000000000000c1', 'chain'], [ID, 'db']]);
+      // c2 got the 429; c3 was never asked.
+      expect(asked.mock.calls.map((c) => c[0])).toEqual(['pws-00000000000000c1', 'pws-00000000000000c2']);
+      expect(artifact.not_exported).toEqual([
+        { stationId: 'pws-00000000000000c2', reason: REASON_RATE_LIMITED },
+        { stationId: 'pws-00000000000000c3', reason: REASON_RATE_LIMITED },
+      ]);
+    });
+
+    it('once the batch is full, no more stations are looked up', async () => {
+      const db = await dbWith([
+        { station_id: 'pws-00000000000000d1', owner_address: w.address, observations24h: 0 },
+        { station_id: 'pws-00000000000000d2', owner_address: w.address, observations24h: 0 },
+      ]);
+      const asked = jest.fn(async (): Promise<ChainEvidence> => ({ kind: 'ok', count: 1, lastAgeMinutes: 1 }));
+      const h = harness(db, CHAIN, asked);
+      expect(await runWebsiteExportCli(['--out', '/x/a.json', '--batch-id', 'b1', '--limit', '1'], h.deps)).toBe(0);
+      expect(asked).toHaveBeenCalledTimes(1);
+    });
+
+    it('--confirmed-reporting: the caller saw it reporting a moment ago, so no node read is made for it', async () => {
+      const asked = jest.fn(async (): Promise<ChainEvidence> => ({ kind: 'error' }));
+      const { code, artifact, h } = await run(asked, ['--confirmed-reporting', SILENT]);
+      expect(code).toBe(0);
+      expect(asked).not.toHaveBeenCalled();
+      expect(artifact.stations[0].evidence).toEqual({ source: 'confirmed', observations_24h: 0, last_observation_age_minutes: null });
+      expect(h.out.join('\n')).toContain(`station ${SILENT}: source confirmed; reporting confirmed by the caller`);
+      // It only waives the reading: a station that fails another rule is still left out.
+      const other = await dbWith([{ station_id: SILENT, owner_address: w.address, observations24h: 0, is_active: false }]);
+      const again = harness(other, CHAIN, asked);
+      expect(await runWebsiteExportCli(['--out', '/x/b.json', '--batch-id', 'b2', '--confirmed-reporting', SILENT], again.deps)).toBe(2);
+    });
+  });
+
+  describe('chainTailEvidence (the paced look at the node)', () => {
+    const NOW = 1_800_000_000_000;
+    const secs = (minutesAgo: number) => (NOW - minutesAgo * 60_000) / 1000;
+    function reader(read: unknown, calls = 2) {
+      let pending = 0;
+      const sleep = jest.fn(async () => undefined);
+      const evidence = chainTailEvidence({
+        latest: async () => { pending += calls; return read as never; },
+        takeCallCount: () => { const n = pending; pending = 0; return n; },
+        sleep, now: () => NOW,
+      });
+      return { evidence, sleep };
+    }
+
+    it('counts readings stamped in the last 24 hours and reports the newest; future and older stamps do not count', async () => {
+      const { evidence, sleep } = reader({ kind: 'ok', complete: true, items: [
+        { observed_at: secs(7) }, { observed_at: secs(90) }, { observed_at: secs(25 * 60) }, { observed_at: secs(-5) }, { observed_at: 'x' },
+      ] });
+      expect(await evidence('pws-x')).toEqual({ kind: 'ok', count: 2, lastAgeMinutes: 7 });
+      // Two node calls at 3 s each: about 20 calls a minute.
+      expect(sleep).toHaveBeenCalledWith(6_000);
+    });
+
+    it('a complete walk with nothing found is "none"; a walk cut short with nothing found is an error', async () => {
+      expect(await reader({ kind: 'ok', complete: true, items: [] }).evidence('pws-x')).toEqual({ kind: 'ok', count: 0, lastAgeMinutes: null });
+      expect(await reader({ kind: 'ok', complete: false, items: [] }).evidence('pws-x')).toEqual({ kind: 'error' });
+    });
+
+    it('429 is rate_limited (and it does not wait); any other refusal or outage is an error', async () => {
+      const limited = reader({ kind: 'rejected', status: 429 });
+      expect(await limited.evidence('pws-x')).toEqual({ kind: 'rate_limited' });
+      expect(limited.sleep).not.toHaveBeenCalled();
+      for (const read of [{ kind: 'rejected', status: 400 }, { kind: 'unavailable' }, { kind: 'mismatch' }]) {
+        expect(await reader(read).evidence('pws-x')).toEqual({ kind: 'error' });
+      }
+      const throwing = chainTailEvidence({
+        latest: async () => { throw new Error('boom'); }, takeCallCount: () => 0, sleep: async () => undefined,
+      });
+      expect(await throwing('pws-x')).toEqual({ kind: 'error' });
+    });
   });
 
   it('a blocked station is never exported and never listed as waiting', async () => {
@@ -598,6 +783,8 @@ describe('runWebsiteExportCli', () => {
       ['--out', '/x/a.json', '--batch-id', 'b1', '--allow-id', 'mob-' + '0'.repeat(32)],
       ['--out', '/x/a.json', '--batch-id', 'b1', '--allow-id', NAMED, '--allow-id', NAMED],
       ['--out', '/x/a.json', '--batch-id', 'b1', '--allow-id'],
+      ['--out', '/x/a.json', '--batch-id', 'b1', '--confirmed-reporting', 'bad,id'],
+      ['--out', '/x/a.json', '--batch-id', 'b1', '--confirmed-reporting', ID, '--confirmed-reporting', ID],
     ]) {
       expect(await runWebsiteExportCli(argv, harness(db).deps)).toBe(1);
     }

@@ -536,6 +536,18 @@ async function getChainRegistrationService() {
   return _chainRegistrationService;
 }
 
+// Provider collectors submit readings to the chain node, not to this backend, so a station can be
+// reporting with nothing in weather_data. The shared, cached chain tail reader answers that; any
+// failure there just leaves the database answer.
+async function chainReportingLookup() {
+  try {
+    const chainLastSeen = await getChainLastSeen();
+    return { chainLastSeenMs: (stationId) => chainLastSeen(stationId) };
+  } catch (error) {
+    return {};
+  }
+}
+
 /** undefined = switched off (field omitted); null = could not be read, or no chain is configured. */
 async function readChainRegistration(pool, stationId, ownerAddress) {
   try {
@@ -543,7 +555,7 @@ async function readChainRegistration(pool, stationId, ownerAddress) {
     if (!service.websiteStationChainRegistrationEnabled()) return undefined;
     const chain = service.resolveWebsiteStationChain();
     if (!chain) return null;
-    return await service.getChainRegistrationStatus(pool, stationId, ownerAddress, chain);
+    return await service.getChainRegistrationStatus(pool, stationId, ownerAddress, chain, await chainReportingLookup());
   } catch (error) {
     logger.warn('Station chain registration status unavailable');
     return null;
@@ -604,7 +616,14 @@ router.post(
         }
         stationId = resolved.stationId;
       }
-      const result = await service.submitOwnershipProof(pool, ownerAddress, stationId, req.body, chain);
+      const result = await service.submitOwnershipProof(
+        pool,
+        ownerAddress,
+        stationId,
+        req.body,
+        chain,
+        await chainReportingLookup()
+      );
       const body = result.status < 400 ? { success: true, ...result.body } : result.body;
       return res.status(result.status).json(body);
     } catch (error) {

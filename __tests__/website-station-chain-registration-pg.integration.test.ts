@@ -18,7 +18,9 @@ import {
   submitOwnershipProof,
 } from '../server/services/website-station-chain-registration';
 import {
+  REASON_NO_READING,
   buildWebsiteExportArtifact,
+  resolveReporting,
   selectNotReadyWebsiteRows,
   selectReadyWebsiteRows,
 } from '../server/services/website-station-export';
@@ -192,7 +194,6 @@ d('website station chain registration against real Postgres', () => {
     const w = wallet();
     const named = `pws-fixture-named-${crypto.randomBytes(3).toString('hex')}`;
     const notReady: Array<[Opts, string]> = [
-      [{ readingAgeMinutes: null }, 'no reading in the last 24 hours'],
       [{ ingestion: 'pending' }, 'provider credentials are not verified or ingestion is not active'],
       [{ credentials: false }, 'provider credentials are not verified or ingestion is not active'],
       [{ lat: null }, 'station has no usable position'],
@@ -213,16 +214,33 @@ d('website station chain registration against real Postgres', () => {
     await submit(w, moved);
     await pool.query('UPDATE weather_stations SET owner_address = $2 WHERE station_id = $1', [moved, wallet().address]);
     expected.set(moved, 'the station now belongs to a different owner');
+    // A station with no reading in the database passes the database rules; whether it is
+    // reporting is settled afterwards from the chain tail.
+    const silent = await station(w, { readingAgeMinutes: null });
+    await submit(w, silent);
+    const old = await station(w, { readingAgeMinutes: 25 * 60 });
+    await submit(w, old);
     // The ready station is the NEWEST waiting row, behind all of the above.
     const ready = await station(w, { readingAgeMinutes: 7 });
     await submit(w, ready);
 
-    const mine = (rows: Array<{ stationId: string }>) => rows.filter((r) => r.stationId === ready || expected.has(r.stationId));
-    const all = await selectReadyWebsiteRows(pool as any, 21);
-    expect(mine(all).map((r) => r.stationId)).toEqual([ready]);
-    // With every earlier ready row of this database excluded, a window of ONE still holds it.
-    const before = all.findIndex((r) => r.stationId === ready);
-    expect((await selectReadyWebsiteRows(pool as any, before + 1)).some((r) => r.stationId === ready)).toBe(true);
+    const ours = new Set([ready, silent, old, ...expected.keys()]);
+    const mine = <T extends { stationId: string }>(rows: T[]) => rows.filter((r) => ours.has(r.stationId));
+    const all = mine(await selectReadyWebsiteRows(pool as any, 200));
+    // Only the rows that pass the database rules come back, oldest first.
+    expect(all.map((r) => r.stationId)).toEqual([silent, old, ready]);
+    expect(all.map((r) => r.observations24h)).toEqual([0, 0, 1]);
+    // Database only: the one with a fresh reading is ready even with a batch of ONE; the silent
+    // ones do not take its place.
+    const dbOnly = await resolveReporting(all, 1);
+    expect(dbOnly.ready.map((r) => [r.stationId, r.reportingSource])).toEqual([[ready, 'db']]);
+    expect(dbOnly.notReady).toEqual([{ stationId: silent, reason: REASON_NO_READING }, { stationId: old, reason: REASON_NO_READING }]);
+    // With the chain tail: the silent one was seen there, the old one was not.
+    const withChain = await resolveReporting(all, 21, {
+      chainEvidence: async (id) => (id === silent ? { kind: 'ok', count: 4, lastAgeMinutes: 3 } : { kind: 'ok', count: 0, lastAgeMinutes: null }),
+    });
+    expect(withChain.ready.map((r) => [r.stationId, r.reportingSource])).toEqual([[silent, 'chain'], [ready, 'db']]);
+    expect(withChain.notReady).toEqual([{ stationId: old, reason: REASON_NO_READING }]);
     const got = all.find((r) => r.stationId === ready)!;
     expect(got).toMatchObject({ ownerAddress: w.address, isActive: true, observations24h: 1 });
     expect(got.lastObservationAgeMinutes).toBeGreaterThanOrEqual(6);
@@ -232,9 +250,9 @@ d('website station chain registration against real Postgres', () => {
     expect(report).toEqual(expected);
 
     // The allow-list admits exactly the named id, and the export writes the grid point only.
-    const allowed = await selectReadyWebsiteRows(pool as any, 21, [named]);
-    expect(mine(allowed).map((r) => r.stationId).sort()).toEqual([named, ready].sort());
-    const { artifact, skipped } = buildWebsiteExportArtifact(mine(allowed) as any, { ...CHAIN, batchId: 'b' });
+    const allowed = mine(await selectReadyWebsiteRows(pool as any, 200, [named]));
+    expect(allowed.map((r) => r.stationId).sort()).toEqual([named, old, ready, silent].sort());
+    const { artifact, skipped } = buildWebsiteExportArtifact(allowed, { ...CHAIN, batchId: 'b' });
     expect(skipped).toEqual([]);
     for (const s of artifact.stations) expect([s.latitude, s.longitude]).toEqual([10.3, -20.7]);
     // Reading changed nothing.
@@ -250,7 +268,7 @@ d('website station chain registration against real Postgres', () => {
     expect((await status(w, id))!.state).toBe('earning');
     await reconcileWebsiteStations([chain(id, wallet().address), chain(id, w.address, { is_active: false })], pool as any);
     expect(await row(id)).toMatchObject({ status: 'on_chain', blocked_reason: null });
-    expect((await selectReadyWebsiteRows(pool as any, 21)).some((r) => r.stationId === id)).toBe(false);
+    expect((await selectReadyWebsiteRows(pool as any, 200)).some((r) => r.stationId === id)).toBe(false);
   });
 
   it('reconcile: an id the chain has under another owner is blocked, leaves the waiting list, and stays blocked', async () => {
@@ -259,7 +277,7 @@ d('website station chain registration against real Postgres', () => {
     await submit(w, id);
     expect(await reconcileWebsiteStations([chain(id, wallet().address)], pool as any)).toEqual({ onChain: 0, blocked: 1, failed: 0 });
     expect(await status(w, id)).toEqual({ state: 'blocked', stationId: id, ...CHAIN, blockedReason: 'station_id_taken_on_chain' });
-    expect((await selectReadyWebsiteRows(pool as any, 21)).some((r) => r.stationId === id)).toBe(false);
+    expect((await selectReadyWebsiteRows(pool as any, 200)).some((r) => r.stationId === id)).toBe(false);
     expect((await selectNotReadyWebsiteRows(pool as any)).some((r) => r.stationId === id)).toBe(false);
     // Signing again cannot un-block it.
     expect(((await submit(w, id)).body.chainRegistration as any).state).toBe('blocked');
