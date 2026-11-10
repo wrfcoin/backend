@@ -13,6 +13,7 @@ import { Pool } from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from '@jest/globals';
 import { encryptData } from '../server/utils/crypto';
 import { listCollectorRoster } from '../server/services/collector-roster';
+import { reconcileWebsiteStations } from '../server/services/website-station-chain-registration';
 
 const url = process.env.MOBILE_STATION_PG_URL;
 const d = url ? describe : describe.skip;
@@ -55,7 +56,7 @@ d('collector roster against real Postgres', () => {
     await admin?.end();
   });
 
-  interface Opts { status?: string; blockedReason?: string; active?: boolean; stationOwner?: string; credentials?: boolean; provider?: string }
+  interface Opts { status?: string; blockedReason?: string; active?: boolean; stationOwner?: string; credentials?: boolean; provider?: string; ingestion?: string }
   async function station(o: Opts = {}) {
     n += 1;
     const id = `pws-${crypto.randomBytes(8).toString('hex')}`;
@@ -64,7 +65,7 @@ d('collector roster against real Postgres', () => {
     await pool.query(
       `INSERT INTO weather_stations (station_id, owner_address, location, is_active, metadata, latitude, longitude, name)
        VALUES ($1, $2, 'fixture', $3, $4::jsonb, $5, $6, 'A name that must never be sent')`,
-      [id, o.stationOwner ?? owner, o.active ?? true, JSON.stringify({ mac, ingestionStatus: 'active' }), 10 + 1 / 3, -(20 + 2 / 3)]);
+      [id, o.stationOwner ?? owner, o.active ?? true, JSON.stringify({ mac, ingestionStatus: o.ingestion ?? 'active' }), 10 + 1 / 3, -(20 + 2 / 3)]);
     if (o.credentials ?? true) {
       const api = encryptData(`api-${id}`, ENC_KEY);
       const app = encryptData(`app-${id}`, ENC_KEY);
@@ -100,10 +101,11 @@ d('collector roster against real Postgres', () => {
     const moved = await station({ stationOwner: `0x${'9'.repeat(40)}` });
     const noKeys = await station({ credentials: false });
     const otherProvider = await station({ provider: 'other' });
+    const pending = await station({ ingestion: 'pending' });
     const good = await station();
     const served = await ids();
     expect(served).toContain(good.id);
-    for (const out of [waiting, blocked, inactive, moved, noKeys, otherProvider]) expect(served).not.toContain(out.id);
+    for (const out of [waiting, blocked, inactive, moved, noKeys, otherProvider, pending]) expect(served).not.toContain(out.id);
   });
 
   it('a station drops off the next read when it is deactivated, blocked or changes owner; the owner match ignores case', async () => {
@@ -119,6 +121,23 @@ d('collector roster against real Postgres', () => {
     const after = await ids();
     for (const gone of [a, b, c]) expect(after).not.toContain(gone.id);
     expect(after).toContain(upper.id);
+  });
+
+  it('a station transferred or deactivated ON CHAIN leaves the roster on the next read (the reconcile blocks its row)', async () => {
+    const moved = await station();
+    const stopped = await station();
+    expect(await ids()).toEqual(expect.arrayContaining([moved.id, stopped.id]));
+    const entry = (id: string, owner: string, over: Record<string, unknown> = {}) =>
+      ({ station_id: id, owner_address: owner, provenance_class: 'real', is_active: true, ...over });
+    const result = await reconcileWebsiteStations(
+      [entry(moved.id, `0x${'7'.repeat(40)}`), entry(stopped.id, stopped.owner, { is_active: false })], pool as any);
+    expect(result).toEqual({ onChain: 0, blocked: 2, failed: 0 });
+    const after = await ids();
+    expect(after).not.toContain(moved.id);
+    expect(after).not.toContain(stopped.id);
+    // Live again under the same owner: back on the roster.
+    await reconcileWebsiteStations([entry(stopped.id, stopped.owner)], pool as any);
+    expect(await ids()).toContain(stopped.id);
   });
 
   it('reading the roster changes no row', async () => {

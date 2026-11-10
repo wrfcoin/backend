@@ -8,8 +8,10 @@
  * This builds the roster from what the backend already stores and checked.
  *
  * Who is on it: a website station whose registration row is `on_chain` (the
- * chain station sync is the only writer of that), whose station row is active
- * and still belongs to the wallet that signed, with a bound device (MAC), a
+ * chain station sync is the only writer of that, and moves the row to
+ * `blocked` when the chain shows the station transferred, deactivated or not
+ * real), whose station row is active, has ingestion active and still belongs
+ * to the wallet that signed, with a bound device (MAC), a
  * position, and both provider keys readable. A station that is deactivated,
  * blocked or changes owner is not returned by the next read.
  *
@@ -82,6 +84,7 @@ export const COLLECTOR_ROSTER_SQL = `SELECT r.station_id, r.owner_address,
        JOIN station_provider_credentials c ON c.station_id = w.station_id AND c.provider = 'ambient'
       WHERE r.status = 'on_chain'
         AND w.is_active = true
+        AND w.metadata->>'ingestionStatus' = 'active'
         AND lower(w.owner_address) = r.owner_address
       ORDER BY r.station_id
       LIMIT $1`;
@@ -164,6 +167,7 @@ export async function listCollectorRoster(pool: CollectorRosterPool, encryptionK
       continue;
     }
     seenMacs.add(mac);
+    // Rounded to 10 m: the roster carries no detail finer than the collector needs.
     const elevation = meta.elevation_m;
     stations.push({
       provider: 'ambient',
@@ -178,7 +182,7 @@ export async function listCollectorRoster(pool: CollectorRosterPool, encryptionK
       appKey,
       latitude,
       longitude,
-      ...(typeof elevation === 'number' && Number.isFinite(elevation) ? { elevation_m: elevation } : {}),
+      ...(typeof elevation === 'number' && Number.isFinite(elevation) ? { elevation_m: Math.round(elevation / 10) * 10 + 0 } : {}),
     });
   }
   return { version: COLLECTOR_ROSTER_VERSION, stations, skipped };

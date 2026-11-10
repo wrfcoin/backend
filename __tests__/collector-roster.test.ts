@@ -53,6 +53,7 @@ describe('who is on the roster (decided in the SQL)', () => {
     expect(sql).toContain("r.status = 'on_chain'");
     expect(sql).toContain('w.is_active = true');
     expect(sql).toContain('lower(w.owner_address) = r.owner_address');
+    expect(sql).toContain("w.metadata->>'ingestionStatus' = 'active'");
     expect(sql).toContain("JOIN station_provider_credentials c ON c.station_id = w.station_id AND c.provider = 'ambient'");
     expect(sql).toMatch(/^SELECT /);
     expect(sql).not.toMatch(/\b(UPDATE|INSERT|DELETE|ALTER|DROP)\b/i);
@@ -77,6 +78,7 @@ describe('who is on the roster (decided in the SQL)', () => {
 describe('what an entry holds', () => {
   it('exactly the fields the collector needs, with the keys decrypted and the position on the 0.1 degree grid', async () => {
     const roster = await listCollectorRoster(poolOf([row({ metadata: { mac: 'AA-BB-CC-DD-EE-01', hardware: 'WS-2902', elevation_m: 227.5 } })]), ENC_KEY);
+    // (elevation 227.5 m is sent as 230 m: rounded to 10 m)
     expect(roster).toEqual({
       version: COLLECTOR_ROSTER_VERSION,
       skipped: 0,
@@ -93,7 +95,7 @@ describe('what an entry holds', () => {
         appKey: APP_KEY,
         latitude: 10.3,
         longitude: -20.7,
-        elevation_m: 227.5,
+        elevation_m: 230,
       }],
     });
   });
@@ -121,6 +123,17 @@ describe('what an entry holds', () => {
       'apiKey', 'appKey', 'bindingRef', 'coarseMetadataStatus', 'consentStatus', 'latitude', 'longitude',
       'mac', 'model', 'ownerAddress', 'provider', 'stationId',
     ]);
+  });
+
+  it('elevation is rounded to 10 m, never "-0", and left out when not a number', async () => {
+    for (const [given, sent] of [[224.9, 220], [225, 230], [4.9, 0], [-4.9, 0], [-15, -10], [1234.56, 1230]] as Array<[number, number]>) {
+      const { stations } = await listCollectorRoster(poolOf([row({ metadata: { mac: 'aa:bb:cc:dd:ee:01', elevation_m: given } })]), ENC_KEY);
+      expect(Object.is(stations[0].elevation_m, sent)).toBe(true);
+    }
+    for (const given of ['220', null, NaN, Infinity]) {
+      const { stations } = await listCollectorRoster(poolOf([row({ metadata: { mac: 'aa:bb:cc:dd:ee:01', elevation_m: given } })]), ENC_KEY);
+      expect('elevation_m' in stations[0]).toBe(false);
+    }
   });
 
   it('no hardware picked, or one that is not plain text: the chain record\'s model; metadata stored as text is read too', async () => {
