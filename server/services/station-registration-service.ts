@@ -109,6 +109,13 @@ export interface RegisterStationOptions {
    * silently remove the registration cap.
    */
   maxStationsPerOwner?: unknown;
+  /**
+   * When given, a NEW station gets the id this returns (a neutral id with no
+   * name in it) and a client-supplied `stationId` is honoured only when it
+   * names a station this owner already has. A station id is public on chain
+   * for good once the station is registered there.
+   */
+  neutralStationId?: () => string;
 }
 
 /**
@@ -567,9 +574,28 @@ export async function registerStation(
     sensorHeight.value
   );
 
-  const stationId = (typeof input.stationId === 'string' && input.stationId.trim())
+  const requestedStationId = (typeof input.stationId === 'string' && input.stationId.trim())
     ? input.stationId.trim()
-    : `pws-${slug(name)}-${randomHex(3)}`;
+    : null;
+  let stationId: string;
+  if (options.neutralStationId) {
+    // Neutral ids: keep a requested id only if it is this owner's existing
+    // station (an update); anything else is a new station and gets a fresh id.
+    let ownsRequested = false;
+    if (requestedStationId) {
+      const mine = await pool.query(
+        `SELECT 1 FROM weather_stations WHERE station_id = $1 AND lower(owner_address) = $2 LIMIT 1`,
+        [requestedStationId, ownerAddress]
+      );
+      ownsRequested = mine.rows.length > 0;
+    }
+    // An admin override names a pre-existing contributor's station on purpose.
+    stationId = requestedStationId && (ownsRequested || isAdminOverride)
+      ? requestedStationId
+      : options.neutralStationId();
+  } else {
+    stationId = requestedStationId ?? `pws-${slug(name)}-${randomHex(3)}`;
+  }
 
   const resolvedLocation = location || `${latitude},${longitude}`;
   const stationType = hardware || 'personal_weather_station';
