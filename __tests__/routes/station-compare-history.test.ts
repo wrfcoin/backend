@@ -1,7 +1,7 @@
 /**
  * Epic 8: "How has my station compared?" for the station's owner
  * (GET /api/stations/:alias/compare/history, the hourly sampler and the 30-day summary).
- * Stations, wallets and coordinates here are made up.
+ * Stations, wallets and coordinates here are synthetic: no value stands for a real place.
  */
 import express from 'express';
 import request from 'supertest';
@@ -108,10 +108,12 @@ describe('sampler', () => {
     const query = jest.fn(async (text: string, params: unknown[] = []) => {
       sql.push(text);
       if (/FROM weather_stations/.test(text)) {
+        // SYNTHETIC coordinates: open ocean near 0 N 0 E, with digits no real station has. They are finer
+        // than 0.1 degree only to prove that the sampler rounds before it uses them.
         return { rows: over.stations ?? [
-          { station_id: 'alpha', latitude: 40.12345, longitude: -100.98765 },
-          { station_id: 'bravo', latitude: 40.14, longitude: -101.02 },
-          { station_id: 'charlie', latitude: 12.3, longitude: 45.6 },
+          { station_id: 'alpha', latitude: 0.123456, longitude: 0.654321 },
+          { station_id: 'bravo', latitude: 0.149999, longitude: 0.650001 },
+          { station_id: 'charlie', latitude: 0.3, longitude: 0.4 },
         ] };
       }
       if (/SELECT station_id FROM station_compare_samples/.test(text)) return { rows: (over.done ?? []).map(station_id => ({ station_id })) };
@@ -141,9 +143,11 @@ describe('sampler', () => {
     expect([t, h, p, nwsStation, nt, nh, np]).toEqual([11.5, 71, 998.2, 'KAAA', 10, 75, 1004.1]);
     // The NWS lookup only ever sees coordinates rounded to 0.1 degree, once per cell.
     const calls = (s.nws.latest as jest.Mock).mock.calls;
-    expect(calls).toEqual([[40.1, -101], [12.3, 45.6]]);
-    // No stored value and no SQL parameter carries a coordinate.
-    expect(JSON.stringify(s.inserts)).not.toMatch(/40\.1|-10[01]|12\.3|45\.6/);
+    expect(calls).toEqual([[0.1, 0.7], [0.3, 0.4]]);
+    // No stored row carries a coordinate, fine or rounded: only the eleven sample columns.
+    expect(s.inserts.every(row => row.length === 11)).toBe(true);
+    expect(JSON.stringify(s.inserts)).not.toMatch(/0\.123456|0\.654321|0\.149999|0\.650001/);
+    expect(s.sql.filter(q => /^INSERT/.test(q)).join(' ')).not.toMatch(/latitude|longitude/);
   });
 
   it('reads stations at most one every 21 seconds', async () => {
@@ -205,9 +209,9 @@ describe('sampler', () => {
         barometricPressure: { value: 100_870, unit: 'wmoUnit:Pa' },
       }),
     });
-    expect(await source.latest(40.1, -101)).toEqual({ stationIdentifier: 'KAAA', observedAt: NOW_S, temperatureC: 9.4, humidityPct: 80.2, pressureHpa: 1008.7 });
+    expect(await source.latest(0.1, 0.7)).toEqual({ stationIdentifier: 'KAAA', observedAt: NOW_S, temperatureC: 9.4, humidityPct: 80.2, pressureHpa: 1008.7 });
     const odd = nwsPairSourceFrom({ getCurrentObservations: async () => ({ stationId: 'not a station', timestamp: new Date(NOW_S * 1000).toISOString() }) });
-    expect(await odd.latest(40.1, -101)).toBeNull();
+    expect(await odd.latest(0.1, 0.7)).toBeNull();
   });
 });
 
