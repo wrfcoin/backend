@@ -6,7 +6,7 @@ import express from 'express';
 import request from 'supertest';
 import { describe, expect, it, jest } from '@jest/globals';
 import { createStationOwnerInsightsRouter } from '../../server/routes/station-owner-insights-routes.js';
-import { BEFORE_DAYS, RECENT_DAYS, checkSite, lastingStep } from '../../server/services/station-site-check.js';
+import { BEFORE_DAYS, RECENT_DAYS, checkSite, lastingStep, type Timed } from '../../server/services/station-site-check.js';
 import type { CompareSample } from '../../server/services/station-compare-history.js';
 import { stationAlias } from '../../server/utils/station-alias.js';
 
@@ -14,11 +14,15 @@ const NOW_S = 1_790_000_000;
 const HOUR = 3600;
 const DAY = 86_400;
 
-/** Hourly samples for 17 days. `at(hoursAgo)` gives our pressure and temperature; the reference stays at 1010 hPa / 10 C. */
-function series(at: (hoursAgo: number) => { p?: number | null; t?: number | null; ref?: string }): CompareSample[] {
+/**
+ * Hourly samples for 17 days. `at(hoursAgo)` gives our pressure and temperature; the reference stays at
+ * 1010 hPa / 10 C. Returning `skip` leaves that hour out (station offline).
+ */
+function series(at: (hoursAgo: number) => { p?: number | null; t?: number | null; ref?: string; skip?: boolean }): CompareSample[] {
   const out: CompareSample[] = [];
   for (let h = 0; h < (BEFORE_DAYS + RECENT_DAYS) * 24; h += 1) {
     const mine = at(h);
+    if (mine.skip) continue;
     // A little deterministic wobble so the scatter is not zero.
     const wobble = ((h * 7) % 5 - 2) * 0.1;
     out.push({
@@ -29,7 +33,7 @@ function series(at: (hoursAgo: number) => { p?: number | null; t?: number | null
       nwsStation: mine.ref ?? 'KAAA',
       nwsTemperatureC: 10,
       nwsHumidityPct: 66,
-      nwsPressureHpa: 1010,
+      nwsBarometricHpa: 1010,
     });
   }
   return out;
@@ -51,13 +55,18 @@ describe('checkSite', () => {
     expect(r.status).toBe('ok');
     if (r.status !== 'ok') return;
     expect(r.flags).toHaveLength(1);
-    expect(r.flags[0]).toMatchObject({ kind: 'pressure_offset_changed', shiftHpa: -6, approxHeightChangeM: 50, heightDirection: 'higher' });
-    expect((r.flags[0] as any).since % DAY).toBe(0);
+    expect(r.flags[0]).toMatchObject({ kind: 'pressure_offset_changed', approxHeightChangeM: 50, heightDirection: 'higher' });
+    const flag = r.flags[0] as { shiftPercent: number; approxShiftHpa: number };
+    expect(flag.shiftPercent).toBeCloseTo(-0.6, 1);
+    expect(flag.approxShiftHpa).toBeCloseTo(-6, 0);
+    // The answer says where the newer window starts, and no flag claims when the change began.
+    expect(r.recentFrom % DAY).toBe(0);
+    expect(JSON.stringify(r.flags)).not.toMatch(/since/);
   });
 
   it('flags a lasting pressure rise as "lower down"', () => {
     const r = checkSite(series(h => ({ p: h < recentHours ? 1006 : 1002 })), NOW_S);
-    expect(r.status === 'ok' && r.flags[0]).toMatchObject({ kind: 'pressure_offset_changed', shiftHpa: 4, approxHeightChangeM: 30, heightDirection: 'lower' });
+    expect(r.status === 'ok' && r.flags[0]).toMatchObject({ kind: 'pressure_offset_changed', approxHeightChangeM: 30, heightDirection: 'lower' });
   });
 
   it('flags a lasting temperature change', () => {
@@ -70,11 +79,51 @@ describe('checkSite', () => {
     expect(checkSite(series(h => ({ p: h < recentHours ? 1000 : 1002 })), NOW_S)).toMatchObject({ status: 'ok', flags: [] });
     // Six odd hours inside the recent window do not move its median.
     expect(checkSite(series(h => ({ p: h < 6 ? 990 : 1002 })), NOW_S)).toMatchObject({ status: 'ok', flags: [] });
-    // A storm: both stations drop 25 hPa together, so the difference is unchanged.
+    // A storm: both stations drop by the same share (about 25 hPa), so the ratio is unchanged.
     const storm = series(() => ({})).map((s, i) => (i < recentHours
-      ? { ...s, pressureHpa: (s.pressureHpa as number) - 25, nwsPressureHpa: (s.nwsPressureHpa as number) - 25 }
+      ? { ...s, pressureHpa: (s.pressureHpa as number) * 0.975, nwsBarometricHpa: (s.nwsBarometricHpa as number) * 0.975 }
       : s));
     expect(checkSite(storm, NOW_S)).toMatchObject({ status: 'ok', flags: [] });
+  });
+
+  it('judges pressure by the ratio, so a reference reduced to sea level works the same', () => {
+    // A station about 240 m up reads about 985 hPa while the reference says 1013. Normal weather swings both by the
+    // same share. Then the station moves about 40 m higher: its share of the reference drops by about 0.5 %.
+    const samples = series(() => ({})).map((s, i) => {
+      const weather = 1 + 0.012 * Math.sin(i / 19);
+      const share = i < recentHours ? 0.9722 * 0.9953 : 0.9722;
+      return { ...s, nwsBarometricHpa: 1013 * weather, pressureHpa: 1013 * weather * share };
+    });
+    const r = checkSite(samples, NOW_S);
+    expect(r.status === 'ok' && r.flags).toEqual([expect.objectContaining({ kind: 'pressure_offset_changed', heightDirection: 'higher', approxHeightChangeM: 40 })]);
+    // The same weather with no move raises nothing: the ratio is steady.
+    const steady = series(() => ({})).map((s, i) => {
+      const weather = 1 + 0.012 * Math.sin(i / 19);
+      return { ...s, nwsBarometricHpa: 1013 * weather, pressureHpa: 1013 * weather * 0.9722 };
+    });
+    expect(checkSite(steady, NOW_S)).toMatchObject({ status: 'ok', flags: [] });
+  });
+
+  it('compares like hours: a station back online for afternoons only is not read as a temperature change', () => {
+    // Every day this station runs 5 C warmer than the reference from 12:00 to 23:00 UTC and 1 C warmer at night.
+    const hourUtc = (h: number) => Math.floor(((NOW_S - h * HOUR) % DAY) / HOUR);
+    const daily = (h: number) => (hourUtc(h) >= 12 ? 15 : 11);
+    // It was offline at night for the last three days: only afternoon pairs are recent.
+    const afternoonsOnly = series(h => (h < recentHours && hourUtc(h) < 12 ? { skip: true } : { t: daily(h) }));
+    const r = checkSite(afternoonsOnly, NOW_S);
+    expect(r.status).toBe('ok');
+    expect(r.status === 'ok' && r.flags).toEqual([]);
+    // The same recent hours, but really 6 C warmer than those hours used to be: flagged.
+    const moved = series(h => (h < recentHours && hourUtc(h) < 12 ? { skip: true } : { t: daily(h) + (h < recentHours ? 6 : 0) }));
+    expect(checkSite(moved, NOW_S)).toMatchObject({ status: 'ok', flags: [expect.objectContaining({ kind: 'temperature_pattern_changed', shiftC: 6 })] });
+  });
+
+  it('needs recent pairs on at least two different days', () => {
+    // 14 recent pairs, all inside the last 14 hours of one UTC day, 6 C warmer.
+    const endOfDay = NOW_S - (NOW_S % DAY) + DAY - 1;
+    const base = series(() => ({})).map(s => ({ ...s, observedAt: s.observedAt + (endOfDay - NOW_S) }));
+    const oneDay = base.filter((_, i) => i < 14 || i > recentHours).map((s, i) => (i < 14 ? { ...s, temperatureC: (s.temperatureC as number) + 6 } : s));
+    expect(checkSite(oneDay, endOfDay)).toMatchObject({ status: 'ok', flags: [] });
   });
 
   it('does not mistake a change of NWS station for a move', () => {
@@ -91,11 +140,14 @@ describe('checkSite', () => {
   });
 
   it('needs the change to be large next to the earlier scatter', () => {
-    const noisyBefore = Array.from({ length: 200 }, (_, i) => ((i * 37) % 21) - 10); // spread of about +-10
-    const recent = Array.from({ length: 40 }, () => 4.5);
+    const timed = (values: number[], startHoursAgo: number): Timed[] => values.map((value, i) => ({ at: NOW_S - (startHoursAgo + i) * HOUR, value }));
+    const noisyBefore = timed(Array.from({ length: 240 }, (_, i) => ((i * 37) % 21) - 10), 72); // spread of about +-10
+    const recent = timed(Array.from({ length: 48 }, () => 4.5), 0);
     expect(lastingStep(noisyBefore, recent, 3, 3)).toBeNull();
-    const steadyBefore = Array.from({ length: 200 }, (_, i) => ((i % 3) - 1) * 0.2);
-    expect(lastingStep(steadyBefore, recent, 3, 3)).toMatchObject({ shift: 4.5 });
+    const steadyBefore = timed(Array.from({ length: 240 }, (_, i) => ((i % 3) - 1) * 0.2), 72);
+    const step = lastingStep(steadyBefore, recent, 3, 3);
+    expect(step).not.toBeNull();
+    expect((step as { shift: number }).shift).toBeCloseTo(4.5, 0);
   });
 });
 
@@ -114,7 +166,7 @@ describe('GET /api/stations/:alias/site-check', () => {
         if (/FROM station_compare_samples/.test(text)) {
           return { rows: (over.samples ?? []).map(s => ({
             observed_at: String(s.observedAt), temperature_c: s.temperatureC, humidity_pct: s.humidityPct, pressure_hpa: s.pressureHpa,
-            nws_station: s.nwsStation, nws_temperature_c: s.nwsTemperatureC, nws_humidity_pct: s.nwsHumidityPct, nws_pressure_hpa: s.nwsPressureHpa,
+            nws_station: s.nwsStation, nws_temperature_c: s.nwsTemperatureC, nws_humidity_pct: s.nwsHumidityPct, nws_barometric_hpa: s.nwsBarometricHpa,
           })) };
         }
         return { rows: params[0] === ALIAS ? [{ station_id: STATION }] : [] };
