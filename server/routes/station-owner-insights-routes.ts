@@ -7,9 +7,10 @@
  * Owner only. A comparison over time says things like "this station usually reads 3 degrees
  * warm", which is for the person who runs the station, not for the public page. The caller must
  * be logged in as the wallet that owns the station (weather_stations.owner_address), or carry the
- * operator/reader bearer:
+ * operator bearer (not the reader bearer: a reader credential is for node reads, not for seeing
+ * an owner's private view):
  *
- *   feature off                -> 404 (same body as an unknown route)
+ *   feature off                -> 404, fixed body {error: {code: 'NOT_FOUND'}} and no database read
  *   unknown alias              -> 404
  *   no wallet login            -> 401
  *   a different wallet         -> 403
@@ -22,7 +23,7 @@
  */
 import express from 'express';
 import { peekWalletSubject } from '../middleware/authMiddleware.js';
-import { hasOperatorOrReaderToken } from '../middleware/operator-token-auth.js';
+import { hasOperatorToken } from '../middleware/operator-token-auth.js';
 import { isStationAlias, resolveStationAlias } from '../utils/station-alias.js';
 import { createWindowCounter, rateLimitKey } from '../utils/rate-limit-key.js';
 import {
@@ -56,14 +57,14 @@ export function createStationOwnerInsightsRouter(deps: {
   };
   const query: Query = (sql, params) => db.execute(sql, params) as Promise<{ rows: any[] }>;
   const walletOf = deps.walletOf ?? ((req: express.Request) => peekWalletSubject(req));
-  const isOperator = deps.isOperator ?? ((req: express.Request) => hasOperatorOrReaderToken(req));
+  const isOperator = deps.isOperator ?? ((req: express.Request) => hasOperatorToken(req));
   const historyEnabled = deps.historyEnabled ?? stationCompareHistoryEnabled;
   const readPerIp = createWindowCounter(deps.limits?.readPerIp ?? 60, deps.limits?.windowMs ?? 15 * 60_000, now);
 
   /**
    * Resolves the alias and checks the caller owns the station. Answers the request itself and
    * returns null when the caller may not see it. Order matters: the feature gate comes first so
-   * a switched-off feature costs no database read and looks like an unknown route.
+   * a switched-off feature costs no database read.
    */
   async function ownedStation(req: express.Request, res: express.Response, enabled: () => boolean): Promise<string | null> {
     if (!enabled()) { fail(res, NOT_FOUND); return null; }

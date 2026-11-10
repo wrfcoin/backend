@@ -17,6 +17,7 @@ import {
   BACKOFF_BASE_MS, GIVE_UP_S, PRACTICE_NOTE, SCORE_DELAY_S, newPaceState, publicPracticeScore, readPracticeScores, readsPerMinute, scoreWebsiteForecasts,
   websiteForecastScoreEnabled,
 } from '../server/services/forecast-score/practice-score-job';
+import { reserveNodeReads, type NodeReadClock } from '../server/services/node-read-pacer.js';
 import { createWebsiteForecastRouter } from '../server/routes/website-forecast-routes';
 import { createPublicForecastVerificationRouter } from '../server/routes/forecast-verification-routes';
 import { listMine } from '../server/services/website-forecast/website-forecast-store';
@@ -465,6 +466,32 @@ describe('scoring pass', () => {
     const node = fakeNode(tipAt(NOW), ramp(), { clock: clock.now });
     await scoreWebsiteForecasts({ ...clock, readsPerMin: 6, query: fakeStore([forecastRow()]).query, get: node.get, nowSec: NOW });
     expect(mostInAnyMinute(node.log.map((l) => l.at))).toBeLessThanOrEqual(6);
+  });
+
+  it('shares one clock with other jobs that read the node: together they stay at 20 a minute', async () => {
+    const clock = fast();
+    const shared: NodeReadClock = { nextReadAt: 0 };
+    const pace = { ...newPaceState(), clock: shared };
+    const node = fakeNode(tipAt(NOW), ramp(), { clock: clock.now });
+    // Another job (the station sampler) takes a station's worth of slots, 7 reads, every 30 seconds while this one scores.
+    const other: number[] = [];
+    let nextOther = clock.now();
+    const get: typeof node.get = async (path, query) => {
+      while (clock.now() >= nextOther) {
+        await reserveNodeReads(shared, 7, 20, clock.now, clock.sleep);
+        for (let i = 0; i < 7; i += 1) other.push(clock.now() + i * 3_000);
+        nextOther += 30_000;
+      }
+      return node.get(path, query);
+    };
+    await scoreWebsiteForecasts({ ...clock, pace, query: fakeStore([forecastRow()]).query, get, nowSec: NOW });
+    expect(node.log.length).toBeGreaterThan(20);
+    expect(other.length).toBeGreaterThan(7);
+    // The job's own state is untouched: its reads were reserved on the shared clock.
+    expect(pace.nextReadAt).toBe(0);
+    expect(shared.nextReadAt).toBeGreaterThan(0);
+    // mostInAnyMinute expects times in order.
+    expect(mostInAnyMinute([...node.log.map((l) => l.at), ...other].sort((a, b) => a - b))).toBeLessThanOrEqual(20);
   });
 
   it('a 429 stops the pass at once, marks nothing, and the scorer backs off 5 minutes, then 10', async () => {

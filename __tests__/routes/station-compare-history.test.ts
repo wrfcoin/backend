@@ -10,7 +10,9 @@ import { createStationOwnerInsightsRouter } from '../../server/routes/station-ow
 import {
   BACKOFF_BASE_MS,
   HISTORY_DAYS,
+  MAX_STATIONS_PER_PASS,
   MIN_PAIRS,
+  NODE_READS_PER_STATION,
   STATION_GAP_MS,
   dominantReference,
   newSamplerState,
@@ -22,6 +24,7 @@ import {
   type NwsPairSource,
 } from '../../server/services/station-compare-history.js';
 import { stationAlias } from '../../server/utils/station-alias.js';
+import { gapMsFor, nodeJobReadsPerMinute, reserveNodeReads, type NodeReadClock } from '../../server/services/node-read-pacer.js';
 
 const NOW_S = 1_790_000_000;
 const HOUR = 3600;
@@ -35,7 +38,7 @@ function samples(count: number, over: (i: number) => Partial<CompareSample> = ()
     nwsStation: 'KAAA',
     nwsTemperatureC: 10 + (i % 3),
     nwsHumidityPct: 66,
-    nwsPressureHpa: 1009,
+    nwsBarometricHpa: 1009,
     ...over(i),
   }));
 }
@@ -127,7 +130,7 @@ describe('sampler', () => {
       ? over.tail(id)
       : okTail(Math.floor(clock / 1000) - 300, { temperature_c: 11.5, humidity_percent: 71, pressure_hpa: 998.2 })));
     const nws = over.nws ?? {
-      latest: jest.fn(async () => ({ stationIdentifier: 'KAAA', observedAt: Math.floor(clock / 1000) - 1200, temperatureC: 10, humidityPct: 75, pressureHpa: 1004.1 })),
+      latest: jest.fn(async () => ({ stationIdentifier: 'KAAA', observedAt: Math.floor(clock / 1000) - 1200, temperatureC: 10, humidityPct: 75, barometricHpa: 1004.1 })),
     };
     return { now, sleep, sleeps, inserts, sql, query, latest, nws, okTail, chainTail: { latest, lastSeenMs: async () => null } as any, clock: () => clock };
   }
@@ -192,9 +195,84 @@ describe('sampler', () => {
     expect(await sampleStations({ query: none.query, chainTail: none.chainTail, nws: none.nws, now: none.now, sleep: none.sleep, state: newSamplerState() }))
       .toMatchObject({ stored: 0, noReference: 3 });
 
-    const throwing = setup({ nws: { latest: jest.fn(async () => { throw new Error('nws down'); }) } });
-    expect(await sampleStations({ query: throwing.query, chainTail: throwing.chainTail, nws: throwing.nws, now: throwing.now, sleep: throwing.sleep, state: newSamplerState() }))
-      .toMatchObject({ stored: 0, noReference: 3 });
+  });
+
+  it('a pass cannot be used up by stations with no fresh reading: each is tried once an hour and the next pass carries on', async () => {
+    // 150 stations with nothing fresh sort ahead of the one live station.
+    const offline = Array.from({ length: 150 }, (_, i) => ({ station_id: `a-offline-${String(i).padStart(3, '0')}`, latitude: 0.3, longitude: 0.4 }));
+    const s = setup({ stations: [...offline, { station_id: 'z-live', latitude: 0.3, longitude: 0.4 }] });
+    s.latest.mockImplementation(async (id: string) => (id === 'z-live'
+      ? s.okTail(Math.floor(s.clock() / 1000) - 60, { temperature_c: 11.5, humidity_percent: 71, pressure_hpa: 998.2 })
+      : { kind: 'ok' as const, items: [], chainHeight: 100, fromHeight: 36, toHeight: 100, complete: true }));
+    const state = newSamplerState();
+    // No pacing wait here, so three passes fit in one hour of the fake clock.
+    const deps = { query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, sleep: async () => {}, state };
+    const first = await sampleStations(deps);
+    expect(first).toMatchObject({ read: MAX_STATIONS_PER_PASS, stored: 0, noReading: MAX_STATIONS_PER_PASS });
+    const second = await sampleStations(deps);
+    // It carried on after the 60th station instead of starting over.
+    expect(second).toMatchObject({ read: MAX_STATIONS_PER_PASS, stored: 0, alreadyTried: 0 });
+    const third = await sampleStations(deps);
+    expect(third).toMatchObject({ read: 31, stored: 1 });
+    expect(s.inserts.map(row => row[0])).toEqual(['z-live']);
+    // Nothing was read twice in the hour.
+    const readIds = s.latest.mock.calls.map(c => c[0]);
+    expect(new Set(readIds).size).toBe(readIds.length);
+    // A fourth pass in the same hour has nothing left to read.
+    expect(await sampleStations(deps)).toMatchObject({ read: 0 });
+  });
+
+  it('starts each pass after the station the last one stopped at', async () => {
+    const stations = Array.from({ length: MAX_STATIONS_PER_PASS + 5 }, (_, i) => ({ station_id: `s-${String(i).padStart(3, '0')}`, latitude: 0.3, longitude: 0.4 }));
+    const s = setup({ stations });
+    const state = newSamplerState();
+    const deps = { query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, sleep: async () => {}, state };
+    await sampleStations(deps);
+    expect(state.cursor).toBe(`s-${String(MAX_STATIONS_PER_PASS - 1).padStart(3, '0')}`);
+    s.latest.mockClear();
+    await sampleStations(deps);
+    expect(s.latest.mock.calls.map(c => c[0])[0]).toBe(`s-${String(MAX_STATIONS_PER_PASS).padStart(3, '0')}`);
+    expect(s.latest).toHaveBeenCalledTimes(5);
+  });
+
+  it('asks api.weather.gov once per cell per pass, and holds a failing cell for 5 minutes, doubling', async () => {
+    const failing = { latest: jest.fn(async () => { throw new Error('nws down'); }) };
+    const s = setup({ nws: failing });
+    const state = newSamplerState();
+    const deps = { query: s.query, chainTail: s.chainTail, nws: failing, now: s.now, sleep: s.sleep, state };
+    const first = await sampleStations(deps);
+    // alpha and bravo share a cell: one call for both, one for charlie's cell.
+    expect(failing.latest).toHaveBeenCalledTimes(2);
+    expect(first).toMatchObject({ stored: 0, noReference: 3, referenceErrors: 2 });
+    expect(state.nwsHold.get('0.1,0.7')).toMatchObject({ streak: 1 });
+    expect((state.nwsHold.get('0.1,0.7') as { until: number }).until - s.clock()).toBeLessThanOrEqual(BACKOFF_BASE_MS);
+
+    // Next hour, still inside the hold: no NWS call and no node read for those cells.
+    state.nwsHold.forEach((hold) => { hold.until = s.clock() + 2 * 3_600_000; });
+    s.latest.mockClear();
+    await s.sleep(3_600_000);
+    const held = await sampleStations(deps);
+    expect(held).toMatchObject({ read: 0, referenceOnHold: 3 });
+    expect(failing.latest).toHaveBeenCalledTimes(2);
+    expect(s.latest).not.toHaveBeenCalled();
+
+    // After the hold a second failure doubles it.
+    state.nwsHold.forEach((hold) => { hold.until = 0; });
+    await s.sleep(3_600_000);
+    await sampleStations(deps);
+    expect(failing.latest).toHaveBeenCalledTimes(4);
+    expect(state.nwsHold.get('0.1,0.7')).toMatchObject({ streak: 2 });
+    const hold = state.nwsHold.get('0.1,0.7') as { until: number };
+    expect(hold.until - s.clock()).toBeGreaterThan(BACKOFF_BASE_MS);
+    expect(hold.until - s.clock()).toBeLessThanOrEqual(2 * BACKOFF_BASE_MS);
+  });
+
+  it('a lookup that works again clears the hold', async () => {
+    const s = setup();
+    const state = newSamplerState();
+    state.nwsHold.set('0.1,0.7', { streak: 3, until: 0 });
+    await sampleStations({ query: s.query, chainTail: s.chainTail, nws: s.nws, now: s.now, sleep: s.sleep, state });
+    expect(state.nwsHold.has('0.1,0.7')).toBe(false);
   });
 
   it('drops implausible values and reads the NWS units it knows', async () => {
@@ -209,9 +287,51 @@ describe('sampler', () => {
         barometricPressure: { value: 100_870, unit: 'wmoUnit:Pa' },
       }),
     });
-    expect(await source.latest(0.1, 0.7)).toEqual({ stationIdentifier: 'KAAA', observedAt: NOW_S, temperatureC: 9.4, humidityPct: 80.2, pressureHpa: 1008.7 });
+    expect(await source.latest(0.1, 0.7)).toEqual({ stationIdentifier: 'KAAA', observedAt: NOW_S, temperatureC: 9.4, humidityPct: 80.2, barometricHpa: 1008.7 });
     const odd = nwsPairSourceFrom({ getCurrentObservations: async () => ({ stationId: 'not a station', timestamp: new Date(NOW_S * 1000).toISOString() }) });
     expect(await odd.latest(0.1, 0.7)).toBeNull();
+  });
+});
+
+describe('one pace for every job that reads the node', () => {
+  it('two callers on one clock never get the same slot, and together stay at the ceiling', async () => {
+    let clock = 1_000_000;
+    const now = () => clock;
+    const shared: NodeReadClock = { nextReadAt: 0 };
+    const starts: number[] = [];
+    const sleep = async (ms: number) => { clock += ms; };
+    // Job A reserves single reads; job B (the sampler) reserves a station's worth at a time.
+    for (let i = 0; i < 4; i += 1) {
+      await reserveNodeReads(shared, 1, 20, now, sleep); starts.push(clock);
+      await reserveNodeReads(shared, NODE_READS_PER_STATION, 20, now, sleep); starts.push(clock);
+    }
+    // 4 single reads + 4 x 7 reserved reads = 32 slots of 3 s: the last reservation starts at slot 25.
+    expect(starts[0]).toBe(1_000_000);
+    expect(starts[starts.length - 1] - starts[0]).toBe((3 * (1 + NODE_READS_PER_STATION) + 1) * gapMsFor(20));
+    expect(shared.nextReadAt - starts[0]).toBe(32 * gapMsFor(20));
+    for (let i = 1; i < starts.length; i += 1) expect(starts[i]).toBeGreaterThan(starts[i - 1]);
+  });
+
+  it('the sampler waits for slots another job has already taken on the shared clock', async () => {
+    const HOUR_MS = 3_600_000;
+    let clock = Math.floor((NOW_S * 1000) / HOUR_MS) * HOUR_MS + 60_000;
+    const shared: NodeReadClock = { nextReadAt: clock + 9_000 }; // another job holds the next 9 s
+    const sleeps: number[] = [];
+    const query = jest.fn(async (text: string) => (/FROM weather_stations/.test(text)
+      ? { rows: [{ station_id: 'alpha', latitude: 0.3, longitude: 0.4 }] } : { rows: [] }));
+    const chainTail = { latest: jest.fn(async () => ({ kind: 'ok' as const, items: [], chainHeight: 1, fromHeight: 0, toHeight: 1, complete: true })), lastSeenMs: async () => null };
+    await sampleStations({
+      query, chainTail: chainTail as any, nws: { latest: async () => null }, now: () => clock,
+      sleep: async (ms) => { sleeps.push(ms); clock += ms; }, state: newSamplerState(shared),
+    });
+    expect(sleeps).toEqual([9_000]);
+    expect(shared.nextReadAt).toBe(clock + STATION_GAP_MS);
+  });
+
+  it('reads the shared ceiling from the environment and ignores a bad value', () => {
+    expect(nodeJobReadsPerMinute(undefined)).toBe(20);
+    expect(nodeJobReadsPerMinute('61')).toBe(20);
+    expect(nodeJobReadsPerMinute('12')).toBe(12);
   });
 });
 
@@ -250,7 +370,7 @@ describe('GET /api/stations/:alias/compare/history', () => {
 
   const rows = (count: number) => Array.from({ length: count }, (_, i) => ({
     observed_at: String(NOW_S - i * HOUR), temperature_c: 13, humidity_pct: 60, pressure_hpa: 1001,
-    nws_station: 'KAAA', nws_temperature_c: 10, nws_humidity_pct: 66, nws_pressure_hpa: 1009,
+    nws_station: 'KAAA', nws_temperature_c: 10, nws_humidity_pct: 66, nws_barometric_hpa: 1009,
   }));
 
   it('is 404 and reads nothing while the feature is off', async () => {
@@ -298,6 +418,30 @@ describe('GET /api/stations/:alias/compare/history', () => {
     const { a } = app();
     expect((await request(a).get('/api/stations/st_000000000000/compare/history')).status).toBe(404);
     expect((await request(a).get(`/api/stations/${STATION}/compare/history`)).status).toBe(404);
+  });
+
+  it('the default bypass is the operator bearer only: the reader bearer is treated as a visitor', async () => {
+    const saved = { op: process.env.WRFCOIN_OPERATOR_TOKEN, rd: process.env.WRFCOIN_READER_TOKEN };
+    process.env.WRFCOIN_OPERATOR_TOKEN = 'operator-token-for-this-test-0123456789';
+    process.env.WRFCOIN_READER_TOKEN = 'reader-token-for-this-test-0123456789ab';
+    try {
+      const db = { execute: jest.fn(async (text: string, params: unknown[] = []) => {
+        if (/owner_address/.test(text)) return { rows: [{ owner_address: OWNER }] };
+        if (/FROM station_compare_samples/.test(text)) return { rows: rows(80) };
+        return { rows: params[0] === ALIAS ? [{ station_id: STATION }] : [] };
+      }) };
+      const a = express();
+      a.use('/api', createStationOwnerInsightsRouter({ db, now, historyEnabled: () => true }));
+      const reader = await request(a).get(`/api/stations/${ALIAS}/compare/history`).set('Authorization', `Bearer ${process.env.WRFCOIN_READER_TOKEN}`);
+      expect(reader.status).toBe(401);
+      const readerRaw = await request(a).get(`/api/stations/${STATION}/compare/history`).set('Authorization', `Bearer ${process.env.WRFCOIN_READER_TOKEN}`);
+      expect(readerRaw.status).toBe(404);
+      const operator = await request(a).get(`/api/stations/${ALIAS}/compare/history`).set('Authorization', `Bearer ${process.env.WRFCOIN_OPERATOR_TOKEN}`);
+      expect(operator.status).toBe(200);
+    } finally {
+      if (saved.op === undefined) delete process.env.WRFCOIN_OPERATOR_TOKEN; else process.env.WRFCOIN_OPERATOR_TOKEN = saved.op;
+      if (saved.rd === undefined) delete process.env.WRFCOIN_READER_TOKEN; else process.env.WRFCOIN_READER_TOKEN = saved.rd;
+    }
   });
 
   it('lets the operator bearer read by raw id', async () => {

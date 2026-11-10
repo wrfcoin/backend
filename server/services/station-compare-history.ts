@@ -19,16 +19,29 @@
  * only (see station-owner-insights-routes.ts). Nothing here feeds rewards, verification or any
  * public flag.
  *
- * Node reads are paced. One station read is at most 7 node calls (chain-station-tail.ts
- * TAIL_MAX_CALLS), so stations are read STATION_GAP_MS apart, which keeps the job at or under
- * 20 node reads a minute in the worst case. A 429 from the node stops the pass and the sampler
- * then stays away for 5 minutes, doubling up to an hour. Logs carry counts only.
+ * Node reads are paced on the clock every backend job that reads the node shares
+ * (node-read-pacer.ts, NODE_JOB_READS_PER_MIN, default 20). One station read is at most 7 node
+ * calls (chain-station-tail.ts TAIL_MAX_CALLS), so each station reserves 7 read slots: the total
+ * across jobs stays at or under the ceiling even in the worst case. A 429 from the node stops the
+ * pass and the sampler then stays away for 5 minutes, doubling up to an hour.
+ *
+ * Fair order: each pass starts after the station the last pass stopped at, and a station is
+ * tried at most once an hour, so stations with no fresh reading cannot use up every pass.
+ *
+ * api.weather.gov is asked at most once per 0.1-degree cell per pass. A failed lookup puts that
+ * cell on hold for 5 minutes, doubling up to an hour; stations in a cell on hold are not read
+ * from the node either. Logs carry counts only.
+ *
+ * Pressure: NWS `barometricPressure` is stored as reported. The rest of this codebase treats that
+ * field as the altimeter setting (pressure reduced to sea level), not pressure at the sensor, so
+ * nothing here subtracts it from a station's pressure. The site check uses the ratio of the two.
  *
  * OFF unless STATION_COMPARE_HISTORY_ENABLED=true. Needs migration 0046 (applied by hand) and
  * WRFCOIN_READER_TOKEN.
  */
 import type { ChainTailReader } from './chain-station-tail.js';
 import { CLOSE_WITHIN, cell, median } from './station-compare.js';
+import { nodeJobReadsPerMinute, processNodeReadClock, reserveNodeReads, type NodeReadClock } from './node-read-pacer.js';
 
 export type Query = (sql: string, params?: unknown[]) => Promise<{ rows: any[] }>;
 
@@ -43,8 +56,10 @@ export const MIN_DAYS = 3;
 export const SAMPLE_MAX_AGE_S = 3600;
 export const SAMPLE_MAX_SKEW_S = 90 * 60;
 export const NWS_MAX_AGE_MS = 2 * 3600 * 1000;
-/** 7 node calls per station at most, 20 calls a minute: one station every 21 seconds. */
-export const STATION_GAP_MS = 21_000;
+/** Worst-case node calls for one station read (chain-station-tail.ts TAIL_MAX_CALLS). */
+export const NODE_READS_PER_STATION = 7;
+/** At the default ceiling of 20 reads a minute: one station every 21 seconds. */
+export const STATION_GAP_MS = NODE_READS_PER_STATION * 3_000;
 export const MAX_STATIONS_PER_PASS = 60;
 export const STATION_LIST_CAP = 500;
 export const BACKOFF_BASE_MS = 5 * 60_000;
@@ -66,7 +81,8 @@ export interface CompareSample {
   nwsStation: string;
   nwsTemperatureC: number | null;
   nwsHumidityPct: number | null;
-  nwsPressureHpa: number | null;
+  /** NWS `barometricPressure` as reported, hPa. Treated as the altimeter setting, not pressure at the sensor. */
+  nwsBarometricHpa: number | null;
 }
 
 export interface VariableHistory {
@@ -173,7 +189,7 @@ export function summarizeHistory(samples: CompareSample[], nowS: number): Histor
 
 export const SELECT_SAMPLES_SQL = `SELECT extract(epoch FROM observed_at)::bigint AS observed_at,
           temperature_c, humidity_pct, pressure_hpa,
-          nws_station, nws_temperature_c, nws_humidity_pct, nws_pressure_hpa
+          nws_station, nws_temperature_c, nws_humidity_pct, nws_barometric_hpa
      FROM station_compare_samples
     WHERE station_id = $1 AND sampled_hour >= $2
     ORDER BY sampled_hour DESC
@@ -191,7 +207,7 @@ export function sampleFromRow(row: Record<string, unknown>): CompareSample | nul
     nwsStation,
     nwsTemperatureC: finite(row.nws_temperature_c),
     nwsHumidityPct: finite(row.nws_humidity_pct),
-    nwsPressureHpa: finite(row.nws_pressure_hpa),
+    nwsBarometricHpa: finite(row.nws_barometric_hpa),
   };
 }
 
@@ -211,8 +227,8 @@ export interface NwsPairReading {
   observedAt: number; // epoch seconds
   temperatureC: number | null;
   humidityPct: number | null;
-  /** Station pressure (not reduced to sea level), hPa. */
-  pressureHpa: number | null;
+  /** NWS `barometricPressure` as reported, hPa (treated as the altimeter setting). */
+  barometricHpa: number | null;
 }
 export interface NwsPairSource {
   /** Latest NWS observation near a 0.1-degree cell centre, or null. May throw. */
@@ -235,7 +251,7 @@ export function nwsPairSourceFrom(client: { getCurrentObservations: (lat: number
         observedAt: Math.floor(observedMs / 1000),
         temperatureC: unit(obs.temperature, /degC$/),
         humidityPct: unit(obs.relativeHumidity, /percent$/),
-        pressureHpa: pa === null ? null : pa / 100,
+        barometricHpa: pa === null ? null : pa / 100,
       };
     },
   };
@@ -258,8 +274,21 @@ export function readingFromTailItem(item: Record<string, unknown> | undefined) {
   };
 }
 
-export interface SamplerState { nextReadAt: number; busyStreak: number; resumeAt: number; lastPrunedAt: number }
-export const newSamplerState = (): SamplerState => ({ nextReadAt: 0, busyStreak: 0, resumeAt: 0, lastPrunedAt: 0 });
+export interface SamplerState {
+  /** The clock node reads are reserved on. The running job uses the process-wide one. */
+  clock: NodeReadClock;
+  busyStreak: number; resumeAt: number; lastPrunedAt: number;
+  /** The hour (epoch ms) `tried` belongs to, and the stations already tried in it. */
+  triedHour: number; tried: Set<string>;
+  /** The last station a pass handled: the next pass starts after it. */
+  cursor: string | null;
+  /** 0.1-degree cells whose NWS lookup failed: not asked again before `until`. */
+  nwsHold: Map<string, { streak: number; until: number }>;
+}
+export const newSamplerState = (clock: NodeReadClock = { nextReadAt: 0 }): SamplerState => ({
+  clock, busyStreak: 0, resumeAt: 0, lastPrunedAt: 0, triedHour: 0, tried: new Set(), cursor: null, nwsHold: new Map(),
+});
+const MAX_NWS_HOLDS = 2000;
 
 export interface SamplerDeps {
   query: Query;
@@ -268,17 +297,19 @@ export interface SamplerDeps {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   state?: SamplerState;
-  stationGapMs?: number;
+  /** Node reads a minute (default: the shared ceiling). */
+  readsPerMin?: number;
 }
 
 export interface SamplerCounts {
-  stations: number; alreadySampled: number; read: number; stored: number;
-  noReading: number; noReference: number; nodeUnavailable: boolean; nodeBusy: boolean; backingOff: boolean;
+  stations: number; alreadySampled: number; alreadyTried: number; read: number; stored: number;
+  noReading: number; noReference: number; referenceOnHold: number; referenceErrors: number;
+  nodeUnavailable: boolean; nodeBusy: boolean; backingOff: boolean;
 }
 
 const INSERT_SQL = `INSERT INTO station_compare_samples
     (station_id, sampled_hour, observed_at, temperature_c, humidity_pct, pressure_hpa,
-     nws_station, nws_observed_at, nws_temperature_c, nws_humidity_pct, nws_pressure_hpa)
+     nws_station, nws_observed_at, nws_temperature_c, nws_humidity_pct, nws_barometric_hpa)
   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
   ON CONFLICT (station_id, sampled_hour) DO NOTHING`;
 
@@ -287,10 +318,10 @@ export async function sampleStations(deps: SamplerDeps): Promise<SamplerCounts> 
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>(resolve => { setTimeout(resolve, ms).unref?.(); }));
   const state = deps.state ?? newSamplerState();
-  const gapMs = deps.stationGapMs ?? STATION_GAP_MS;
+  const readsPerMin = deps.readsPerMin ?? nodeJobReadsPerMinute();
   const counts: SamplerCounts = {
-    stations: 0, alreadySampled: 0, read: 0, stored: 0, noReading: 0, noReference: 0,
-    nodeUnavailable: false, nodeBusy: false, backingOff: false,
+    stations: 0, alreadySampled: 0, alreadyTried: 0, read: 0, stored: 0, noReading: 0, noReference: 0,
+    referenceOnHold: 0, referenceErrors: 0, nodeUnavailable: false, nodeBusy: false, backingOff: false,
   };
   if (state.resumeAt > now()) { counts.backingOff = true; return counts; }
 
@@ -311,21 +342,36 @@ export async function sampleStations(deps: SamplerDeps): Promise<SamplerCounts> 
     (await deps.query('SELECT station_id FROM station_compare_samples WHERE sampled_hour = $1', [hourIso])).rows.map(r => String(r.station_id)),
   );
   counts.stations = listed.rows.length;
-  const nwsByCell = new Map<string, Promise<NwsPairReading | null>>();
+  if (state.triedHour !== hourMs) { state.triedHour = hourMs; state.tried = new Set(); }
+  // Start after the station the last pass stopped at, and wrap around once.
+  const ids = listed.rows.map(r => String(r.station_id));
+  const startAt = state.cursor === null ? 0 : ids.findIndex(id => id > (state.cursor as string));
+  const order = startAt <= 0 ? listed.rows : [...listed.rows.slice(startAt), ...listed.rows.slice(0, startAt)];
+  // At most one NWS call per cell per pass: later stations in the cell reuse the answer.
+  const nwsByCell = new Map<string, Promise<NwsPairReading | null | 'error'>>();
 
-  for (const row of listed.rows) {
+  for (const row of order) {
     const stationId = String(row.station_id);
     if (done.has(stationId)) { counts.alreadySampled += 1; continue; }
+    if (state.tried.has(stationId)) { counts.alreadyTried += 1; continue; }
     if (counts.read >= MAX_STATIONS_PER_PASS) break;
     // The hour rolled over while this pass was waiting: the next pass takes the new hour.
     if (Math.floor(now() / HOUR_MS) * HOUR_MS !== hourMs) break;
     const lat = cell(row.latitude, 90);
     const lon = cell(row.longitude, 180);
     if (lat === null || lon === null) continue;
+    const key = `${lat.toFixed(1)},${lon.toFixed(1)}`;
 
-    const wait = state.nextReadAt - now();
-    if (wait > 0) await sleep(wait);
-    state.nextReadAt = Math.max(now(), state.nextReadAt) + gapMs;
+    // A cell whose NWS lookup keeps failing costs no node read until its hold ends.
+    const hold = state.nwsHold.get(key);
+    if (hold && hold.until > now() && !nwsByCell.has(key)) {
+      counts.referenceOnHold += 1;
+      state.tried.add(stationId);
+      state.cursor = stationId;
+      continue;
+    }
+
+    await reserveNodeReads(state.clock, NODE_READS_PER_STATION, readsPerMin, now, sleep);
     counts.read += 1;
     const tail = await deps.chainTail.latest(stationId);
     if (tail.kind === 'rejected' && tail.status === 429) {
@@ -340,6 +386,9 @@ export async function sampleStations(deps: SamplerDeps): Promise<SamplerCounts> 
       return counts;
     }
     state.busyStreak = 0;
+    // From here the station has had its turn for this hour, whatever the outcome.
+    state.tried.add(stationId);
+    state.cursor = stationId;
     const mine = readingFromTailItem(tail.items[0]);
     const nowS = Math.floor(now() / 1000);
     if (!mine || nowS - mine.observedAt > SAMPLE_MAX_AGE_S || mine.observedAt > nowS + 300
@@ -348,20 +397,28 @@ export async function sampleStations(deps: SamplerDeps): Promise<SamplerCounts> 
       continue;
     }
 
-    const key = `${lat.toFixed(1)},${lon.toFixed(1)}`;
     let pending = nwsByCell.get(key);
     if (!pending) {
-      pending = deps.nws.latest(lat, lon).catch(() => null);
+      pending = deps.nws.latest(lat, lon).then(
+        (reading) => { state.nwsHold.delete(key); return reading; },
+        () => {
+          const streak = (state.nwsHold.get(key)?.streak ?? 0) + 1;
+          if (state.nwsHold.size >= MAX_NWS_HOLDS) state.nwsHold.clear();
+          state.nwsHold.set(key, { streak, until: now() + Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** (streak - 1)) });
+          counts.referenceErrors += 1;
+          return 'error' as const;
+        },
+      );
       nwsByCell.set(key, pending);
     }
     const ref = await pending;
-    if (!ref || Math.abs(ref.observedAt - mine.observedAt) > SAMPLE_MAX_SKEW_S) { counts.noReference += 1; continue; }
+    if (ref === 'error' || !ref || Math.abs(ref.observedAt - mine.observedAt) > SAMPLE_MAX_SKEW_S) { counts.noReference += 1; continue; }
 
     await deps.query(INSERT_SQL, [
       stationId, hourIso, new Date(mine.observedAt * 1000).toISOString(),
       mine.temperatureC, mine.humidityPct, mine.pressureHpa,
       ref.stationIdentifier, new Date(ref.observedAt * 1000).toISOString(),
-      ref.temperatureC, ref.humidityPct, ref.pressureHpa,
+      ref.temperatureC, ref.humidityPct, ref.barometricHpa,
     ]);
     counts.stored += 1;
   }
@@ -386,13 +443,13 @@ export async function startStationCompareSampler(deps: {
     const NOAAWeatherService = mod.default ?? mod;
     return nwsPairSourceFrom(new NOAAWeatherService());
   })();
-  const state = newSamplerState();
+  const state = newSamplerState(processNodeReadClock);
   let running = false;
   const tick = () => {
     if (running || !stationCompareHistoryEnabled()) return;
     running = true;
     sampleStations({ query, chainTail, nws, now: deps.now, state })
-      .then((c) => { if (c.stored > 0 || c.nodeBusy || c.nodeUnavailable) deps.logger?.info('station compare history: sample pass', c); })
+      .then((c) => { if (c.stored > 0 || c.nodeBusy || c.nodeUnavailable || c.referenceErrors > 0) deps.logger?.info('station compare history: sample pass', c); })
       .catch(() => deps.logger?.warn('station compare history: sample pass failed (details withheld)'))
       .finally(() => { running = false; });
   };

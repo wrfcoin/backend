@@ -5,7 +5,7 @@
 -- Rows older than 90 days are deleted by the sampler. Nothing here is paid or feeds rewards.
 --
 -- NOT applied at startup: the deployed backend does not run migrations. Apply by hand before
--- setting STATION_COMPARE_HISTORY_ENABLED=true. Rerunnable.
+-- setting STATION_COMPARE_HISTORY_ENABLED=true. Rerunnable. Apply after 0045.
 --
 -- Down (reversible): DROP TABLE station_compare_samples;
 CREATE TABLE IF NOT EXISTS station_compare_samples (
@@ -20,8 +20,9 @@ CREATE TABLE IF NOT EXISTS station_compare_samples (
   nws_observed_at timestamptz NOT NULL,
   nws_temperature_c real,
   nws_humidity_pct real,
-  -- Station pressure at the NWS station (not reduced to sea level).
-  nws_pressure_hpa real,
+  -- NWS barometricPressure as reported, in hPa. Treated as the altimeter setting (reduced to sea
+  -- level), not pressure at the sensor: never subtract it from pressure_hpa; use the ratio.
+  nws_barometric_hpa real,
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (station_id, sampled_hour)
 );
