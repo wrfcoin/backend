@@ -104,6 +104,7 @@ import {
 import { createOperatorProfileRouter } from './routes/operator-profile-routes.js';
 import { createStationDetailRouter } from './routes/station-detail-routes.js';
 import { createStationOwnerRouter, captureOwnerActionRawBody } from './routes/station-owner-routes.js';
+import { createStationOwnerInsightsRouter } from './routes/station-owner-insights-routes.js';
 import { createWrfForecastNotWiredRouter } from './routes/wrf-forecast-not-wired-routes.js';
 // backend#1134: the four factory-built ingestion routers were only ever mounted on
 // the compute_networks_server (port 6000), never on this live main-api entrypoint.
@@ -300,6 +301,8 @@ app.use('/api/operators', createOperatorProfileRouter());
 app.use('/api', createStationDetailRouter());
 // Station theft protection: signed owner-action relay + ownership state (spec r23/station-owner-actions-spec.md).
 app.use('/api', createStationOwnerRouter());
+// Epic 8: owner-only station insights. OFF (404) unless STATION_COMPARE_HISTORY_ENABLED=true.
+app.use('/api', createStationOwnerInsightsRouter());
 // backend#1289 (b3): /api/v1/weather/wrf-forecast/* answers the not-wired 501
 // instead of the catch-all 404.
 app.use('/api', createWrfForecastNotWiredRouter());
@@ -1832,6 +1835,16 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
       });
     } catch {
       appLogger.warn('Website forecast practice score job not started');
+    }
+    // Station compare history sampler (Epic 8). OFF unless STATION_COMPARE_HISTORY_ENABLED=true; needs
+    // migration 0046_station_compare_samples and WRFCOIN_READER_TOKEN.
+    try {
+      const { startStationCompareSampler } = require('./services/station-compare-history');
+      startStationCompareSampler({ logger: appLogger }).catch(() => {
+        appLogger.warn('Station compare history sampler not started');
+      });
+    } catch {
+      appLogger.warn('Station compare history sampler not started');
     }
     // Friend challenges counting job (backend#249). OFF unless FRIEND_CHALLENGES_ENABLED=true; needs
     // WRFCOIN_READER_TOKEN and migration 0040_friend_challenges.
