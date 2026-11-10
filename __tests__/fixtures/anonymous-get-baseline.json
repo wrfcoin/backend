@@ -294,6 +294,7 @@
     "/api/weather/alerts/shadow",
     "/api/weather/health",
     "/api/weather/stations/:stationId/reward-progress",
+    "/api/weather/stations/collector-roster",
     "/api/weather/stations/credentials",
     "/api/weather/stations/mobile",
     "/api/weather/streak/:walletAddress",
