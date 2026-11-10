@@ -269,6 +269,51 @@ describe('GET /api/capabilities', () => {
  * release classification, or an ISO timestamp. No file names, route prefixes,
  * env var names, env values, topology hints, or provider error text.
  */
+describe('GET /api/capabilities with CAPABILITIES_ENABLED_FEATURES', () => {
+  const original = process.env.CAPABILITIES_ENABLED_FEATURES;
+  afterEach(() => {
+    if (original === undefined) delete process.env.CAPABILITIES_ENABLED_FEATURES;
+    else process.env.CAPABILITIES_ENABLED_FEATURES = original;
+  });
+
+  it('changes nothing when unset or blank', async () => {
+    delete process.env.CAPABILITIES_ENABLED_FEATURES;
+    const unset = await getCapabilities();
+    process.env.CAPABILITIES_ENABLED_FEATURES = ' , ';
+    expect(await getCapabilities()).toEqual(unset);
+    expect(unset.features.mining).toEqual({ status: 'configured', reasonCode: 'unverified' });
+  });
+
+  it('reports every feature the operator did not list as unavailable, and keeps every key', async () => {
+    process.env.CAPABILITIES_ENABLED_FEATURES = 'wallet, explorer,weather,not-a-feature';
+    const body = await getCapabilities({ mining: observation('mining'), wallet: observation('wallet') });
+
+    expect(Object.keys(body.features).sort()).toEqual([...EXPECTED_FEATURE_KEYS].sort());
+    expect(body.features).not.toHaveProperty('not-a-feature');
+    // Listed: classified as before (evidence still decides operational).
+    expect(body.features.wallet).toEqual({ status: 'operational', reasonCode: 'ok' });
+    expect(body.features.explorer).toEqual({ status: 'configured', reasonCode: 'unverified' });
+    // Not listed: unavailable even with a mounted route and a fresh proof.
+    expect(body.features.mining).toEqual({ status: 'unavailable', reasonCode: 'not_wired' });
+    expect(body.features.nfts).toEqual({ status: 'unavailable', reasonCode: 'not_wired' });
+    for (const [key, entry] of Object.entries(body.features)) {
+      if (!['wallet', 'explorer', 'weather'].includes(key)) {
+        expect(entry).toEqual({ status: 'unavailable', reasonCode: 'not_wired' });
+      }
+    }
+    expect([...body.publicReleaseReadiness.requiredCapabilities].sort()).toEqual(['explorer', 'wallet', 'weather']);
+    expect(body.readiness.pop.mode).toBe('unavailable');
+  });
+
+  it('can only narrow: listing a feature the inventory lacks does not enable it', async () => {
+    process.env.CAPABILITIES_ENABLED_FEATURES = 'staking,wallet';
+    const body = await getCapabilities();
+    expect(body.features.staking).toEqual({ status: 'unavailable', reasonCode: 'not_wired' });
+    expect(body.publicReleaseReadiness.requiredCapabilities).toEqual(['wallet']);
+    expect(JSON.stringify(body)).not.toContain('CAPABILITIES_ENABLED_FEATURES');
+  });
+});
+
 describe('GET /api/capabilities public disclosure boundary', () => {
   const PUBLIC_REASON_CODES = [
     'ok',

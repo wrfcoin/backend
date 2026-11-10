@@ -257,6 +257,25 @@ const FEATURE_SEEDS: FeatureSeed[] = [
 /** Read features that are honestly `configured` (never operational without evidence) once their flags are on. */
 const FLAG_GATED_READS = new Set(['earningsRead', 'forecastersRead', 'proofCards', 'networkNodesRead', 'competitions', 'notifications', 'calibrationCertificates', 'forecastVerification', 'challenges', 'duels']);
 
+/**
+ * Optional operator declaration of what this deployment really offers.
+ * `CAPABILITIES_ENABLED_FEATURES` is a comma-separated list of feature keys.
+ * Unset or empty: no change. Set: every feature NOT listed is reported
+ * `unavailable` / `not_wired` and is not release-required, whatever the
+ * static inventory says. A route being mounted in this process does not mean
+ * the deployment serves it (the public edge may not admit it, or the service
+ * behind it may not run), and only the operator knows that. The list can
+ * only narrow the answer: a listed feature is still classified by its seed,
+ * its flag and its evidence, and unknown keys are ignored. Read per request,
+ * like the other flags here. The value is never serialized.
+ */
+function declaredEnabledFeatures(): Set<string> | null {
+  const raw = process.env.CAPABILITIES_ENABLED_FEATURES?.trim();
+  if (!raw) return null;
+  const keys = raw.split(',').map((key) => key.trim()).filter((key) => key !== '');
+  return keys.length > 0 ? new Set(keys) : null;
+}
+
 const DEFAULT_MAX_EVIDENCE_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_PROBE_TIMEOUT_MS = 2_000;
 
@@ -471,8 +490,9 @@ export function createCapabilitiesRouter(
       probeTimeoutMs,
     );
     const features: Record<string, FeatureStatusEntry> = {};
+    const declared = declaredEnabledFeatures();
     for (const seed of FEATURE_SEEDS) {
-      if ((seed.key === 'earningsRead' && !earningsEnabled()) || (seed.key === 'forecastersRead' && !forecastersEnabled())
+      if ((declared !== null && !declared.has(seed.key)) || (seed.key === 'earningsRead' && !earningsEnabled()) || (seed.key === 'forecastersRead' && !forecastersEnabled())
         || (seed.key === 'proofCards' && !proofCardsEnabled())
         || (seed.key === 'networkNodesRead' && !networkNodesEnabled())
         || (seed.key === 'competitions' && !competitionsEnabled())
@@ -496,6 +516,7 @@ export function createCapabilitiesRouter(
 
     const requiredCapabilities = FEATURE_SEEDS
       .filter((seed) => seed.status !== 'unavailable')
+      .filter((seed) => declared === null || declared.has(seed.key))
       .map((seed) => seed.key);
     const failures = requiredCapabilities
       .filter((capabilityId) => features[capabilityId].status !== 'operational')
