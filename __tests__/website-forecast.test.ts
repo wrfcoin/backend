@@ -8,7 +8,7 @@ import request from 'supertest';
 import { createHash, generateKeyPairSync } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
 import {
-  addressFromPublicKey, buildManifest, canonicalJson, checkSubmission, makeDraft, parseDraftInput, WEB_MODEL_ID,
+  addressFromPublicKey, buildManifest, canonicalJson, checkSubmission, makeDraft, parseDraftInput, RELAYED_MODEL_IDS, WEB_MODEL_ID,
 } from '../server/services/website-forecast/website-forecast';
 import {
   classifyNodeReply, createNodeForecastClient, NODE_COMMIT_PATH, NODE_REVEAL_PATH, type NodeForecastClient, type NodeSubmitResult,
@@ -64,7 +64,32 @@ describe('canonical forecast data', () => {
     expect(parseDraftInput({ stationAlias: ALIAS, variable: 'temperature_c', leadHours: 6, value: 99 }).ok).toBe(false);
     expect(parseDraftInput({ stationAlias: STATION, variable: 'temperature_c', leadHours: 6, value: 5 }).ok).toBe(false);
     expect(parseDraftInput({ stationAlias: ALIAS, variable: 'pressure_hpa', leadHours: '24', value: '1013.26' }))
-      .toEqual({ ok: true, value: { stationAlias: ALIAS, variable: 'pressure_hpa', leadHours: 24, value: 1013.3 } });
+      .toEqual({ ok: true, value: { stationAlias: ALIAS, variable: 'pressure_hpa', leadHours: 24, value: 1013.3, modelId: WEB_MODEL_ID } });
+  });
+
+  it('takes a forecast program\'s own model name from the short list, and nothing else', () => {
+    const base = { stationAlias: ALIAS, variable: 'temperature_c', leadHours: 6, value: 5 };
+    expect(RELAYED_MODEL_IDS).toContain('gfs-station-bias/v0');
+    expect(parseDraftInput({ ...base, modelId: 'gfs-station-bias/v0' })).toMatchObject({ ok: true, value: { modelId: 'gfs-station-bias/v0' } });
+    expect(parseDraftInput({ ...base, modelId: WEB_MODEL_ID })).toMatchObject({ ok: true, value: { modelId: WEB_MODEL_ID } });
+    expect(parseDraftInput({ ...base, modelId: '' })).toMatchObject({ ok: true, value: { modelId: WEB_MODEL_ID } });
+    for (const bad of ['persistence-trend/v1', 'GFS-STATION-BIAS/V0', 'gfs-station-bias/v0 ', 'x'.repeat(5000), 7, { id: 'gfs-station-bias/v0' }]) {
+      expect(parseDraftInput({ ...base, modelId: bad })).toMatchObject({ ok: false, status: 400, code: 'VALIDATION_ERROR' });
+    }
+  });
+
+  it('writes the program\'s model name into the draft data and the manifest', () => {
+    const w = wallet();
+    const d = makeDraft({ stationAlias: ALIAS, variable: 'temperature_c', leadHours: 6, value: 12.3, modelId: 'gfs-station-bias/v0',
+      forecaster: w.address, stationId: STATION, nowSec: NOW, nonce: 'web-0123456789abcdef0123456789abcdef' });
+    expect(JSON.parse(d.data).model_id).toBe('gfs-station-bias/v0');
+    expect(d.commitId).toBe(forecastCommitId(d.data, d.nonce, STATION, NOW));
+    const r = checkSubmission(submitBody(d, w.pubkey), w.address, NOW + 30);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.record.modelId).toBe('gfs-station-bias/v0');
+      expect(r.value.manifest.model_id).toBe('gfs-station-bias/v0');
+    }
   });
 });
 
