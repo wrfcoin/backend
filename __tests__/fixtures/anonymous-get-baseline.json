@@ -40,6 +40,8 @@
     "/api/forecasts/status",
     "/api/forecasters/",
     "/api/forecasters/:keyOrAddress",
+    "/api/governance/advisory/proposals",
+    "/api/governance/advisory/proposals/:id",
     "/api/governance/analytics/dashboard",
     "/api/governance/analytics/delegates",
     "/api/governance/analytics/participation",
