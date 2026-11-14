@@ -11,14 +11,20 @@
  *              gap between the newest 100 blocks. /network/info, /chain/blocks?limit=100 and, for the day
  *              count, a binary search of /chain/block/<h> timestamps (heights are immutable, so each one
  *              is read once and remembered).
- *   network    chain id, sync status and the node's peer count (/network/info). Never the peer id, the
+ *   network    sync status and the node's peer count (/network/info). The chain and network ids are never
+ *              copied from the node: only the fixed public values (chain 888, "testnet") are published, and
+ *              only when the node reports exactly those; anything else is null. Never the peer id, the
  *              genesis hash or any address.
  *   producers  how many producers of the set in force signed a block in the newest 64 blocks
- *              (/network/producers?window=64), by their public producer label (the same labels /nodes
- *              already shows). No keys, payout addresses, hosts or IPs.
+ *              (/network/producers?window=64). A producer_id is operator configuration, so it is never
+ *              published: each producer is shown by its approved public alias (PUBLIC_PRODUCER_ALIASES,
+ *              an explicit compiled-in allowlist) or else by an opaque "producer N" (its place in the set).
+ *              No ids, keys, payout addresses, hosts or IPs.
  *   nodePay    the current node-pay epoch and the newest PAID epoch among the last 8
  *              (/node/bonds/<zero> for the epoch, /node/settlement/<e>). The node prunes old paid epochs,
- *              so "none in the last 8" is said as such, never as "never paid".
+ *              so "none in the last 8" is said as such, never as "never paid". If a read of an epoch newer
+ *              than the newest PAID one found fails, the answer is `partial` (lastPaidEpoch null,
+ *              epochsUnread listed), never "none recently".
  *   upgrades   features scheduled but not yet active, with their activation heights (/network/upgrade),
  *              and a governance-signed upgrade notice when one is installed.
  *
@@ -41,6 +47,8 @@ export type Core4Fetch = (path: string, options?: Record<string, unknown>) => Pr
 export interface NetworkStatusDeps {
   fetchCore4Json?: Core4Fetch;
   readerToken?: () => string | undefined;
+  /** Test seam for PUBLIC_PRODUCER_ALIASES. */
+  producerAliases?: Readonly<Record<string, string>>;
   now?: () => number;
   rateLimit?: RequestHandler;
 }
@@ -60,7 +68,25 @@ const DAY_S = 86_400;
 const CALL_TIMEOUT_MS = 4_000;
 const MAX_REMEMBERED_TIMES = 512;
 const ZERO_ID = '0'.repeat(64);
-const LABEL_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/;
+const MAX_PRODUCERS = 32;
+/** The only chain/network identity this endpoint ever publishes (chain 888 public testnet). */
+export const PUBLIC_CHAIN_ID = '888';
+export const PUBLIC_NETWORK_ID = 'testnet';
+/**
+ * Approved public producer aliases, keyed by core4 producer_id. Explicit allowlist: adding an entry is an
+ * owner decision (docs/plans/DECISIONS.md). A producer_id not listed here is published only as
+ * "producer N", so hostnames, IPs or personal names in node configuration never reach the public.
+ * Aliases must not look like "producer N".
+ */
+export const PUBLIC_PRODUCER_ALIASES: Readonly<Record<string, string>> = Object.freeze({});
+export const PUBLIC_ALIAS_RE = /^[A-Za-z][A-Za-z0-9 -]{0,31}$/;
+
+/** Public label for the producer at 0-based `index` of the set in force. */
+export function publicProducerLabel(producerId: unknown, index: number, aliases: Readonly<Record<string, string>> = PUBLIC_PRODUCER_ALIASES): string {
+  const alias = typeof producerId === 'string' && Object.prototype.hasOwnProperty.call(aliases, producerId) ? aliases[producerId] : undefined;
+  if (typeof alias === 'string' && PUBLIC_ALIAS_RE.test(alias) && !/^producer \d+$/i.test(alias)) return alias;
+  return `producer ${index + 1}`;
+}
 const FEATURE_RE = /^[a-z0-9_]{1,64}$/;
 
 const enabled = () => process.env.NETWORK_STATUS_READ_ENABLED === 'true';
@@ -106,7 +132,7 @@ function timeMs(value: unknown): number | null {
 const unavailable = { status: 'unavailable' as const };
 
 export type NetworkStatusSnapshot = {
-  network: { status: 'ok'; chainId: string | null; networkId: string | null; syncStatus: string | null; peerCount: number | null } | typeof unavailable;
+  network: { status: 'ok'; chainId: typeof PUBLIC_CHAIN_ID | null; networkId: typeof PUBLIC_NETWORK_ID | null; syncStatus: string | null; peerCount: number | null } | typeof unavailable;
   blocks:
     | {
         status: 'ok';
@@ -122,7 +148,10 @@ export type NetworkStatusSnapshot = {
   producers:
     | { status: 'ok'; windowBlocks: number; total: number; online: number; members: Array<{ label: string; online: boolean; blocksInWindow: number; lastHeight: number | null }> }
     | typeof unavailable;
-  nodePay: { status: 'ok'; currentEpoch: number | null; lastPaidEpoch: number | null; epochsScanned: number[] } | typeof unavailable;
+  nodePay:
+    | { status: 'ok'; currentEpoch: number; lastPaidEpoch: number | null; epochsScanned: number[] }
+    | { status: 'partial'; currentEpoch: number; lastPaidEpoch: null; epochsScanned: number[]; epochsUnread: number[] }
+    | typeof unavailable;
   upgrades:
     | {
         status: 'ok';
@@ -137,6 +166,7 @@ export type NetworkStatusSnapshot = {
 export function createNetworkStatusRouter(deps: NetworkStatusDeps = {}): express.Router {
   const router = express.Router();
   const now = deps.now ?? Date.now;
+  const aliases = deps.producerAliases ?? PUBLIC_PRODUCER_ALIASES;
   const readerToken = deps.readerToken ?? (() => process.env.WRFCOIN_READER_TOKEN?.trim() || undefined);
   let fetchPromise: Promise<Core4Fetch> | null = null;
   const getFetch = () => (fetchPromise ||= deps.fetchCore4Json ? Promise.resolve(deps.fetchCore4Json) : defaultFetch());
@@ -182,8 +212,8 @@ export function createNetworkStatusRouter(deps: NetworkStatusDeps = {}): express
     const network: NetworkStatusSnapshot['network'] = info
       ? {
           status: 'ok',
-          chainId: typeof info.chain_id === 'string' || typeof info.chain_id === 'number' ? String(info.chain_id).slice(0, 32) : null,
-          networkId: typeof info.network_id === 'string' ? info.network_id.slice(0, 32) : null,
+          chainId: (typeof info.chain_id === 'string' || typeof info.chain_id === 'number') && String(info.chain_id) === PUBLIC_CHAIN_ID ? PUBLIC_CHAIN_ID : null,
+          networkId: info.network_id === PUBLIC_NETWORK_ID ? PUBLIC_NETWORK_ID : null,
           syncStatus: typeof info.sync_status === 'string' && /^[a-z_]{1,32}$/.test(info.sync_status) ? info.sync_status : null,
           peerCount: safeInt(info.peer_count),
         }
@@ -228,19 +258,18 @@ export function createNetworkStatusRouter(deps: NetworkStatusDeps = {}): express
     }
     while (times.size > MAX_REMEMBERED_TIMES) times.delete(times.keys().next().value as number);
 
-    // Producers (labels only).
+    // Producers (approved aliases or opaque "producer N" only; producer_id is never copied).
     let producers: NetworkStatusSnapshot['producers'] = unavailable;
     if (producersView && Array.isArray(producersView.producers)) {
       const windowTo = safeInt(producersView.activity_window?.to_height);
       const windowFrom = safeInt(producersView.activity_window?.from_height);
       const members = producersView.producers
-        .filter((p: Row) => p && typeof p.producer_id === 'string' && LABEL_RE.test(p.producer_id))
-        .slice(0, 32)
-        .map((p: Row) => {
-          const last = safeInt(p.last_produced_height);
-          const count = safeInt(p.blocks_in_window) ?? 0;
+        .slice(0, MAX_PRODUCERS)
+        .map((p: Row, i: number) => {
+          const last = safeInt(p?.last_produced_height);
+          const count = safeInt(p?.blocks_in_window) ?? 0;
           const inWindow = last !== null && windowFrom !== null && windowTo !== null && last >= windowFrom && last <= windowTo;
-          return { label: p.producer_id as string, online: count > 0 && inWindow, blocksInWindow: count, lastHeight: last };
+          return { label: publicProducerLabel(p?.producer_id, i, aliases), online: count > 0 && inWindow, blocksInWindow: count, lastHeight: last };
         });
       producers = {
         status: 'ok',
@@ -258,9 +287,20 @@ export function createNetworkStatusRouter(deps: NetworkStatusDeps = {}): express
       const epochs: number[] = [];
       for (let e = epoch; e >= 0 && epochs.length < SETTLEMENT_EPOCHS_SCANNED; e -= 1) epochs.push(e);
       const records = await Promise.all(epochs.map((e) => get(`/node/settlement/${e}`)));
-      if (records.some((r) => r !== null)) {
-        const paid = epochs.find((e, i) => records[i]?.status === 'PAID');
-        nodePay = { status: 'ok', currentEpoch: epoch, lastPaidEpoch: paid ?? null, epochsScanned: epochs };
+      // Newest first: the answer is only complete if every epoch down to the first PAID one (or all of
+      // them, when none is PAID) was read. A failed read is not "not paid".
+      const scanned: number[] = [];
+      const unread: number[] = [];
+      let paid: number | null = null;
+      for (let i = 0; i < epochs.length; i += 1) {
+        if (records[i] === null) { unread.push(epochs[i]); continue; }
+        scanned.push(epochs[i]);
+        if (records[i]?.status === 'PAID') { paid = epochs[i]; break; }
+      }
+      if (scanned.length > 0) {
+        nodePay = unread.length === 0
+          ? { status: 'ok', currentEpoch: epoch, lastPaidEpoch: paid, epochsScanned: scanned }
+          : { status: 'partial', currentEpoch: epoch, lastPaidEpoch: null, epochsScanned: scanned, epochsUnread: unread };
       }
     }
 

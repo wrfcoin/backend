@@ -25,6 +25,9 @@ describe('GET /api/public/network-status', () => {
   /** Block time of height h: the tip was made 40 s before NOW, one block every STEP_S before that. */
   let timeOf: (h: number) => number = (h) => NOW - 40_000 - (25_000 - h) * STEP_S * 1000;
   let failing = new Set<string>();
+  let infoIds: { chain_id: unknown; network_id: unknown } = { chain_id: '888', network_id: 'testnet' };
+  let producerIds = ['n5-node-a', 'mango-mini', 'producer-standby'];
+  let paidEpoch = 19;
   let upstream: http.Server;
   let clock = NOW;
 
@@ -33,7 +36,7 @@ describe('GET /api/public/network-status', () => {
   const reply = (path: string, q: URLSearchParams): Reply => {
     if ([...failing].some((f) => path.startsWith(f))) return { status: 500, json: { ok: false } };
     if (path === '/network/info') {
-      return { status: 200, json: { chain_height: tip, chain_id: '888', network_id: 'testnet', genesis_hash: GENESIS, local_peer_id: PEER_ID, peer_count: 2, sync_status: 'synced' } };
+      return { status: 200, json: { chain_height: tip, ...infoIds, genesis_hash: GENESIS, local_peer_id: PEER_ID, peer_count: 2, sync_status: 'synced' } };
     }
     if (path === '/chain/blocks') {
       const limit = Number(q.get('limit') ?? 20);
@@ -51,9 +54,9 @@ describe('GET /api/public/network-status', () => {
       return { status: 200, json: { ok: true, data: {
         tip_height: tip, authorizes_height: tip + 1,
         producers: [
-          { producer_id: 'n5-node-a', public_key: KEY, payout_address: PAYOUT, last_produced_height: tip, blocks_in_window: 40 },
-          { producer_id: 'mango-mini', public_key: 'cd'.repeat(32), payout_address: PAYOUT, last_produced_height: tip - 1, blocks_in_window: 24 },
-          { producer_id: 'producer-standby', public_key: 'ef'.repeat(32), payout_address: PAYOUT, last_produced_height: null, blocks_in_window: 0 },
+          { producer_id: producerIds[0], public_key: KEY, payout_address: PAYOUT, last_produced_height: tip, blocks_in_window: 40 },
+          { producer_id: producerIds[1], public_key: 'cd'.repeat(32), payout_address: PAYOUT, last_produced_height: tip - 1, blocks_in_window: 24 },
+          { producer_id: producerIds[2], public_key: 'ef'.repeat(32), payout_address: PAYOUT, last_produced_height: null, blocks_in_window: 0 },
         ],
         activity_window: { requested: w, from_height: tip - w + 1, to_height: tip, blocks_scanned: w },
       } } };
@@ -61,7 +64,7 @@ describe('GET /api/public/network-status', () => {
     if (path === `/node/bonds/${'0'.repeat(64)}`) return { status: 200, json: { epoch: '21', status: 'UNKNOWN', deployment_id: '0'.repeat(64) } };
     if ((m = /^\/node\/settlement\/(\d+)$/.exec(path))) {
       const e = Number(m[1]);
-      const status = e === 21 ? 'OPEN' : e === 20 ? 'PROVISIONAL' : e === 19 ? 'PAID' : 'UNKNOWN';
+      const status = e === 21 ? 'OPEN' : e === 20 ? 'PROVISIONAL' : e === paidEpoch ? 'PAID' : 'UNKNOWN';
       return { status: 200, json: { epoch: String(e), status, payouts_base_units: { ['a1'.repeat(32)]: '5' } } };
     }
     if (path === '/network/upgrade') {
@@ -107,10 +110,13 @@ describe('GET /api/public/network-status', () => {
     tip = 25_000;
     timeOf = (h) => NOW - 40_000 - (25_000 - h) * STEP_S * 1000;
     failing = new Set();
+    infoIds = { chain_id: '888', network_id: 'testnet' };
+    producerIds = ['n5-node-a', 'mango-mini', 'producer-standby'];
+    paidEpoch = 19;
     clock = NOW;
   });
 
-  function makeApp(opts: { readerToken?: () => string | undefined } = {}) {
+  function makeApp(opts: { readerToken?: () => string | undefined; producerAliases?: Record<string, string> } = {}) {
     const { createNetworkStatusRouter } = require('../server/routes/public-network-status-routes');
     const app = express();
     app.use('/api/public/network-status', createNetworkStatusRouter({ now: () => clock, rateLimit: (_q: unknown, _s: unknown, next: () => void) => next(), ...opts }));
@@ -133,12 +139,12 @@ describe('GET /api/public/network-status', () => {
     expect(r.body.producers).toEqual({
       status: 'ok', windowBlocks: 64, total: 3, online: 2,
       members: [
-        { label: 'n5-node-a', online: true, blocksInWindow: 40, lastHeight: 25_000 },
-        { label: 'mango-mini', online: true, blocksInWindow: 24, lastHeight: 24_999 },
-        { label: 'producer-standby', online: false, blocksInWindow: 0, lastHeight: null },
+        { label: 'producer 1', online: true, blocksInWindow: 40, lastHeight: 25_000 },
+        { label: 'producer 2', online: true, blocksInWindow: 24, lastHeight: 24_999 },
+        { label: 'producer 3', online: false, blocksInWindow: 0, lastHeight: null },
       ],
     });
-    expect(r.body.nodePay).toEqual({ status: 'ok', currentEpoch: 21, lastPaidEpoch: 19, epochsScanned: [21, 20, 19, 18, 17, 16, 15, 14] });
+    expect(r.body.nodePay).toEqual({ status: 'ok', currentEpoch: 21, lastPaidEpoch: 19, epochsScanned: [21, 20, 19] });
     expect(r.body.upgrades).toEqual({
       status: 'ok', activeFeatures: 1, signedNotice: null,
       pending: [
@@ -154,6 +160,72 @@ describe('GET /api/public/network-status', () => {
     const r = await request(makeApp()).get('/api/public/network-status');
     const text = JSON.stringify(r.body);
     for (const secret of [PEER_ID, GENESIS, KEY, PAYOUT, '0x', READER, '127.0.0.1', 'deployment']) expect(text).not.toContain(secret);
+  });
+
+  it('publishes producers only by approved alias or opaque "producer N", never the configured producer_id', async () => {
+    const sensitive = ['tony-macbook.local', '192.0.2.17', 'jane.doe.home', 'worker.internal.example', '2001:db8::1', 'ct101'];
+    producerIds = [sensitive[0], sensitive[1], sensitive[2]];
+    const r = await request(makeApp()).get('/api/public/network-status');
+    expect(r.body.producers.members.map((m: { label: string }) => m.label)).toEqual(['producer 1', 'producer 2', 'producer 3']);
+    const text = JSON.stringify(r.body);
+    for (const v of sensitive) expect(text).not.toContain(v);
+
+    // An approved alias is used; an alias that is malformed or mimics "producer N" falls back to opaque.
+    producerIds = ['n5-node-a', 'mango-mini', 'jane.doe.home'];
+    const aliased = await request(makeApp({ producerAliases: { 'n5-node-a': 'Producer A', 'mango-mini': 'producer 3', 'x': 'bad<alias>' } })).get('/api/public/network-status');
+    expect(aliased.body.producers.members.map((m: { label: string }) => m.label)).toEqual(['Producer A', 'producer 2', 'producer 3']);
+    expect(JSON.stringify(aliased.body)).not.toContain('jane');
+  });
+
+  it('the default alias allowlist is explicit and holds only well-formed aliases', () => {
+    const { PUBLIC_PRODUCER_ALIASES, PUBLIC_ALIAS_RE } = require('../server/routes/public-network-status-routes');
+    expect(Object.isFrozen(PUBLIC_PRODUCER_ALIASES)).toBe(true);
+    for (const alias of Object.values(PUBLIC_PRODUCER_ALIASES) as string[]) {
+      expect(alias).toMatch(PUBLIC_ALIAS_RE);
+      expect(alias).not.toMatch(/^producer \d+$/i);
+    }
+  });
+
+  it('publishes only chain 888 / "testnet", never a configured network or chain id', async () => {
+    for (const ids of [
+      { chain_id: '888-tony-laptop', network_id: 'tony-home-lab' },
+      { chain_id: '10.0.0.5', network_id: '192.0.2.17' },
+      { chain_id: 1337, network_id: 'staging.internal.example' },
+      { chain_id: { x: 1 }, network_id: ['testnet'] },
+    ]) {
+      infoIds = ids;
+      const r = await request(makeApp()).get('/api/public/network-status');
+      expect(r.body.network).toMatchObject({ status: 'ok', chainId: null, networkId: null });
+      const text = JSON.stringify(r.body);
+      for (const v of ['tony', '10.0.0.5', '192.0.2.17', 'internal', '1337']) expect(text).not.toContain(v);
+    }
+    infoIds = { chain_id: 888, network_id: 'testnet' };
+    const ok = await request(makeApp()).get('/api/public/network-status');
+    expect(ok.body.network).toMatchObject({ chainId: '888', networkId: 'testnet' });
+  });
+
+  it('node pay is partial, not "none recently", when a newer epoch read fails', async () => {
+    // Epoch 19 (the PAID one) fails; 21 and 20 read: the newest paid epoch cannot be known.
+    failing = new Set(['/node/settlement/19']);
+    const a = await request(makeApp()).get('/api/public/network-status');
+    expect(a.body.nodePay).toEqual({ status: 'partial', currentEpoch: 21, lastPaidEpoch: null, epochsScanned: [21, 20, 18, 17, 16, 15, 14], epochsUnread: [19] });
+    // A failed newer epoch (20) before an older PAID result (19): still partial.
+    failing = new Set(['/node/settlement/20']);
+    const b = await request(makeApp()).get('/api/public/network-status');
+    expect(b.body.nodePay).toEqual({ status: 'partial', currentEpoch: 21, lastPaidEpoch: null, epochsScanned: [21, 19], epochsUnread: [20] });
+    // A failed epoch older than the newest PAID one does not matter.
+    failing = new Set(['/node/settlement/17']);
+    const c = await request(makeApp()).get('/api/public/network-status');
+    expect(c.body.nodePay).toEqual({ status: 'ok', currentEpoch: 21, lastPaidEpoch: 19, epochsScanned: [21, 20, 19] });
+  });
+
+  it('node pay says no paid epoch only when all eight were read', async () => {
+    paidEpoch = -1;
+    const r = await request(makeApp()).get('/api/public/network-status');
+    expect(r.body.nodePay).toEqual({ status: 'ok', currentEpoch: 21, lastPaidEpoch: null, epochsScanned: [21, 20, 19, 18, 17, 16, 15, 14] });
+    failing = new Set(['/node/settlement/15']);
+    const p = await request(makeApp()).get('/api/public/network-status');
+    expect(p.body.nodePay).toMatchObject({ status: 'partial', lastPaidEpoch: null, epochsUnread: [15] });
   });
 
   it('is 404 unless NETWORK_STATUS_READ_ENABLED=true, and makes no node reads', async () => {
