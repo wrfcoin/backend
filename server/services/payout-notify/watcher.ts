@@ -13,7 +13,9 @@
  *     two reads are named in the message; the rest is "node, station or forecast pay".
  *
  * Load on the node is bounded: at most PAYOUT_NOTIFY_MAX_ADDRESSES account reads per pass (default 200),
- * paced 250 ms apart, one pass per PAYOUT_NOTIFY_INTERVAL_MS (default 5 min). Chain 888 makes a block about
+ * paced 250 ms apart, one pass per PAYOUT_NOTIFY_INTERVAL_MS (default 5 min). With more subscribed addresses
+ * than that, passes rotate through them in address order (a cursor carried between passes, wrapping at the
+ * end), so every address is read within ceil(addresses / cap) passes. Chain 888 makes a block about
  * every 77 s and pays nodes once per 512-block epoch, so five minutes is prompt enough.
  *
  * OFF unless PAYOUT_NOTIFY_ENABLED=true. Needs migration 0037 and WRFCOIN_READER_TOKEN. Never logs an
@@ -34,6 +36,8 @@ export interface AccountRead { earned: string | null; height: number }
 export type ReadAccount = (address: string) => Promise<AccountRead | null>;
 export interface Attribution { role: string; amount: string; height: string }
 export type Attribute = (address: string, afterHeight: number, throughHeight: number) => Promise<Attribution[]>;
+/** Where the next pass starts: the last address the previous pass read (null = from the beginning). */
+export interface RotationCursor { after: string | null }
 
 /** "1.25" from base units (8 decimals), trailing zeros trimmed. */
 export function wrf(baseUnits: string): string {
@@ -88,13 +92,25 @@ export async function deliverAll(pool: Pool, deliverer: Deliverer, subs: StoredS
 export async function runPayoutNotifyOnce(options: {
   pool: Pool; readAccount: ReadAccount; deliverer: Deliverer; attribute?: Attribute;
   maxAddresses?: number; sleep?: (ms: number) => Promise<void>;
+  /** Carried between passes so a capped pass does not always read the same first addresses. */
+  cursor?: RotationCursor;
 }): Promise<{ addresses: number; reads: number; baselines: number; payouts: number; delivered: number; readFailures: number }> {
   const { pool, readAccount, deliverer } = options;
   const sleep = options.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)));
   const summary = { addresses: 0, reads: 0, baselines: 0, payouts: 0, delivered: 0, readFailures: 0 };
-  const addresses = await withClient(pool, async c => (await c.query(`SELECT DISTINCT address FROM payout_notification_subscriptions
-    WHERE consecutive_failures<$1 ORDER BY address LIMIT $2`, [MAX_CONSECUTIVE_FAILURES, options.maxAddresses ?? DEFAULT_MAX_ADDRESSES])).rows.map((r: any) => r.address as string));
+  const cap = options.maxAddresses ?? DEFAULT_MAX_ADDRESSES;
+  const after = options.cursor?.after ?? null;
+  const addresses = await withClient(pool, async c => {
+    const select = async (where: string, params: unknown[], limit: number) => (await c.query(`SELECT DISTINCT address
+      FROM payout_notification_subscriptions WHERE consecutive_failures<$1 ${where} ORDER BY address LIMIT $2`,
+    [MAX_CONSECUTIVE_FAILURES, limit, ...params])).rows.map((r: any) => r.address as string);
+    if (after === null) return select('', [], cap);
+    // Addresses after the cursor first, then wrap around to the start (never past the cursor, so no repeats).
+    const tail = await select('AND address>$3', [after], cap);
+    return tail.length < cap ? tail.concat(await select('AND address<=$3', [after], cap - tail.length)) : tail;
+  });
   summary.addresses = addresses.length;
+  if (options.cursor && addresses.length) options.cursor.after = addresses[addresses.length - 1];
 
   for (const address of addresses) {
     if (summary.reads > 0) await sleep(PACE_MS);
@@ -200,10 +216,11 @@ export async function startPayoutNotifier(options: {
     const attribute = env.CHAIN_REWARD_INDEX_ENABLED === 'true' && /^[0-9]{1,20}$/.test(chain) && /^[0-9a-f]{64}$/.test(genesis)
       ? createIndexAttribution(pool as unknown as Pool, chain, genesis) : undefined;
     const deliverer = createDeliverer();
+    const cursor: RotationCursor = { after: null };
     const tick = async () => {
       if (!active) return;
       try {
-        const summary = await runPayoutNotifyOnce({ pool: pool as unknown as Pool, readAccount, deliverer, attribute, maxAddresses });
+        const summary = await runPayoutNotifyOnce({ pool: pool as unknown as Pool, readAccount, deliverer, attribute, maxAddresses, cursor });
         options.logger?.info('Payout notifier pass', summary);
       } catch { options.logger?.warn('Payout notifier pass failed'); }
       if (active) { timer = setTimeout(() => { void tick(); }, interval); timer.unref?.(); }

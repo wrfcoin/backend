@@ -42,6 +42,14 @@
  *      persistence = isqrt( Σ(x[i+lag] − x[i])² / pairs ) over slot pairs where both have a sample, used only
  *                    when there are at least 6 pairs
  *      reference   = persistence if it is used and smaller than spread, else spread
+ * 6b. Scored reference (referenceForLead, what the chain pays on, core4 #174): the window is 48 hourly slots
+ *    (hourlyWindowOver, readings landed below the commit and observed in [commit − 48 h, commit)). Rule 6 runs
+ *    on the newest 24 slots with lag = lead. Then the same-hour-yesterday term: diurnal = isqrt( Σ(x[i+24] −
+ *    x[i])² / pairs ) over the slot pairs 24 hours apart in all 48 slots, used only with at least 6 pairs. The
+ *    reference is diurnal when it is used and strictly smaller than rule 6's reference (kind
+ *    'diurnal_persistence', pairs/persistence then describe it), else rule 6's result unchanged. Samples,
+ *    mean24, spread, `last` and the 12-sample minimum stay those of the newest 24 h. Without it, "same hour
+ *    yesterday" beats the reference on any station with a daily cycle (synthetic backtest 2026-11-13).
  * 7. Score (skillScore):
  *      err   = |forecast − truth|
  *      copy  = |forecast − mean24| ≤ tol  or  |forecast − last| ≤ tol            (tol default 5)
@@ -61,6 +69,10 @@ export const SCORE_PRECISION = 1_000_000n;
 export const DEFAULT_COPY_TOLERANCE = 5n;
 /** Hourly samples in the reference window: the 24 hours before the forecast was committed. */
 export const WINDOW_HOURS = 24;
+/** Hours in the scored window (rule 6b): the day before the 24 h window gives the same-hour-yesterday term. */
+export const SCORED_WINDOW_HOURS = 48;
+/** Lag of the same-hour-yesterday term (rule 6b). */
+export const DIURNAL_LAG_HOURS = 24;
 /** Fewer hourly samples than this: no baseline. */
 export const MIN_WINDOW_SAMPLES = 12;
 /** Fewer persistence pairs than this: the reference is the spread. */
@@ -190,7 +202,7 @@ export function skillScore(input: SkillInput): SkillResult {
   return { err, copy, skill, beatBaseline: skill > 0n };
 }
 
-export type ReferenceKind = 'climatology_spread' | 'persistence_spread';
+export type ReferenceKind = 'climatology_spread' | 'persistence_spread' | 'diurnal_persistence';
 
 export interface WindowReference {
   /** Hours of the window that had a reading. */
@@ -242,6 +254,34 @@ export function referenceFromWindow(window: ReadonlyArray<bigint | null>, lag: n
   };
 }
 
+/** Slot pairs `lag` apart where both have a sample, and their floored RMSE when there are at least 6. */
+function laggedPersistence(window: ReadonlyArray<bigint | null>, lag: number): { pairs: number; persistence: bigint | null } {
+  let pairs = 0n;
+  let sq = 0n;
+  for (let i = 0; i + lag < window.length; i += 1) {
+    const a = window[i];
+    const b = window[i + lag];
+    if (a === null || b === null) continue;
+    pairs += 1n; sq += (b - a) * (b - a);
+  }
+  return { pairs: Number(pairs), persistence: pairs < BigInt(MIN_PERSISTENCE_PAIRS) ? null : isqrt(sq / pairs) };
+}
+
+/**
+ * Rule 6b: the reference the chain scores a forecast with lead `lead` against, from the 48 hourly slots before
+ * the commit (oldest first). Mirrors core4 `late_score::reference_for_lead` (which takes leads 1..=24; a longer
+ * practice lead gets the spread or the diurnal term, as rule 6 gives it). Null when the newest 24 slots have
+ * fewer than MIN_WINDOW_SAMPLES samples.
+ */
+export function referenceForLead(window: ReadonlyArray<bigint | null>, lead: number): WindowReference | null {
+  if (window.length !== SCORED_WINDOW_HOURS) throw new RangeError(`the scored window has ${SCORED_WINDOW_HOURS} hourly slots`);
+  const day = referenceFromWindow(window.slice(WINDOW_HOURS), lead);
+  if (!day) return null;
+  const { pairs, persistence } = laggedPersistence(window, DIURNAL_LAG_HOURS);
+  if (persistence === null || persistence >= day.reference) return day;
+  return { ...day, pairs, persistence, reference: persistence, kind: 'diurnal_persistence' };
+}
+
 export interface Reading {
   /** Unix seconds. */
   observedAt: number;
@@ -259,6 +299,20 @@ const usable = (r: Reading) => Number.isSafeInteger(r.observedAt);
 export function hourlyWindow(readings: ReadonlyArray<Reading>, anchor: number): Array<bigint | null> {
   const sums: Array<{ sum: bigint; n: bigint } | null> = Array.from({ length: WINDOW_HOURS }, () => null);
   const start = anchor - WINDOW_HOURS * 3600;
+  for (const r of readings) {
+    if (!usable(r) || r.observedAt < start || r.observedAt >= anchor) continue;
+    const slot = Math.floor((r.observedAt - start) / 3600);
+    const s = (sums[slot] ||= { sum: 0n, n: 0n });
+    s.sum += r.value; s.n += 1n;
+  }
+  return sums.map((s) => (s ? s.sum / s.n : null));
+}
+
+/** Rule 6b: hourlyWindow over the last `hours` hours (24 or 48); the newest 24 slots are hourlyWindow. */
+export function hourlyWindowOver(readings: ReadonlyArray<Reading>, anchor: number, hours: number): Array<bigint | null> {
+  if (hours !== WINDOW_HOURS && hours !== SCORED_WINDOW_HOURS) throw new RangeError('a window has 24 or 48 hourly slots');
+  const sums: Array<{ sum: bigint; n: bigint } | null> = Array.from({ length: hours }, () => null);
+  const start = anchor - hours * 3600;
   for (const r of readings) {
     if (!usable(r) || r.observedAt < start || r.observedAt >= anchor) continue;
     const slot = Math.floor((r.observedAt - start) / 3600);
