@@ -84,6 +84,7 @@
     "/api/operators/:walletAddress/profile",
     "/api/proofs/:commitId",
     "/api/public/balance/:address",
+    "/api/public/station-history/:alias",
     "/api/pythia/bounties",
     "/api/pythia/events",
     "/api/pythia/health",
