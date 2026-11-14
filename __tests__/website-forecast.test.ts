@@ -345,4 +345,89 @@ const PG_URL = process.env.BACKFILL_TEST_PG_URL;
     const row = (await query('SELECT status, failure FROM website_forecasts WHERE commit_id = $1', [d2.commitId])).rows[0];
     expect(row).toEqual({ status: 'failed', failure: 'reveal_window_missed' });
   });
+
+  const rowOf = async (id: string) => (await query('SELECT status, failure FROM website_forecasts WHERE commit_id = $1', [id])).rows[0];
+  const records = async (id: string) => (await query('SELECT count(*)::int AS n FROM forecast_verification_records WHERE commit_id = $1', [id])).rows[0].n;
+  async function committedForecast(leadHours: 1 | 24, height: number) {
+    node.commitReply = { kind: 'accepted', txHash: null };
+    node.revealReply = { kind: 'accepted', txHash: 'bb'.repeat(32) };
+    const d = await signedDraft(leadHours);
+    expect((await request(app()).post('/api/forecasts/submit').send(submitBody(d, w.pubkey))).status).toBe(202);
+    node.status = { commit_id: d.commitId, contribution_type: 'forecast', station_id: STATION, status: 'committed_pending_reveal', committed_at: height };
+    clock += 80_000;
+    return d;
+  }
+  const landed = (height: number) => ({ ...node.status, contribution_type: null, committed_at: null, status: 'revealed_pending_attestation', revealed_at: height + 1 });
+
+  it('two overlapping workers send one reveal, and a duplicate refusal cannot fail an accepted reveal', async () => {
+    const d = await committedForecast(24, 9200);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const sends: string[] = [];
+    const racing: NodeForecastClient = {
+      ...fakeNode,
+      // Worker A's send is accepted but its reply is held; any second send is refused as a duplicate.
+      submitReveal: async (r) => {
+        sends.push(r.commit_hash);
+        if (sends.length === 1) { await held; return { kind: 'accepted', txHash: 'cc'.repeat(32) }; }
+        return { kind: 'refused', status: 409, code: 'REVEAL_ALREADY_PENDING', message: null };
+      },
+    };
+    const worker = () => runRevealTick({ query, node: racing, now: () => clock, minIntervalS: 15 });
+    const a = worker();
+    for (let i = 0; i < 1000 && sends.length === 0; i += 1) await new Promise((r) => setImmediate(r));
+    expect(sends).toEqual([d.commitId]);
+    const b = await worker(); // B runs to completion while A waits on the node
+    release();
+    const countsA = await a;
+    expect(sends).toHaveLength(1); // the row was claimed by A
+    expect(b).toMatchObject({ revealSent: 0, failed: 0 });
+    expect(countsA).toMatchObject({ revealSent: 1, failed: 0 });
+    expect(await rowOf(d.commitId)).toEqual({ status: 'revealing', failure: null });
+
+    node.status = landed(9200);
+    clock += 80_000;
+    expect(await tick()).toMatchObject({ revealed: 1, filed: 1, failed: 0 });
+    expect(await rowOf(d.commitId)).toEqual({ status: 'revealed', failure: null });
+    expect(await records(d.commitId)).toBe(1);
+  });
+
+  it('a restart after the node took a reveal, before it was stored, still ends revealed and filed', async () => {
+    const d = await committedForecast(1, 9300);
+    const crashing: NodeForecastClient = { ...fakeNode, submitReveal: async (r) => { node.reveals.push(r); throw new Error('process stopped') } };
+    expect(await runRevealTick({ query, node: crashing, now: () => clock, minIntervalS: 0 })).toMatchObject({ errors: 1, revealSent: 0 });
+    expect(await rowOf(d.commitId)).toEqual({ status: 'committed', failure: null });
+
+    // After the restart the node already has the reveal and refuses the resend.
+    node.revealReply = { kind: 'refused', status: 409, code: 'REVEAL_ALREADY_PENDING', message: null };
+    clock += 20_000;
+    expect(await tick()).toMatchObject({ failed: 1 });
+    expect(await rowOf(d.commitId)).toEqual({ status: 'failed', failure: 'reveal_refused:REVEAL_ALREADY_PENDING' });
+
+    // The reveal lands: the chain wins over the refusal.
+    node.status = landed(9300);
+    clock += 80_000;
+    expect(await tick()).toMatchObject({ revealed: 1, filed: 1 });
+    expect(await rowOf(d.commitId)).toEqual({ status: 'revealed', failure: null });
+    expect(await records(d.commitId)).toBe(1);
+    node.revealReply = { kind: 'accepted', txHash: 'bb'.repeat(32) };
+  });
+
+  it('a genuinely refused reveal stays failed, and is no longer re-read once its window has closed', async () => {
+    clock += 24 * 3600_000; // a new day: every lead's slot is free again
+    const d = await committedForecast(24, 9400);
+    node.revealReply = { kind: 'refused', status: 422, code: 'INVALID_REVEAL', message: null };
+    expect(await tick()).toMatchObject({ failed: 1 });
+    let reads = 0;
+    const counting: NodeForecastClient = { ...fakeNode, readStatus: async (id) => { if (id === d.commitId) reads += 1; return node.status; } };
+    const countingTick = () => runRevealTick({ query, node: counting, now: () => clock, minIntervalS: 0 });
+    clock += 20_000;
+    await countingTick();
+    expect(reads).toBe(1);
+    expect(await rowOf(d.commitId)).toEqual({ status: 'failed', failure: 'reveal_refused:INVALID_REVEAL' });
+    clock += 17 * 60_000;
+    await countingTick();
+    expect(reads).toBe(1);
+    node.revealReply = { kind: 'accepted', txHash: 'bb'.repeat(32) };
+  });
 });
