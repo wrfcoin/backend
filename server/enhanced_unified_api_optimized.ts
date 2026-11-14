@@ -1638,6 +1638,9 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   safeMount('/api/bond-admission',          './routes/bond-admission-routes');
   // Owner ruling 2026-10-28 (b): passkey wallets have no JWT; default-OFF public balance read (3 fields).
   safeMount('/api/public/balance',          './routes/public-balance-routes');
+  // Skill-pay backtest (DECISIONS 2026-11-12 item 3): default-OFF public station history read, alias only,
+  // a bounded height window (~30 days), 0.1-degree coordinates, rate-limited like the balance read.
+  safeMount('/api/public/station-history',  './routes/public-station-history-routes');
   // backend#229 (owner demo queue 2026-11-01): default-OFF public proof card for one station reading,
   // read from the node (reward evidence + reveal scan + block), never from a backend table.
   safeMount('/api/proofs',                  './routes/proof-card-routes');
