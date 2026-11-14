@@ -123,7 +123,7 @@ async function call(
   method: string,
   urlPath: string,
   body?: unknown
-): Promise<{ status: number; body: any; text: string }> {
+): Promise<{ status: number; body: any; text: string; headers: Headers }> {
   const response = await fetch(`http://127.0.0.1:${runtime.port}${urlPath}`, {
     method,
     headers: body === undefined ? {} : { 'content-type': 'application/json' },
@@ -136,7 +136,7 @@ async function call(
   } catch {
     parsed = null;
   }
-  return { status: response.status, body: parsed, text };
+  return { status: response.status, body: parsed, text, headers: response.headers };
 }
 
 /** The exact 401 envelope emitted by authenticateToken (auth-middleware.ts). */
@@ -250,6 +250,44 @@ describe('public login handshake is reachable through the real middleware stack'
 
     const replay = await call('POST', '/api/auth/wallet-login', body);
     expect(replay.status).toBe(401);
+  });
+
+  describe('public nonce branch: parsed query and the real response envelope on the wire', () => {
+    it('passes scheme=session_key and session_public_key through the dispatcher', async () => {
+      const vector = JSON.parse(
+        fs.readFileSync(path.join(repoRoot, 'contract-fixtures/wallet-key-scheme-vector.json'), 'utf8'),
+      );
+      const sessionKey = Buffer.from(vector.public_key_bytes).toString('hex');
+      const res = await call('GET', `/api/auth/nonce/${TEST_ADDRESS}?scheme=session_key&session_public_key=${sessionKey}`);
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({ success: true, message: 'Wallet login challenge generated' });
+      expect(res.body.data).toMatchObject({ scheme: 'session_key', sessionPublicKey: sessionKey });
+      expect(res.body.data.message.split('\n')[0]).toBe('wrfcoin_wallet_login_session_key_v1');
+      expect(res.body.data.message).toContain(`\nSession Key: ${sessionKey}\n`);
+    });
+
+    it('a bad address is the real 400 error envelope', async () => {
+      const res = await call('GET', '/api/auth/nonce/not-an-address');
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ success: false, error: { code: 'REQUEST_ERROR', message: 'invalid address format' } });
+      expect(res.body.data).toBeUndefined();
+      expect(res.headers.get('retry-after')).toBeNull();
+    });
+
+    it('the per-address issuance limit is a 429 RATE_LIMIT_EXCEEDED envelope with Retry-After', async () => {
+      const address = '0x2222222222222222222222222222222222222222';
+      for (let i = 0; i < 8; i += 1) {
+        expect((await call('GET', `/api/auth/nonce/${address}?scheme=ed25519`)).status).toBe(200);
+      }
+      const res = await call('GET', `/api/auth/nonce/${address}?scheme=ed25519`);
+      expect(res.status).toBe(429);
+      expect(res.body).toMatchObject({ success: false, error: { code: 'RATE_LIMIT_EXCEEDED' } });
+      expect(res.body.data).toBeUndefined();
+      expect(Number(res.headers.get('retry-after'))).toBeGreaterThanOrEqual(1);
+      expect(res.headers.get('retry-after')).toMatch(/^[0-9]+$/);
+      // Another address (and another scheme) is unaffected.
+      expect((await call('GET', `/api/auth/nonce/${address}`)).status).toBe(200);
+    });
   });
 
   describe('auth is NOT weakened elsewhere', () => {
