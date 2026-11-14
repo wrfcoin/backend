@@ -10,7 +10,8 @@ import { readFileSync } from 'node:fs';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from '@jest/globals';
 import {
   LANDING_MARGIN_S, MIN_PERSISTENCE_PAIRS, MIN_WINDOW_SAMPLES, TRUTH_MAX_DISTANCE_S, countsAsReading, hourlyWindow, inRange, isqrt, lastReadingBefore,
-  nearestReading, numberToFixedPoint, parseFixedPoint, ratioSkill, referenceFromWindow, skillScore, truthCandidates, windowCandidates,
+  nearestReading, numberToFixedPoint, parseFixedPoint, ratioSkill, referenceFromWindow, referenceForLead, hourlyWindowOver, SCORED_WINDOW_HOURS,
+  skillScore, truthCandidates, windowCandidates,
   type ChainSample, type Reading, type ScoredVariable,
 } from '../server/services/forecast-score/practice-score';
 import {
@@ -235,6 +236,51 @@ const forecastRow = (over: Record<string, unknown> = {}) => ({
   issued: String(COMMITTED_AT - 120), valid: String(COMMITTED_AT - 120 + LEAD * 3600), ...over,
 });
 const pick = (row: Saved, keys: string[]) => keys.map((k) => row[k]);
+
+describe('scored reference with the same-hour-yesterday term (rule 6b, core4 #174)', () => {
+  /** A clean daily cycle with a small wobble; the same window core4's late_score tests use. */
+  const daily = (slot: number) => {
+    const hour = slot % 24;
+    return BigInt(2000 + 80 * (hour < 12 ? hour : 24 - hour) + ((slot * 7) % 5) - 2);
+  };
+  const twoDays = () => Array.from({ length: SCORED_WINDOW_HOURS }, (_, i) => daily(i) as bigint | null);
+
+  it('gives every lead the lag-24 term; the numbers equal core4 reference_for_lead', () => {
+    const window = twoDays();
+    for (const lead of [6, 12, 24]) {
+      const day = referenceFromWindow(window.slice(24), lead)!;
+      const got = referenceForLead(window, lead)!;
+      expect([got.reference, got.spread, got.mean24, got.samples, got.pairs, got.kind]).toEqual([2n, 278n, 2480n, 24, 24, 'diurnal_persistence']);
+      expect([day.reference, day.spread, day.mean24]).toEqual([278n, 278n, 2480n]);
+    }
+  });
+
+  it('keeps rule 6 when the lag-24 term is not strictly smaller or has fewer than 6 pairs', () => {
+    const far = twoDays().map((x, i) => (i < 24 && x !== null ? x - 3000n : x));
+    for (const lead of [1, 6, 12, 24]) expect(referenceForLead(far, lead)).toEqual(referenceFromWindow(far.slice(24), lead));
+    const sparse = twoDays().map((x, i) => (i < 24 && i >= 5 ? null : x));
+    expect(referenceForLead(sparse, 24)).toEqual(referenceFromWindow(sparse.slice(24), 24));
+    sparse[5] = daily(5);
+    expect(referenceForLead(sparse, 24)).toMatchObject({ pairs: 6, kind: 'diurnal_persistence' });
+  });
+
+  it('needs 12 samples in the newest day; no older day means exactly rule 6; only a 48-slot window', () => {
+    const thin = twoDays().map((x, i) => (i >= 24 + 11 ? null : x));
+    expect(referenceForLead(thin, 6)).toBeNull();
+    const today = [...Array.from({ length: 24 }, () => null), ...twoDays().slice(24)];
+    for (const lead of [1, 6, 12, 24, 48]) expect(referenceForLead(today, lead)).toEqual(referenceFromWindow(today.slice(24), lead));
+    expect(() => referenceForLead(twoDays().slice(24), 6)).toThrow(RangeError);
+  });
+
+  it('the 48-slot window ends in the 24-slot window', () => {
+    const anchor = 1_800_000_000;
+    const readings: Reading[] = Array.from({ length: 200 }, (_, k) => ({ observedAt: anchor - 50 * 3600 + k * 900, value: BigInt(1000 + ((k * 37) % 400)), id: `r${k}` }));
+    const long = hourlyWindowOver(readings, anchor, 48);
+    expect(long.length).toBe(48);
+    expect(long.slice(24)).toEqual(hourlyWindow(readings, anchor));
+    expect(() => hourlyWindowOver(readings, anchor, 36)).toThrow(RangeError);
+  });
+});
 
 describe('scoring pass', () => {
   const NOW = VALID_AT + SCORE_DELAY_S + 600;

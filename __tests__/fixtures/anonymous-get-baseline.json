@@ -15,6 +15,7 @@
     "/api/capabilities",
     "/api/challenges/",
     "/api/challenges/code/:code",
+    "/api/claim-mailbox/claims/:deploymentId/:epoch",
     "/api/competitions/",
     "/api/competitions/:week",
     "/api/competitions/current",

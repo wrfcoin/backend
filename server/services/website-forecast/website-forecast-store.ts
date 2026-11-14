@@ -78,14 +78,36 @@ export interface OpenRow {
   reveal_sent_at: Date | string | null; issued_at: Date | string; valid_at: Date | string;
 }
 
-/** Rows the worker still has to move, oldest first, each at most once per `minIntervalS`. */
+/**
+ * Failures that may be wrong about the chain: the node refused a reveal it already had (a second worker, or
+ * a restart after the node accepted but before we stored it), or every send looked unavailable. The worker
+ * keeps reading their chain status for this long after the failure was stored (re-reads do not move
+ * updated_at) and marks them revealed if the reveal did land. A reveal sent before the failure cannot land
+ * later than that: the window is 3 blocks (~4 min).
+ */
+export const RECONCILE_FAILURES = ['reveal_not_accepted'];
+export const RECONCILE_FAILURE_PREFIX = 'reveal_refused';
+export const RECONCILE_FOR_S = 16 * 60;
+
+/**
+ * Claim the rows the worker still has to move, oldest first, each at most once per `minIntervalS`. Claiming
+ * stamps last_checked_at in the same statement (rows another worker holds are skipped), so two workers that
+ * overlap never both take the same row within that interval.
+ */
 export async function listOpen(query: Query, nowSec: number, minIntervalS: number, limit: number): Promise<OpenRow[]> {
-  return (await query(`SELECT commit_id, forecaster, station_id, station_alias, variable, value, horizon_hours, data, nonce,
-      commit_timestamp, manifest, auth_pubkey, auth_signature, status, record_filed, reveal_attempts, created_at, commit_seen_at, reveal_sent_at, issued_at, valid_at
-    FROM website_forecasts
-    WHERE (status IN ('committing', 'committed', 'revealing') OR (status = 'revealed' AND NOT record_filed))
-      AND (last_checked_at IS NULL OR last_checked_at <= to_timestamp($1) - make_interval(secs => $2))
-    ORDER BY created_at ASC LIMIT $3`, [nowSec, minIntervalS, limit])).rows as OpenRow[];
+  const rows = (await query(`WITH due AS (
+      SELECT commit_id FROM website_forecasts
+      WHERE (status IN ('committing', 'committed', 'revealing') OR (status = 'revealed' AND NOT record_filed)
+          OR (status = 'failed' AND (failure = ANY($4::text[]) OR failure LIKE $5 || '%')
+            AND updated_at > to_timestamp($1) - make_interval(secs => $6)))
+        AND (last_checked_at IS NULL OR last_checked_at <= to_timestamp($1) - make_interval(secs => $2))
+      ORDER BY created_at ASC LIMIT $3 FOR UPDATE SKIP LOCKED)
+    UPDATE website_forecasts w SET last_checked_at = to_timestamp($1) FROM due WHERE w.commit_id = due.commit_id
+    RETURNING w.commit_id, w.forecaster, w.station_id, w.station_alias, w.variable, w.value, w.horizon_hours, w.data, w.nonce,
+      w.commit_timestamp, w.manifest, w.auth_pubkey, w.auth_signature, w.status, w.record_filed, w.reveal_attempts, w.created_at,
+      w.commit_seen_at, w.reveal_sent_at, w.issued_at, w.valid_at`,
+  [nowSec, minIntervalS, limit, RECONCILE_FAILURES, RECONCILE_FAILURE_PREFIX, RECONCILE_FOR_S])).rows as OpenRow[];
+  return rows.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
 }
 
 const iso = (v: unknown) => (v instanceof Date ? v.toISOString() : typeof v === 'string' ? new Date(v).toISOString() : null);

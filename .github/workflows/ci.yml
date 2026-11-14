@@ -260,7 +260,7 @@ jobs:
             for (const c of cases) console.log(`${c.status.padEnd(8)} ${c.title}`);
             const passed = cases.filter(c => c.status === "passed").length;
             console.log(`Payout notification real-PostgreSQL cases passed: ${passed}/${cases.length}`);
-            if (cases.length !== 5 || passed !== 5) process.exit(1);
+            if (cases.length !== 6 || passed !== 6) process.exit(1);
           ' "$RUNNER_TEMP/payout-notifications-pg.json"
           exit "$status"
       # Named, verbose, fail-if-skipped proof that the real-PostgreSQL cases

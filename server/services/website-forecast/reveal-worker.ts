@@ -9,6 +9,12 @@
  *   committed   once the node has the commit in a block, relay the reveal (it lands in the next block)
  *   revealing   once the node shows it revealed, mark it revealed
  *   revealed    file the forecast verification record, so /forecast-check scores it with no hand-in
+ *   failed      a refused or never-accepted reveal is re-read until its window has surely closed, and marked
+ *               revealed if the reveal did land (a second worker or a restart can make the node refuse a
+ *               reveal it already has)
+ *
+ * Rows are claimed when listed, so overlapping workers do not send the same reveal twice. Counts only
+ * include transitions that were actually stored.
  *
  * OFF unless WEBSITE_FORECAST_ENABLED=true. Logs carry counts only, never addresses, stations or values.
  */
@@ -48,12 +54,29 @@ async function fileRecord(deps: RevealWorkerDeps, row: OpenRow, nowSec: number, 
   counts.filed += 1;
 }
 
+async function markRevealed(deps: RevealWorkerDeps, row: OpenRow, nowSec: number, counts: TickCounts,
+  committedAtHeight: number | null, revealedAtHeight: number | null) {
+  if (await setStatus(deps.query, nowSec, row.commit_id, [row.status], 'revealed', {
+    commitSeen: true, committedAtHeight, revealedAtHeight,
+  })) {
+    counts.revealed += 1;
+    try { await fileRecord(deps, { ...row, status: 'revealed' }, nowSec, counts); } catch { counts.errors += 1; }
+  }
+}
+
 async function step(deps: RevealWorkerDeps, row: OpenRow, nowSec: number, counts: TickCounts) {
   if (row.status === 'revealed') return fileRecord(deps, row, nowSec, counts);
 
   const read = await deps.node.readStatus(row.commit_id);
   counts.checked += 1;
   const status = read && read.status === 'not_found' ? null : read;
+  if (row.status === 'failed') {
+    // A reveal failure listed for reconciliation: only the chain can turn it around.
+    if (status !== null && chainStatusFields(status).revealed) {
+      await markRevealed(deps, row, nowSec, counts, height(status.committed_at), chainStatusFields(status).revealedAtHeight);
+    }
+    return;
+  }
   const createdAt = seconds(row.created_at) ?? nowSec;
   if (status === null) {
     // Not in a block yet (or dropped from the mempool).
@@ -67,21 +90,12 @@ async function step(deps: RevealWorkerDeps, row: OpenRow, nowSec: number, counts
   // After the reveal lands the node prunes the commit record and reports contribution_type (and committed_at) as
   // null, so null means "no longer known", not "not a forecast".
   if (status.contribution_type != null && status.contribution_type !== 'forecast') {
-    await setStatus(deps.query, nowSec, row.commit_id, [row.status], 'failed', { failure: 'not_a_forecast' });
-    counts.failed += 1;
+    if (await setStatus(deps.query, nowSec, row.commit_id, [row.status], 'failed', { failure: 'not_a_forecast' })) counts.failed += 1;
     return;
   }
   const chain = chainStatusFields(status);
   const committedAtHeight = height(status.committed_at);
-  if (chain.revealed) {
-    if (await setStatus(deps.query, nowSec, row.commit_id, [row.status], 'revealed', {
-      commitSeen: true, committedAtHeight, revealedAtHeight: chain.revealedAtHeight,
-    })) {
-      counts.revealed += 1;
-      try { await fileRecord(deps, { ...row, status: 'revealed' }, nowSec, counts); } catch { counts.errors += 1; }
-    }
-    return;
-  }
+  if (chain.revealed) return markRevealed(deps, row, nowSec, counts, committedAtHeight, chain.revealedAtHeight);
   const seenAt = seconds(row.commit_seen_at) ?? nowSec;
   if (row.status === 'committing') {
     await setStatus(deps.query, nowSec, row.commit_id, ['committing'], 'committed', { commitSeen: true, committedAtHeight });
@@ -113,13 +127,14 @@ async function step(deps: RevealWorkerDeps, row: OpenRow, nowSec: number, counts
     auth_signature: row.auth_signature,
   });
   if (result.kind === 'accepted') {
-    await setStatus(deps.query, nowSec, row.commit_id, ['committed'], 'revealing', {
+    // If another worker already moved the row (even to failed), the failed row is reconciled from chain status.
+    if (await setStatus(deps.query, nowSec, row.commit_id, ['committed'], 'revealing', {
       revealSent: true, commitSeen: true, committedAtHeight, revealTxHash: result.txHash,
-    });
-    counts.revealSent += 1;
+    })) counts.revealSent += 1;
   } else if (result.kind === 'refused') {
-    await setStatus(deps.query, nowSec, row.commit_id, ['committed'], 'failed', { failure: `reveal_refused${result.code ? `:${result.code}` : ''}` });
-    counts.failed += 1;
+    if (await setStatus(deps.query, nowSec, row.commit_id, ['committed'], 'failed', {
+      failure: `reveal_refused${result.code ? `:${result.code}` : ''}`,
+    })) counts.failed += 1;
   } else {
     await setStatus(deps.query, nowSec, row.commit_id, ['committed'], 'committed', { commitSeen: true, committedAtHeight });
     await touchChecked(deps.query, nowSec, row.commit_id, { revealAttempt: true });
