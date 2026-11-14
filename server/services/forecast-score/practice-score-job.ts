@@ -42,8 +42,8 @@ import {
 import { websiteForecastEnabled } from '../website-forecast/website-forecast.js';
 import { nodeJobReadsPerMinute, processNodeReadClock, reserveNodeReads, type NodeReadClock } from '../node-read-pacer.js';
 import {
-  DEFAULT_COPY_TOLERANCE, FIXED_POINT_UNITS, SCORE_DELAY_S, SCORE_PRECISION, TRUTH_MAX_DISTANCE_S, WINDOW_HOURS, countsAsReading, hourlyWindow, inRange,
-  isScoredVariable, lastReadingBefore, nearestReading, numberToFixedPoint, ratioSkill, referenceFromWindow, skillScore,
+  DEFAULT_COPY_TOLERANCE, FIXED_POINT_UNITS, SCORE_DELAY_S, SCORE_PRECISION, SCORED_WINDOW_HOURS, TRUTH_MAX_DISTANCE_S, countsAsReading, hourlyWindowOver,
+  inRange, isScoredVariable, lastReadingBefore, nearestReading, numberToFixedPoint, ratioSkill, referenceForLead, skillScore,
   type Reading, type ScoredVariable,
 } from './practice-score.js';
 
@@ -262,15 +262,19 @@ async function evaluate(deps: { query: Query; get: Core4Get; chunks: ChunkCache;
 
   // Rule 3: the baseline uses only readings that had landed below the commit's height.
   const commitHeight = fromChain ? known : await firstHeightAtOrAfter(get, committedAt, tip);
-  const windowFrom = await firstHeightAtOrAfter(get, committedAt - WINDOW_HOURS * HOUR_S, tip);
+  // Rule 6b: 48 h of readings, so the reference has the same-hour-yesterday term the chain pays on.
+  const windowFrom = await firstHeightAtOrAfter(get, committedAt - SCORED_WINDOW_HOURS * HOUR_S, tip);
   const before = toReadings(await readingsInHeights(get, chunks, row.station_id, tip.height, windowFrom, commitHeight - 1), variable).readings;
-  const reference = referenceFromWindow(hourlyWindow(before, committedAt), lead);
+  const reference = referenceForLead(hourlyWindowOver(before, committedAt, SCORED_WINDOW_HOURS), lead);
   const last = lastReadingBefore(before, committedAt);
   if (!reference || !last) return { validAt, source, result: { status: 'unscored', reason: 'no_baseline', forecast, ...found } };
 
   const score = skillScore({ forecast, truth: truth.value, reference: reference.reference, mean24: reference.mean24, last: last.value });
   const result: ScoreRow = {
-    status: 'scored', forecast, ...found, err: score.err, ref: reference.reference, refKind: reference.kind,
+    // ref_kind's CHECK (migration 0044) predates 'diurnal_persistence'; migrations are applied by hand, so store
+    // it as the persistence reference it is rather than fail the insert. ref_fp is the exact number.
+    status: 'scored', forecast, ...found, err: score.err, ref: reference.reference,
+    refKind: reference.kind === 'diurnal_persistence' ? 'persistence_spread' : reference.kind,
     mean24: reference.mean24, last: last.value, samples: reference.samples, copied: score.copy, skill: score.skill, beat: score.beatBaseline,
   };
   if (variable === 'temperature_c') {

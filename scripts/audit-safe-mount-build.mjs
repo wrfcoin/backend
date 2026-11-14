@@ -68,7 +68,8 @@ const reachedHeader = 'x-safe-mount-build-reached';
 // 71: operator-only usage counts /api/admin/usage-counts (./routes/usage-counts-routes).
 // 72: default-OFF bond admission proxy /api/bond-admission (./routes/bond-admission-routes).
 // 73: skill-pay backtest mounts the default-OFF /api/public/station-history read (./routes/public-station-history-routes).
-const expectedMountCount = 73;
+// 74: default-OFF claim mailbox read proxy /api/claim-mailbox (./routes/claim-mailbox-routes).
+const expectedMountCount = 74;
 
 // Removed by #935/#937 — each of these now PASSES this gate, and the gate
 // itself instructed the removal ("known failures now pass; remove their
