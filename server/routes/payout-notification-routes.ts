@@ -39,6 +39,8 @@ import {
 
 export const MAX_PER_ADDRESS = 10;
 export const DEFAULT_MAX_SUBSCRIPTIONS = 5000;
+/** One advisory lock serialises every subscribe; volume is low enough for a single global lock. */
+const SUBSCRIBE_LOCK = 'payout_notify_subs';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const TEST_COOLDOWN_MS = 60_000;
 
@@ -146,18 +148,36 @@ export function createPayoutNotificationRouter(deps: NotificationDeps = {}): exp
     const target = parsed.channel === 'webpush' ? parsed.target.endpoint : parsed.topic;
     const hash = targetHash(target);
     if (expectHash && !(await expectHash(parsed.channel, hash))) return undefined;
-    const counts = (await query(`SELECT count(*) FILTER (WHERE address=$1)::int AS mine, count(*)::int AS total,
-        count(*) FILTER (WHERE address=$1 AND channel=$2 AND target_hash=$3)::int AS existing FROM payout_notification_subscriptions`,
-    [address, parsed.channel, hash]))[0];
-    if (!counts.existing && counts.mine >= MAX_PER_ADDRESS) return fail(res, 409, 'TOO_MANY_SUBSCRIPTIONS', `At most ${MAX_PER_ADDRESS} devices or topics per address.`);
-    if (!counts.existing && counts.total >= maxSubscriptions()) return fail(res, 503, 'SUBSCRIPTIONS_FULL', 'This server is not taking new subscriptions right now.');
     const p256dh = parsed.channel === 'webpush' ? parsed.target.p256dh : null;
     const auth = parsed.channel === 'webpush' ? parsed.target.auth : null;
-    const row = (await query(`INSERT INTO payout_notification_subscriptions (address, channel, target, target_hash, p256dh, auth)
-      VALUES ($1,$2,$3,$4,$5,$6)
-      ON CONFLICT (address, channel, target_hash) DO UPDATE SET p256dh=EXCLUDED.p256dh, auth=EXCLUDED.auth, consecutive_failures=0
-      RETURNING id::text AS id, address, channel, target, target_hash, created_at, last_delivered_at`,
-    [address, parsed.channel, target, hash, p256dh, auth]))[0];
+    // Count and insert in one transaction under one advisory lock, so
+    // concurrent registrations cannot pass the caps together.
+    const client = await (await getPool()).connect();
+    let counts: { mine: number; total: number; existing: number };
+    let row: any;
+    try {
+      await client.query('BEGIN', []);
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [SUBSCRIBE_LOCK]);
+      counts = (await client.query(`SELECT count(*) FILTER (WHERE address=$1)::int AS mine, count(*)::int AS total,
+          count(*) FILTER (WHERE address=$1 AND channel=$2 AND target_hash=$3)::int AS existing FROM payout_notification_subscriptions`,
+      [address, parsed.channel, hash])).rows[0];
+      const full = !counts.existing && (counts.mine >= MAX_PER_ADDRESS || counts.total >= maxSubscriptions());
+      if (!full) {
+        row = (await client.query(`INSERT INTO payout_notification_subscriptions (address, channel, target, target_hash, p256dh, auth)
+          VALUES ($1,$2,$3,$4,$5,$6)
+          ON CONFLICT (address, channel, target_hash) DO UPDATE SET p256dh=EXCLUDED.p256dh, auth=EXCLUDED.auth, consecutive_failures=0
+          RETURNING id::text AS id, address, channel, target, target_hash, created_at, last_delivered_at`,
+        [address, parsed.channel, target, hash, p256dh, auth])).rows[0];
+      }
+      await client.query('COMMIT', []);
+    } catch (err) {
+      await client.query('ROLLBACK', []).catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+    if (!row && counts.mine >= MAX_PER_ADDRESS) return fail(res, 409, 'TOO_MANY_SUBSCRIPTIONS', `At most ${MAX_PER_ADDRESS} devices or topics per address.`);
+    if (!row) return fail(res, 503, 'SUBSCRIPTIONS_FULL', 'This server is not taking new subscriptions right now.');
     return res.status(counts.existing ? 200 : 201).json({ success: true, subscription: view(row) });
   }
 
