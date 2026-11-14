@@ -1644,6 +1644,9 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // Skill-pay backtest (DECISIONS 2026-11-12 item 3): default-OFF public station history read, alias only,
   // a bounded height window (~30 days), 0.1-degree coordinates, rate-limited like the balance read.
   safeMount('/api/public/station-history',  './routes/public-station-history-routes');
+  // Owner decision 2026-11-01 (public status page): default-OFF public network status read, aggregate
+  // numbers only (block pace, producers online by label, peers, node-pay epoch, scheduled upgrades).
+  safeMount('/api/public/network-status',   './routes/public-network-status-routes');
   // backend#229 (owner demo queue 2026-11-01): default-OFF public proof card for one station reading,
   // read from the node (reward evidence + reveal scan + block), never from a backend table.
   safeMount('/api/proofs',                  './routes/proof-card-routes');
