@@ -46,7 +46,8 @@ function fixture(scheme: 'evm' | 'ed25519', ttl = 300) {
   const login = async (challenge: any) => service.walletLogin({ address, scheme, nonce: challenge.nonce,
     pubkey, signature: scheme === 'evm' ? await evm.signMessage(challenge.message)
       : crypto.sign(null, Buffer.from(challenge.message), privateKey).toString('hex') });
-  return { service, address, login };
+  const refresh = (refreshToken: string) => service.refresh({ refreshToken });
+  return { service, address, login, refresh };
 }
 
 describe.each(['evm', 'ed25519'] as const)('%s pending wallet challenges', scheme => {
@@ -73,14 +74,14 @@ describe.each(['evm', 'ed25519'] as const)('%s pending wallet challenges', schem
     for (const result of results) if (result.status === 'rejected') expect(result.reason.code).toBe('WALLET_NONCE_RATE_LIMIT');
     await expect(login(a)).resolves.toHaveProperty('jwt');
     const keys = await redis.keys(`wallet:nonce:*${address.toLowerCase()}*`);
-    expect(keys.length).toBeLessThanOrEqual(17); // at most two 8-issuance windows plus their one counter
+    expect(keys.length).toBeLessThanOrEqual(18); // two 8-issuance windows plus this client's counter and the address backstop
   });
   it('clamps a zero-second quota TTL to one second instead of a full nonce lifetime', async () => {
     const { service, address } = fixture(scheme);
     const realRedis = typeof redis.pexpire === 'function';
     if (realRedis) {
       for (let i = 0; i < 8; i++) await service.generateNonce(address, scheme);
-      const quota = `wallet:nonce:v2:{${scheme}:${address.toLowerCase()}}:issuance`;
+      const quota = `wallet:nonce:v2:{${scheme}:${address.toLowerCase()}}:issuance:client:unknown`;
       // Redis TTL rounds down: this is the last fractional second of a window.
       await redis.pexpire(quota, 400);
       expect(await redis.ttl(quota)).toBe(0);
@@ -141,4 +142,48 @@ it('scheme namespaces have independent target budgets', async () => {
   for (let i = 0; i < 8; i++) await service.generateNonce(address, 'evm');
   await expect(service.generateNonce(address, 'evm')).rejects.toMatchObject({ code: 'WALLET_NONCE_RATE_LIMIT' });
   await expect(service.generateNonce(address, 'ed25519')).resolves.toHaveProperty('nonce');
+});
+
+describe.each(['evm', 'ed25519'] as const)('%s per-client issuance budget', scheme => {
+  it('other clients cannot use up an address allowance', async () => {
+    const { service, address, login } = fixture(scheme);
+    for (let i = 0; i < 8; i++) await service.generateNonce(address, scheme, undefined, '198.51.100.7');
+    await expect(service.generateNonce(address, scheme, undefined, '198.51.100.7'))
+      .rejects.toMatchObject({ code: 'WALLET_NONCE_RATE_LIMIT' });
+    const owner = await service.generateNonce(address, scheme, undefined, '203.0.113.9');
+    await expect(login(owner)).resolves.toHaveProperty('jwt');
+  });
+  it('a per-address backstop bounds issuance across clients and never evicts outstanding challenges', async () => {
+    const { service, address, login } = fixture(scheme);
+    const first = await service.generateNonce(address, scheme, undefined, '203.0.113.1');
+    for (let i = 1; i < 64; i++) await service.generateNonce(address, scheme, undefined, `198.51.100.${i % 16}:${i}`);
+    await expect(service.generateNonce(address, scheme, undefined, '203.0.113.200'))
+      .rejects.toMatchObject({ code: 'WALLET_NONCE_RATE_LIMIT' });
+    await expect(login(first)).resolves.toHaveProperty('jwt');
+    const prefix = `wallet:nonce:v2:{${scheme}:${address.toLowerCase()}}:challenge:`;
+    const keys = (await redis.keys(`${prefix}*`)).filter((k: string) => k.startsWith(prefix));
+    expect(keys.length).toBe(63); // 64 issued, the redeemed one is gone, none evicted
+  });
+  it('a request with no client key uses its own shared bucket', async () => {
+    const { service, address } = fixture(scheme);
+    for (let i = 0; i < 8; i++) await service.generateNonce(address, scheme);
+    await expect(service.generateNonce(address, scheme)).rejects.toMatchObject({ code: 'WALLET_NONCE_RATE_LIMIT' });
+    await expect(service.generateNonce(address, scheme, undefined, '203.0.113.9')).resolves.toHaveProperty('nonce');
+  });
+});
+
+describe.each(['evm', 'ed25519'] as const)('%s refresh token rotation', scheme => {
+  it('two concurrent refreshes of one token: exactly one succeeds', async () => {
+    const { service, address, login, refresh } = fixture(scheme);
+    const session = await login(await service.generateNonce(address, scheme));
+    const results = await Promise.allSettled([refresh(session.refreshToken), refresh(session.refreshToken)]);
+    const ok = results.filter(r => r.status === 'fulfilled');
+    expect(ok).toHaveLength(1);
+    const failed = results.find(r => r.status === 'rejected') as PromiseRejectedResult;
+    expect(failed.reason.message).toBe('invalid refresh token');
+    // The token that was used is gone; the new one works once.
+    await expect(refresh(session.refreshToken)).rejects.toThrow('invalid refresh token');
+    const next = (ok[0] as PromiseFulfilledResult<any>).value.refreshToken;
+    await expect(refresh(next)).resolves.toHaveProperty('refreshToken');
+  });
 });

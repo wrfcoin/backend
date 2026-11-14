@@ -12,6 +12,8 @@ import {
   createRateLimitMiddleware,
   RATE_LIMIT_PRESETS,
   apiIpBudgetKey,
+  getClientIp,
+  rateLimitBucketIp,
 } from '../shared/middleware/rate-limit-redis.js';
 import { applyApiSecurityHeaders } from '../shared/middleware/security-headers.js';
 import { appLogger } from './utils/logger.js';
@@ -929,7 +931,10 @@ async function handleRequest(
         // scheme (or evm/secp256k1) keeps the original EVM challenge.
         // ?scheme=session_key&session_public_key=<hex> issues the device
         // session-key challenge for the owner address in the path.
-        const challenge = await walletAuthService.generateNonce(address, query?.scheme, query?.session_public_key);
+        // Issuance is budgeted per client address (same resolution as the
+        // login rate limiter), so one client cannot spend another's allowance.
+        const challenge = await walletAuthService.generateNonce(
+          address, query?.scheme, query?.session_public_key, rateLimitBucketIp(getClientIp(req)));
         success(challenge, 'Wallet login challenge generated');
       } catch (e) {
         if (e instanceof WalletNonceRateLimitError) {

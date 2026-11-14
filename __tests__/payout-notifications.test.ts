@@ -212,6 +212,31 @@ const port = process.env.CHAIN_REWARD_TEST_PORT;
     expect((await request(app()).delete(`/api/notifications/subscriptions/${id}`).set('Authorization', bearer(a)))).toMatchObject({ status: 200 });
   });
 
+  test('concurrent subscribes cannot pass the per-address or the server cap', async () => {
+    const a = addr(0xc3);
+    const many = await Promise.all(Array.from({ length: 14 }, (_, i) => request(app()).post('/api/notifications/subscriptions')
+      .set('Authorization', bearer(a)).send({ address: a, channel: 'ntfy', topic: `wrf-payouts-race-${i}` })));
+    expect(many.filter(r => r.status === 201)).toHaveLength(10);
+    expect(many.filter(r => r.status === 409)).toHaveLength(4);
+    expect((await pool.query('SELECT count(*)::int AS n FROM payout_notification_subscriptions WHERE address=$1', [a])).rows[0].n).toBe(10);
+    await pool.query('DELETE FROM payout_notification_subscriptions WHERE address=$1', [a]);
+
+    const before = (await pool.query('SELECT count(*)::int AS n FROM payout_notification_subscriptions')).rows[0].n;
+    const prev = process.env.PAYOUT_NOTIFY_MAX_SUBSCRIPTIONS;
+    process.env.PAYOUT_NOTIFY_MAX_SUBSCRIPTIONS = String(before + 3);
+    try {
+      const wallets = Array.from({ length: 8 }, (_, i) => addr(0xd0 + i));
+      const results = await Promise.all(wallets.map(w => request(app()).post('/api/notifications/subscriptions')
+        .set('Authorization', bearer(w)).send({ address: w, channel: 'ntfy', topic: `wrf-payouts-full-${w.slice(-6)}` })));
+      expect(results.filter(r => r.status === 201)).toHaveLength(3);
+      expect(results.filter(r => r.status === 503)).toHaveLength(5);
+      expect((await pool.query('SELECT count(*)::int AS n FROM payout_notification_subscriptions')).rows[0].n).toBe(before + 3);
+      await pool.query('DELETE FROM payout_notification_subscriptions WHERE address = ANY($1)', [wallets]);
+    } finally {
+      if (prev === undefined) delete process.env.PAYOUT_NOTIFY_MAX_SUBSCRIPTIONS; else process.env.PAYOUT_NOTIFY_MAX_SUBSCRIPTIONS = prev;
+    }
+  });
+
   test('test notification goes to that subscription only, once a minute', async () => {
     const a = addr(0xa1);
     const id = (await pool.query("SELECT id::text AS id FROM payout_notification_subscriptions WHERE channel='webpush'")).rows[0].id;

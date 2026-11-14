@@ -135,23 +135,38 @@ export class WalletNonceRateLimitError extends Error {
   }
 }
 
-// Eight issuances per scheme/address per nonce-TTL window, across all clients.
-// Refuse new requests rather than evict an unexpired challenge. Because each
-// challenge also expires after one window, at most two windows (16 challenges)
-// can overlap, plus one expiring counter. Both keys share a Redis hash tag.
+// Each client gets eight issuances per scheme/address per nonce-TTL window, so
+// requests from other clients cannot use up an address's allowance. A larger
+// per-address backstop (across all clients) only bounds Redis memory. Refuse
+// new requests rather than evict an unexpired challenge: outstanding
+// challenges stay redeemable. Because each challenge also expires after one
+// window, at most two backstop windows of challenges can overlap. All keys
+// share a Redis hash tag.
 const NONCE_ISSUANCE_LIMIT = 8;
-const ISSUE_NONCE = `-- wallet_nonce_issuance_v2
+const NONCE_ISSUANCE_ADDRESS_BACKSTOP = 64;
+// KEYS: per-client counter, per-address backstop counter, challenge.
+// ARGV: client limit, ttl, challenge value, backstop limit.
+const ISSUE_NONCE = `-- wallet_nonce_issuance_v3
 local used = tonumber(redis.call('GET', KEYS[1]) or '0')
 if used >= tonumber(ARGV[1]) then
   return {0, redis.call('TTL', KEYS[1])}
 end
-if redis.call('EXISTS', KEYS[2]) == 1 then return {-1, 0} end
+local total = tonumber(redis.call('GET', KEYS[2]) or '0')
+if total >= tonumber(ARGV[4]) then
+  return {0, redis.call('TTL', KEYS[2])}
+end
+if redis.call('EXISTS', KEYS[3]) == 1 then return {-1, 0} end
 if used == 0 then
   redis.call('SET', KEYS[1], 1, 'EX', ARGV[2])
 else
   redis.call('INCR', KEYS[1])
 end
-redis.call('SET', KEYS[2], ARGV[3], 'EX', ARGV[2])
+if total == 0 then
+  redis.call('SET', KEYS[2], 1, 'EX', ARGV[2])
+else
+  redis.call('INCR', KEYS[2])
+end
+redis.call('SET', KEYS[3], ARGV[3], 'EX', ARGV[2])
 return {1, tonumber(ARGV[2])}`;
 
 function defaultDb(): DbExecutor {
@@ -614,6 +629,7 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
     address: string,
     rawScheme?: unknown,
     rawSessionPublicKey?: unknown,
+    clientKey?: string,
   ): Promise<WalletLoginChallenge & {
     scheme?: WalletLoginScheme; network?: string; sessionPublicKey?: string;
     chainId?: number; origin?: string; challenge?: string;
@@ -648,9 +664,12 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
       ...(scheme === 'ed25519' || scheme === 'passkey' ? { scheme, network: walletAuthNetwork } : {}),
       ...(scheme === 'session_key' ? { scheme, network: walletAuthNetwork, sessionPublicKey } : {}),
     };
-    const result = await getRedis().eval(ISSUE_NONCE, 2,
-      `${nonceBucketKey(scheme, address)}:issuance`, nonceKey(scheme, address, nonce),
-      NONCE_ISSUANCE_LIMIT, nonceTtlSec, JSON.stringify(challenge));
+    // The backstop keeps the pre-v3 counter name, so a window in flight at upgrade still counts.
+    const backstopKey = `${nonceBucketKey(scheme, address)}:issuance`;
+    const clientBucket = encodeURIComponent(clientKey && clientKey.trim() ? clientKey.trim() : 'unknown');
+    const result = await getRedis().eval(ISSUE_NONCE, 3,
+      `${backstopKey}:client:${clientBucket}`, backstopKey, nonceKey(scheme, address, nonce),
+      NONCE_ISSUANCE_LIMIT, nonceTtlSec, JSON.stringify(challenge), NONCE_ISSUANCE_ADDRESS_BACKSTOP);
     if (!Array.isArray(result) || !Number.isInteger(result[0])) {
       throw new Error('wallet nonce store unavailable');
     }
@@ -934,8 +953,13 @@ export function createWalletAuthService(options: CreateWalletAuthServiceOptions 
       throw new Error('refresh token expired');
     }
 
-    // Rotate: delete old token before issuing new one
-    await getRedis().del(redisKey);
+    // Rotate: consume the old token before issuing a new one. Only the caller
+    // whose DEL removed the key may mint, so concurrent refreshes of one token
+    // yield exactly one new token pair.
+    const consumed = await getRedis().del(redisKey);
+    if (consumed !== 1) {
+      throw new Error('invalid refresh token');
+    }
 
     // Switching passkey login off also stops passkey sessions from refreshing.
     if (existing.walletScheme === 'passkey') assertPasskeyLoginEnabled();

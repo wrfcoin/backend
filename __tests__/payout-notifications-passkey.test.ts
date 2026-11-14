@@ -62,6 +62,7 @@ function fakePool() {
   const client = {
     release() {},
     async query(sql: string, params: any[]) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK' || sql.startsWith('SELECT pg_advisory_xact_lock')) return { rows: [] };
       if (sql.startsWith('SELECT count')) {
         const [a, ch, h] = params;
         return { rows: [{ mine: rows.filter(r => r.address === a).length, total: rows.length, existing: rows.filter(r => r.address === a && r.channel === ch && r.target_hash === h).length }] };

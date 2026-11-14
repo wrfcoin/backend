@@ -25,17 +25,24 @@ class FakeRedis extends EventEmitter {
     this.store.set(key, value);
     return 'OK';
   }
-  async eval(script, keyCount, quota, challenge, limit, ttl, value) {
-    if (!script.startsWith('-- wallet_nonce_issuance_v2') || keyCount !== 2) {
+  async eval(script, keyCount, clientQuota, addressQuota, challenge, limit, ttl, value, backstop) {
+    if (!script.startsWith('-- wallet_nonce_issuance_v3') || keyCount !== 3) {
       throw new Error('unsupported Redis script in login fixture');
     }
     const now = Date.now();
-    let bucket = this.nonceQuotas.get(quota);
-    if (!bucket || bucket.expires <= now) bucket = { count: 0, expires: now + Number(ttl) * 1000 };
-    if (bucket.count >= Number(limit)) return [0, Math.max(1, Math.ceil((bucket.expires - now) / 1000))];
+    const window = key => {
+      const live = this.nonceQuotas.get(key);
+      return live && live.expires > now ? live : { count: 0, expires: now + Number(ttl) * 1000 };
+    };
+    const mine = window(clientQuota);
+    const all = window(addressQuota);
+    if (mine.count >= Number(limit)) return [0, Math.max(1, Math.ceil((mine.expires - now) / 1000))];
+    if (all.count >= Number(backstop)) return [0, Math.max(1, Math.ceil((all.expires - now) / 1000))];
     if (this.store.has(challenge)) return [-1, 0];
-    bucket.count += 1;
-    this.nonceQuotas.set(quota, bucket);
+    mine.count += 1;
+    all.count += 1;
+    this.nonceQuotas.set(clientQuota, mine);
+    this.nonceQuotas.set(addressQuota, all);
     await this.set(challenge, value);
     return [1, Number(ttl)];
   }
