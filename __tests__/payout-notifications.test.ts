@@ -11,7 +11,7 @@ import { readFileSync } from 'node:fs';
 import {
   channelConfig, createDeliverer, isAllowedPushEndpoint, parseChannel, targetHash, type StoredSubscription,
 } from '../server/services/payout-notify/channels.js';
-import { payoutMessage, runPayoutNotifyOnce, wrf, type AccountRead } from '../server/services/payout-notify/watcher.js';
+import { payoutMessage, runPayoutNotifyOnce, wrf, type AccountRead, type RotationCursor } from '../server/services/payout-notify/watcher.js';
 import { createPayoutNotificationRouter } from '../server/routes/payout-notification-routes.js';
 import { createCapabilitiesRouter } from '../server/routes/capabilities-routes.js';
 
@@ -276,6 +276,41 @@ const port = process.env.CHAIN_REWARD_TEST_PORT;
     // With no subscriptions left, the watch row is pruned.
     await run();
     expect((await pool.query('SELECT count(*)::int AS n FROM payout_notification_watch')).rows[0].n).toBe(0);
+  });
+
+  test('watcher rotates across more addresses than the per-pass cap, so none is starved', async () => {
+    const [A, B, C] = [addr(0xc1), addr(0xc2), addr(0xc3)];
+    for (const [i, x] of [A, B, C].entries()) {
+      await pool.query(`INSERT INTO payout_notification_subscriptions (address, channel, target, target_hash) VALUES ($1,'ntfy',$2,$3)`,
+        [x, `wrf-payouts-rotate-${i}`, targetHash(`wrf-payouts-rotate-${i}`)]);
+      accounts[x] = { earned: '1000', height: 50 };
+    }
+    const reads: string[][] = [];
+    const cursor: RotationCursor = { after: null };
+    const pass = async () => {
+      const seen: string[] = [];
+      const summary = await runPayoutNotifyOnce({ pool, deliverer, maxAddresses: 2, cursor, sleep: async () => {},
+        readAccount: async x => { seen.push(x); return accounts[x] ?? null; } });
+      reads.push(seen);
+      expect(seen.length).toBeLessThanOrEqual(2);
+      return summary;
+    };
+    sent.length = 0;
+    await pass(); await pass();
+    expect(new Set(reads.flat())).toEqual(new Set([A, B, C]));
+    expect((await pool.query('SELECT address FROM payout_notification_watch WHERE address = ANY($1) ORDER BY address', [[A, B, C]])).rows.map(r => r.address)).toEqual([A, B, C]);
+
+    accounts[C] = { earned: '5000', height: 60 };
+    let payouts = 0, delivered = 0;
+    for (let i = 0; i < 2; i++) { const r = await pass(); payouts += r.payouts; delivered += r.delivered; }
+    expect(reads.slice(2).flat()).toContain(C);
+    expect({ payouts, delivered }).toEqual({ payouts: 1, delivered: 1 });
+    expect(sent.map(m => m.sub.address)).toEqual([C]);
+    expect((await pool.query('SELECT count(*)::int AS n FROM payout_notification_events WHERE address=$1', [C])).rows[0].n).toBe(1);
+    // A and B stayed subscribed throughout.
+    expect((await pool.query('SELECT count(DISTINCT address)::int AS n FROM payout_notification_subscriptions WHERE address = ANY($1)', [[A, B, C]])).rows[0].n).toBe(3);
+    await pool.query("DELETE FROM payout_notification_subscriptions WHERE target LIKE 'wrf-payouts-rotate-%'");
+    await run();
   });
 
   test('migration 0037 is reversible: the documented down drops only its tables and the up re-applies', async () => {
