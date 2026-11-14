@@ -1636,6 +1636,9 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // Epic 6 self-serve bonding: default-OFF proxy to the bond admission service (infra bond-admission),
   // BOND_ADMISSION_PROXY_ENABLED=true + BOND_ADMISSION_URL. No credential; the service applies the rules.
   safeMount('/api/bond-admission',          './routes/bond-admission-routes');
+  // Epic 6: default-OFF public READ of the claim mailbox (infra claim-mailbox), for `wrfcoin node receipt auto`.
+  // CLAIM_MAILBOX_PROXY_ENABLED=true + CLAIM_MAILBOX_URL. GET only; writes never go through here.
+  safeMount('/api/claim-mailbox',           './routes/claim-mailbox-routes');
   // Owner ruling 2026-10-28 (b): passkey wallets have no JWT; default-OFF public balance read (3 fields).
   safeMount('/api/public/balance',          './routes/public-balance-routes');
   // Skill-pay backtest (DECISIONS 2026-11-12 item 3): default-OFF public station history read, alias only,
