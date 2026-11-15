@@ -1644,6 +1644,9 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // Epic 6: default-OFF public READ of the claim mailbox (infra claim-mailbox), for `wrfcoin node receipt auto`.
   // CLAIM_MAILBOX_PROXY_ENABLED=true + CLAIM_MAILBOX_URL. GET only; writes never go through here.
   safeMount('/api/claim-mailbox',           './routes/claim-mailbox-routes');
+  // Epic 6 option B (owner ruling 2026-11-14): default-OFF public POST of a node's own signed address record
+  // to the claim mailbox. NODE_ADDRESS_PROXY_ENABLED=true + CLAIM_MAILBOX_URL. POST only; reads never go through here.
+  safeMount('/api/node-addresses',          './routes/node-address-routes');
   // Owner ruling 2026-10-28 (b): passkey wallets have no JWT; default-OFF public balance read (3 fields).
   safeMount('/api/public/balance',          './routes/public-balance-routes');
   // Skill-pay backtest (DECISIONS 2026-11-12 item 3): default-OFF public station history read, alias only,
