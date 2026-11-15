@@ -121,10 +121,14 @@ export function createChainTailReader(deps: {
   readerToken?: () => string | undefined;
   now?: () => number;
   maxEntries?: number;
+  /** Overall deadline for one station read. Default (and minimum) 6 s; a paced background job passes more. */
+  readDeadlineMs?: number;
 } = {}): ChainTailReader {
   const fetchCore4Json = deps.fetchCore4Json ?? (defaultFetchCore4Json as Core4Fetch);
   const readerToken = deps.readerToken ?? (() => process.env.WRFCOIN_READER_TOKEN?.trim() || undefined);
   const now = deps.now ?? Date.now;
+  // A background job that paces each node call (node-read-pacer.ts) needs longer than a page request does.
+  const readDeadlineMs = Math.max(READ_DEADLINE_MS, Math.floor(deps.readDeadlineMs ?? READ_DEADLINE_MS));
   const maxEntries = Math.max(1, Math.min(4096, Math.floor(deps.maxEntries ?? 2048)));
 
   const reads = new Map<string, { expiresAt: number; value: Promise<TailRead> }>();
@@ -144,7 +148,7 @@ export function createChainTailReader(deps: {
   }
 
   async function readTail(stationId: string, token: string): Promise<TailRead> {
-    const deadline = now() + READ_DEADLINE_MS;
+    const deadline = now() + readDeadlineMs;
     let calls = 0;
     const path = `/transactions/contributions/${encodeURIComponent(stationId)}/observations`;
 

@@ -2,6 +2,9 @@ name: Core4 HTTP contract (main and manual)
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   workflow_dispatch: {}
 permissions:
   contents: read
@@ -11,65 +14,48 @@ concurrency:
 jobs:
   core4-http-contract:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    # the build runner self-hosted: hosted runners are billing-void for this org and the
-    # zero-budget policy makes that permanent — the build runner is the evidence path.
-    runs-on: [self-hosted, ct102-backend]
+    # GitHub-hosted and free on this public repo. No trigger here runs fork code,
+    # and the job uses no secrets: core4 is public, so it clones anonymously.
+    runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      RUSTC_WRAPPER: ''
     steps:
       - uses: actions/checkout@v4
-      # Data cap (infra#1113): core4 main lives in a persistent per-runner
-      # clone OUTSIDE the backend workspace (<_work>/core4-contract). The old
-      # actions/checkout into the workspace re-cloned it from scratch on every
-      # run, because the backend checkout's `git clean -ffdx` deletes the
-      # untracked directory: 28.4 MB over the wire per run (ss, 2026-09-27).
-      # Now each run does an incremental depth=1 fetch of main, then a forced
-      # checkout plus `git clean -ffdx`. The tree is the same clean core4 main
-      # tip, and target/ is still wiped, so the build stays cold as before.
-      # Read-only deploy key on wrfcoin/core4: the repo-scoped GITHUB_TOKEN
-      # cannot read a sibling private repo. github.com's published ed25519
-      # host key is pinned (StrictHostKeyChecking=yes).
-      - name: Check out core4 main (persistent per-runner clone)
-        env:
-          CORE4_SSH_KEY: ${{ secrets.CORE4_SSH_KEY }}
+      # Outside the backend workspace so Jest never crawls the core4 tree.
+      - name: Check out core4 main
+        id: core4
         run: |
           set -euo pipefail
-          core4_dir="$(dirname "$RUNNER_WORKSPACE")/core4-contract"
-          key="$RUNNER_TEMP/core4-deploy-key"
-          known_hosts="$RUNNER_TEMP/github-known-hosts"
-          trap 'rm -f "$key"' EXIT
-          ( umask 077; printf '%s\n' "$CORE4_SSH_KEY" > "$key" )
-          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$known_hosts"
-          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o UserKnownHostsFile=$known_hosts -o StrictHostKeyChecking=yes"
-          # Self-healing sync: re-clones once if a stale lock or a damaged clone
-          # makes the fetch or checkout fail (#1277 review P2).
-          bash scripts/ci-sync-core4-contract.sh "$core4_dir"
+          core4_dir="$RUNNER_TEMP/core4-contract"
+          git clone --quiet --depth 1 --branch main https://github.com/wrfcoin/core4 "$core4_dir"
+          sha="$(git -C "$core4_dir" rev-parse HEAD)"
+          echo "core4 main: $sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "CORE4_DIR=$core4_dir" >> "$GITHUB_ENV"
-      # Data cap (infra#1113): no GitHub npm cache on self-hosted runners.
-      # On the build runner ~/.npm (/opt/gh-runner/.npm) already persists between jobs,
-      # so the restore downloaded a 558 MB tarball per job over a metered line
-      # to overwrite a warm directory (1.1 GB per CI run). Hosted runners keep
-      # it (an empty `cache` disables setup-node caching). npm ci still
-      # installs exactly the lockfile and checks every tarball's integrity.
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-          cache: ${{ runner.environment != 'self-hosted' && 'npm' || '' }}
+          cache: npm
       - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ runner.temp }}/core4-contract/target
+          key: core4-launch-api-${{ runner.os }}-${{ steps.core4.outputs.sha }}
+          restore-keys: core4-launch-api-${{ runner.os }}-
       - name: Install backend dependencies
-        # Data cap (infra#1113): on linux/x64, onnxruntime-node's postinstall
-        # downloads the ~238 MB Microsoft.ML.OnnxRuntime.Gpu.Linux NuGet package
-        # (CUDA/TensorRT providers) every time `npm ci` recreates node_modules.
-        # That was ~480 MB per CI run over a metered line. The runners have no
-        # GPU; the CPU runtime (libonnxruntime.so.1) ships inside the npm
-        # package and is unaffected.
+        # onnxruntime-node's postinstall otherwise downloads a ~238 MB GPU package.
+        # The runners have no GPU; the CPU runtime ships inside the npm package.
         env:
           ONNXRUNTIME_NODE_INSTALL: skip
         run: npm ci --prefer-offline
       # backend#1215: compile core4 in its own step, bounded only by the job's
-      # timeout-minutes. The health wait below then measures STARTUP only; it
-      # used to include this cold compile (`git clean -ffdx` wipes target/
-      # every run), which flaked the job whenever the build ran past
-      # the 90 s window.
+      # timeout-minutes, so the health wait below measures startup only.
       - name: Build isolated core4 launch API
         working-directory: ${{ env.CORE4_DIR }}
         run: |
@@ -141,6 +127,8 @@ jobs:
           exit 1
       - name: Run real backend to core4 HTTP contract
         env:
+          DATABASE_URL: postgres://127.0.0.1:1/unused
+          REDIS_URL: redis://127.0.0.1:1
           WRFCOIN_CORE4_URL: http://127.0.0.1:18556
           WRFCOIN_OPERATOR_TOKEN: core4-contract-test-token
           WRFCOIN_READER_TOKEN: core4-contract-reader-test-token

@@ -12,6 +12,8 @@ import {
   createRateLimitMiddleware,
   RATE_LIMIT_PRESETS,
   apiIpBudgetKey,
+  getClientIp,
+  rateLimitBucketIp,
 } from '../shared/middleware/rate-limit-redis.js';
 import { applyApiSecurityHeaders } from '../shared/middleware/security-headers.js';
 import { appLogger } from './utils/logger.js';
@@ -104,6 +106,7 @@ import {
 import { createOperatorProfileRouter } from './routes/operator-profile-routes.js';
 import { createStationDetailRouter } from './routes/station-detail-routes.js';
 import { createStationOwnerRouter, captureOwnerActionRawBody } from './routes/station-owner-routes.js';
+import { createStationOwnerInsightsRouter } from './routes/station-owner-insights-routes.js';
 import { createWrfForecastNotWiredRouter } from './routes/wrf-forecast-not-wired-routes.js';
 // backend#1134: the four factory-built ingestion routers were only ever mounted on
 // the compute_networks_server (port 6000), never on this live main-api entrypoint.
@@ -278,6 +281,9 @@ app.options('*', (_req, res) => { res.status(200).end(); });
 // Email observation gateway (backend-archive#1495): 16 KiB parse limit on its own path, ahead
 // of the global 1 MB parsers (which then skip the already-parsed body).
 app.use('/api/transport/email', express.json({ limit: '16kb' }), express.urlencoded({ extended: false, limit: '16kb' }));
+// Wolfram reading check (bring-your-own-key): the body carries the caller's own AppID, so it is read
+// raw (2 KiB) ahead of the global JSON parser, whose parse errors could quote it.
+app.use('/api/integrations/wolfram/reading-check', express.raw({ type: () => true, limit: 2048 }));
 app.use(express.json({ limit: '1mb', verify: captureOwnerActionRawBody }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
@@ -297,6 +303,9 @@ app.use('/api/operators', createOperatorProfileRouter());
 app.use('/api', createStationDetailRouter());
 // Station theft protection: signed owner-action relay + ownership state (spec r23/station-owner-actions-spec.md).
 app.use('/api', createStationOwnerRouter());
+// Epic 8: owner-only station insights. Each route is OFF (404) unless its flag is true:
+// STATION_COMPARE_HISTORY_ENABLED, STATION_SITE_CHECK_ENABLED.
+app.use('/api', createStationOwnerInsightsRouter());
 // backend#1289 (b3): /api/v1/weather/wrf-forecast/* answers the not-wired 501
 // instead of the catch-all 404.
 app.use('/api', createWrfForecastNotWiredRouter());
@@ -920,7 +929,12 @@ async function handleRequest(
       try {
         // ?scheme=ed25519 issues the first-party ed25519 challenge; no
         // scheme (or evm/secp256k1) keeps the original EVM challenge.
-        const challenge = await walletAuthService.generateNonce(address, query?.scheme);
+        // ?scheme=session_key&session_public_key=<hex> issues the device
+        // session-key challenge for the owner address in the path.
+        // Issuance is budgeted per client address (same resolution as the
+        // login rate limiter), so one client cannot spend another's allowance.
+        const challenge = await walletAuthService.generateNonce(
+          address, query?.scheme, query?.session_public_key, rateLimitBucketIp(getClientIp(req)));
         success(challenge, 'Wallet login challenge generated');
       } catch (e) {
         if (e instanceof WalletNonceRateLimitError) {
@@ -1567,6 +1581,9 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   app.use('/api/oracle', oracleSubmitRoutes);
   safeMount('/api/blockchain',              './routes/blockchain-routes');
   safeMount('/api/explorer',                './routes/explorer-routes');
+  // backend#21: self-proving passkey send (no JWT), before the requireAuth wallet router as in
+  // server.js. Dormant unless WRFCOIN_ENABLE_PASSKEY_SEND=true; off, it falls through unchanged.
+  safeMount('/api/wallet',                  './routes/wallet-passkey-send-gate');
   safeMount('/api/wallet',                  './routes/wallet-routes');
   safeMount('/api/wallet-auth',             './routes/wallet-auth-legacy-routes');
   safeMount('/api/weather/streak',          './routes/weather-streak-routes');
@@ -1621,12 +1638,46 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // the #869 mount in unified_api_server.ts never reached production).
   safeMount('/api/onboarding',              './routes/onboarding-routes');
   safeMount('/api/faucet',                  './routes/faucet-bond-routes');
+  // Epic 6 self-serve bonding: default-OFF proxy to the bond admission service (infra bond-admission),
+  // BOND_ADMISSION_PROXY_ENABLED=true + BOND_ADMISSION_URL. No credential; the service applies the rules.
+  safeMount('/api/bond-admission',          './routes/bond-admission-routes');
+  // Epic 6: default-OFF public READ of the claim mailbox (infra claim-mailbox), for `wrfcoin node receipt auto`.
+  // CLAIM_MAILBOX_PROXY_ENABLED=true + CLAIM_MAILBOX_URL. GET only; writes never go through here.
+  safeMount('/api/claim-mailbox',           './routes/claim-mailbox-routes');
+  // Epic 6 option B (owner ruling 2026-11-14): default-OFF public POST of a node's own signed address record
+  // to the claim mailbox. NODE_ADDRESS_PROXY_ENABLED=true + CLAIM_MAILBOX_URL. POST only; reads never go through here.
+  safeMount('/api/node-addresses',          './routes/node-address-routes');
+  // Owner ruling 2026-10-28 (b): passkey wallets have no JWT; default-OFF public balance read (3 fields).
+  safeMount('/api/public/balance',          './routes/public-balance-routes');
+  // Skill-pay backtest (DECISIONS 2026-11-12 item 3): default-OFF public station history read, alias only,
+  // a bounded height window (~30 days), 0.1-degree coordinates, rate-limited like the balance read.
+  safeMount('/api/public/station-history',  './routes/public-station-history-routes');
+  // Owner decision 2026-11-01 (public status page): default-OFF public network status read, aggregate
+  // numbers only (block pace, producers online by label, peers, node-pay epoch, scheduled upgrades).
+  safeMount('/api/public/network-status',   './routes/public-network-status-routes');
+  // backend#229 (owner demo queue 2026-11-01): default-OFF public proof card for one station reading,
+  // read from the node (reward evidence + reveal scan + block), never from a backend table.
+  safeMount('/api/proofs',                  './routes/proof-card-routes');
+  // Owner demo queue 2026-11-01 item 3: default-OFF public producers / bonded nodes / attesters read,
+  // from the node (replaces the never-mounted validators.js table reads).
+  safeMount('/api/network',                 './routes/network-nodes-routes');
+  // Owner demo queue 2026-11-01 item 7 (backend PR#72, #1494): default-OFF public read of on-chain
+  // forecasts scored against the chain's own station readings, next to NOAA's forecast for the same hour.
+  safeMount('/api/forecast-verification',   './routes/forecast-verification-routes');
+  safeMount('/api/forecasts',               './routes/website-forecast-routes');
+  // backend#249 (owner demo queue 2026-11-01 item 8): default-OFF friend challenges for the phone screen
+  // (mobile#260) and the web board. Points only, wallet JWT for writes, counts from chain readings.
+  safeMount('/api/challenges',              './routes/challenge-routes');
+  // backend#228/#1424 (owner demo queue 2026-11-01 item 10): default-OFF FREE-PLAY forecast duels.
+  // No stakes; the chain's finalized forecast rewards judge. Funded duels are a separate consensus feature.
+  safeMount('/api/duels',                   './routes/duel-routes');
   // backend#1178: referrals are the one growth-cluster router with shipping
   // callers (frontend useReferrals.js, mobile referral_service.dart). Mutators
   // need a wallet JWT for the acting wallet; activation pays nothing. Table:
   // 0023_referrals. DEFERRED and deliberately NOT mounted (see
-  // /api/capabilities and server/CLAUDE.md): duels, challenges, competitions,
-  // proof cards, marketplace, academic, subscription, webhooks, telemetry,
+  // /api/capabilities and server/CLAUDE.md):
+  // marketplace, academic, subscription, webhooks (superseded by
+  // /api/notifications below: no user-supplied URLs), telemetry,
   // contributor summary.
   safeMount('/api/referrals',               './routes/referral-routes');
   safeMount('/api/reputation',              './routes/reputationRoutes');
@@ -1649,6 +1700,8 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   safeMount('/api/node-control',            './routes/node-control-routes');
   safeMount('/api/keys',                    './routes/key-manager-routes');
   safeMount('/api/kpi/alignment',           './routes/alignment-kpi-routes');
+  // Operator-only usage counts (wallets, phone stations, readings/day, weekly returners). Counts only.
+  safeMount('/api/admin/usage-counts',      './routes/usage-counts-routes');
   safeMount('/api/achievement',             './routes/achievementRoutes');
   // #215: mobile earn→claim loop. Mobile hits /api/v1/rewards/claim/:id and
   // /api/v1/rewards/history; these were implemented but never mounted live.
@@ -1673,6 +1726,19 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   safeMount('/api/earnings',                './routes/earnings-routes');
   // core4#3604 A4: public forecaster track record, fed by the chain-rewards indexer's forecast rows.
   safeMount('/api/forecasters',             './routes/forecasters-routes');
+  // Owner ruling 2026-11-01: Wolfram is bring-your-own-key. One fixed question ("is this reading
+  // unusual?") relayed with the caller's own AppID, never stored or logged. Dormant unless
+  // WOLFRAM_READING_CHECK_ENABLED=true.
+  safeMount('/api/integrations/wolfram',    './routes/wolfram-reading-check-routes');
+  // backend#251: weekly forecast competition, points only, over the same indexed forecast rows.
+  // OFF unless FORECAST_COMPETITIONS_ENABLED=true too (set only after migration 0036 is applied).
+  safeMount('/api/competitions',            './routes/competition-routes');
+  // backend#389: payout notifications (Web Push / ntfy, wallet-login subscriptions, no email or personal data).
+  // OFF unless PAYOUT_NOTIFY_ENABLED=true (set only after migration 0037 is applied).
+  safeMount('/api/notifications',           './routes/payout-notification-routes');
+  // core4#388/#435 + backend#931: station calibration certificates (default OFF, trust roots from
+  // CALIBRATION_TRUST_ROOTS_JSON). Public GET /station/:alias; signed POSTs reach it from the operator network.
+  safeMount('/api/calibration-certificates', './routes/calibration-certificate-routes');
 
   const mountSnapshot = safeMountReadinessSnapshot();
   appLogger.info('safeMount inventory', {
@@ -1746,6 +1812,77 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
       });
     } catch {
       appLogger.warn('Chain reward index not started');
+    }
+
+    // backend#389: payout watcher behind /api/notifications. OFF unless PAYOUT_NOTIFY_ENABLED=true.
+    // Never logs addresses, endpoints, topics or upstream text.
+    try {
+      const { startPayoutNotifier } = require('./services/payout-notify/watcher');
+      startPayoutNotifier({ logger: appLogger }).catch(() => {
+        appLogger.warn('Payout notifier not started');
+      });
+    } catch {
+      appLogger.warn('Payout notifier not started');
+    }
+    // Forecast verification against station readings (+ NOAA reference capture). OFF unless
+    // FORECAST_VERIFICATION_ENABLED=true; needs WRFCOIN_READER_TOKEN and migration 0039.
+    try {
+      const { startForecastVerificationJob } = require('./services/forecast-verification/observed-verification-job');
+      startForecastVerificationJob({ logger: appLogger }).catch(() => {
+        appLogger.warn('Forecast verification job not started');
+      });
+    } catch {
+      appLogger.warn('Forecast verification job not started');
+    }
+    // Website forecast reveal worker (epic 7). OFF unless WEBSITE_FORECAST_ENABLED=true; needs migration
+    // 0043_website_forecasts, WRFCOIN_CONTRIBUTOR_TOKEN, WRFCOIN_READER_TOKEN and the key-bound node route.
+    try {
+      const { startWebsiteForecastWorker } = require('./services/website-forecast/reveal-worker');
+      startWebsiteForecastWorker({ logger: appLogger }).catch(() => {
+        appLogger.warn('Website forecast worker not started');
+      });
+    } catch {
+      appLogger.warn('Website forecast worker not started');
+    }
+    // Website forecast practice scores. OFF unless WEBSITE_FORECAST_ENABLED=true and
+    // WEBSITE_FORECAST_SCORE_ENABLED=true; needs migration 0044_website_forecast_scores and WRFCOIN_READER_TOKEN.
+    try {
+      const { startWebsiteForecastScoreJob } = require('./services/forecast-score/practice-score-job');
+      startWebsiteForecastScoreJob({ logger: appLogger }).catch(() => {
+        appLogger.warn('Website forecast practice score job not started');
+      });
+    } catch {
+      appLogger.warn('Website forecast practice score job not started');
+    }
+    // Station compare history sampler (Epic 8). OFF unless STATION_COMPARE_HISTORY_ENABLED=true; needs
+    // migration 0046_station_compare_samples and WRFCOIN_READER_TOKEN.
+    try {
+      const { startStationCompareSampler } = require('./services/station-compare-history');
+      startStationCompareSampler({ logger: appLogger }).catch(() => {
+        appLogger.warn('Station compare history sampler not started');
+      });
+    } catch {
+      appLogger.warn('Station compare history sampler not started');
+    }
+    // Friend challenges counting job (backend#249). OFF unless FRIEND_CHALLENGES_ENABLED=true; needs
+    // WRFCOIN_READER_TOKEN and migration 0040_friend_challenges.
+    try {
+      const { startFriendChallengesJob } = require('./services/friend-challenges-job');
+      startFriendChallengesJob({ logger: appLogger }).catch(() => {
+        appLogger.warn('Friend challenges job not started');
+      });
+    } catch {
+      appLogger.warn('Friend challenges job not started');
+    }
+    // Free-play forecast duels resolver (backend#228). OFF unless FORECAST_DUELS_ENABLED=true; needs
+    // WRFCOIN_READER_TOKEN and migration 0041_forecast_duels.
+    try {
+      const { startForecastDuelsJob } = require('./services/forecast-duels-job');
+      startForecastDuelsJob({ logger: appLogger }).catch(() => {
+        appLogger.warn('Forecast duels job not started');
+      });
+    } catch {
+      appLogger.warn('Forecast duels job not started');
     }
 
     // backend#1253: chain -> weather_stations sync so chain-registered stations

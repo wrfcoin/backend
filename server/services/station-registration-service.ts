@@ -109,6 +109,13 @@ export interface RegisterStationOptions {
    * silently remove the registration cap.
    */
   maxStationsPerOwner?: unknown;
+  /**
+   * When given, a NEW station gets the id this returns (a neutral id with no
+   * name in it) and a client-supplied `stationId` is honoured only when it
+   * names a station this owner already has. A station id is public on chain
+   * for good once the station is registered there.
+   */
+  neutralStationId?: () => string;
 }
 
 /**
@@ -567,9 +574,28 @@ export async function registerStation(
     sensorHeight.value
   );
 
-  const stationId = (typeof input.stationId === 'string' && input.stationId.trim())
+  const requestedStationId = (typeof input.stationId === 'string' && input.stationId.trim())
     ? input.stationId.trim()
-    : `pws-${slug(name)}-${randomHex(3)}`;
+    : null;
+  let stationId: string;
+  if (options.neutralStationId) {
+    // Neutral ids: keep a requested id only if it is this owner's existing
+    // station (an update); anything else is a new station and gets a fresh id.
+    let ownsRequested = false;
+    if (requestedStationId) {
+      const mine = await pool.query(
+        `SELECT 1 FROM weather_stations WHERE station_id = $1 AND lower(owner_address) = $2 LIMIT 1`,
+        [requestedStationId, ownerAddress]
+      );
+      ownsRequested = mine.rows.length > 0;
+    }
+    // An admin override names a pre-existing contributor's station on purpose.
+    stationId = requestedStationId && (ownsRequested || isAdminOverride)
+      ? requestedStationId
+      : options.neutralStationId();
+  } else {
+    stationId = requestedStationId ?? `pws-${slug(name)}-${randomHex(3)}`;
+  }
 
   const resolvedLocation = location || `${latitude},${longitude}`;
   const stationType = hardware || 'personal_weather_station';
@@ -1058,6 +1084,55 @@ export async function listRegisteredStations(
   }));
   const nextCursor = hasMore && page.length > 0 ? String(page[page.length - 1].station_id) : null;
   return { stations, nextCursor, hasMore };
+}
+
+/** At most this many stations in one owner's list (an owner may register DEFAULT_MAX_STATIONS_PER_OWNER). */
+export const OWNED_STATIONS_MAX = 50;
+
+export interface OwnedStation {
+  stationId: string;
+  name: unknown;
+  status: string;
+  lastDataUpdate: string | null;
+}
+
+/**
+ * The stations one wallet owns, for that wallet's own "my stations" list. The
+ * owner is matched case-insensitively (backend#1210). Only what the list needs
+ * is selected: no coordinates, location text, keys or rewards leave this query.
+ * Freshness uses the same rule as the public map (database or chain tail).
+ */
+export async function listStationsOwnedBy(
+  pool: QueryablePool,
+  ownerAddress: string,
+  options: Pick<ListStationsOptions, 'chainLastSeen'> = {}
+): Promise<{ stations: OwnedStation[]; truncated: boolean }> {
+  const owner = normalizeOwnerAddress(ownerAddress);
+  if (!owner) return { stations: [], truncated: false };
+  const result = await pool.query(
+    `SELECT station_id, name,
+            (SELECT MAX(timestamp) FROM weather_data
+              WHERE weather_data.station_id = weather_stations.station_id
+                AND timestamp <= CURRENT_TIMESTAMP) AS last_data_update
+       FROM weather_stations
+      WHERE lower(owner_address) = $1
+      ORDER BY station_id ASC
+      LIMIT $2`,
+    [owner, OWNED_STATIONS_MAX + 1]
+  );
+  const rows = result.rows || [];
+  const truncated = rows.length > OWNED_STATIONS_MAX;
+  const page = truncated ? rows.slice(0, OWNED_STATIONS_MAX) : rows;
+  const chainSeen = options.chainLastSeen
+    ? await chainLastSeenFor(page.map((row) => String(row.station_id)), options.chainLastSeen)
+    : new Map<string, number>();
+  const now = Date.now();
+  const stations = page.map((row) => ({
+    stationId: String(row.station_id),
+    name: row.name,
+    ...observationFreshness(laterObservation(row.last_data_update, chainSeen.get(String(row.station_id))), now),
+  }));
+  return { stations, truncated };
 }
 
 function rosterElevation(metadata: unknown): { elevation_m?: number } {

@@ -37,6 +37,11 @@ export interface CalibrationTrustRoot {
   rootId: string;
   subject: string;
   fingerprintSha256: string;
+  /**
+   * The root's raw ed25519 public key (64 hex). Optional for older configs that pin only the
+   * fingerprint; when present, the fingerprint is sha256(public key bytes) and must agree.
+   */
+  publicKeyHex?: string;
   active?: boolean;
 }
 
@@ -77,12 +82,30 @@ interface CalibrationCertificateRecord {
   fingerprintSha256: string;
 }
 
-interface CalibrationAttestationArtifactV1 {
+/**
+ * Optional description of what was calibrated. Every field is signed. Free text is bounded and must
+ * never carry personal data (no names, emails or phone numbers): identity is the station alias and
+ * the owner's wallet address.
+ */
+export interface CalibrationDetailsV1 {
+  sensor?: string;
+  method?: string;
+  reference?: string;
+  notes?: string;
+}
+
+export const CALIBRATION_DETAIL_FIELDS = ['sensor', 'method', 'reference', 'notes'] as const;
+export const CALIBRATION_DETAIL_MAX_LEN = 200;
+
+export interface CalibrationAttestationArtifactV1 {
   schemaVersion: 'wrf-calibration-attestation/v1';
   artifactId: string;
   subject: {
     stationId: string;
+    /** The station owner's wallet (0x + 40 lowercase hex) the signer issued this to. Optional. */
+    ownerAddress?: string;
   };
+  calibration?: CalibrationDetailsV1;
   issuer: {
     issuerId: string;
     certificateChain: CalibrationCertificateRecord[];
@@ -99,7 +122,7 @@ interface CalibrationAttestationArtifactV1 {
   };
 }
 
-interface ParsedArtifact {
+export interface ParsedArtifact {
   raw: CalibrationAttestationArtifactV1;
   artifactDigestSha256: string;
 }
@@ -268,34 +291,67 @@ const PROVIDER_PREFIXES: Array<{ prefix: string; provider: 'ipfs' | 'filecoin' |
   { prefix: 'ar://', provider: 'arweave' },
 ];
 
-function parseTrustRootsFromEnv(): CalibrationTrustRoot[] {
-  const raw = (process.env.CALIBRATION_TRUST_ROOTS_JSON || '').trim();
-  if (!raw) {
+/**
+ * Parse a trust-root list (CALIBRATION_TRUST_ROOTS_JSON). Each entry names a root by `rootId` and
+ * `subject` and pins its key with `publicKeyHex` (raw ed25519, preferred) and/or `fingerprintSha256`
+ * (sha256 of the raw key). An entry whose two pins disagree, or that pins nothing valid, is dropped:
+ * a malformed root never widens trust. Invalid JSON yields no roots (verification fails closed).
+ */
+export function parseCalibrationTrustRoots(raw: string): CalibrationTrustRoot[] {
+  const text = (raw || '').trim();
+  if (!text) {
     return [];
   }
 
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(text);
     if (!Array.isArray(parsed)) {
       return [];
     }
-    return parsed
-      .map((entry: any) => ({
-        rootId: typeof entry?.rootId === 'string' ? entry.rootId : '',
-        subject: typeof entry?.subject === 'string' ? entry.subject : '',
-        fingerprintSha256:
-          typeof entry?.fingerprintSha256 === 'string' ? entry.fingerprintSha256 : '',
+    const roots: CalibrationTrustRoot[] = [];
+    for (const entry of parsed as any[]) {
+      const rootId = typeof entry?.rootId === 'string' ? entry.rootId : '';
+      const subject = typeof entry?.subject === 'string' ? entry.subject : '';
+      const publicKeyHex =
+        typeof entry?.publicKeyHex === 'string' && isHex64(entry.publicKeyHex)
+          ? entry.publicKeyHex.toLowerCase()
+          : undefined;
+      if (entry?.publicKeyHex !== undefined && publicKeyHex === undefined) {
+        continue;
+      }
+      const derived = publicKeyHex
+        ? createHash('sha256').update(Buffer.from(publicKeyHex, 'hex')).digest('hex')
+        : undefined;
+      const pinned =
+        typeof entry?.fingerprintSha256 === 'string' ? entry.fingerprintSha256.toLowerCase() : undefined;
+      if (pinned !== undefined && derived !== undefined && pinned !== derived) {
+        continue;
+      }
+      const fingerprintSha256 = derived ?? pinned ?? '';
+      if (!rootId || !subject || !isHexSha256(fingerprintSha256)) {
+        continue;
+      }
+      roots.push({
+        rootId,
+        subject,
+        fingerprintSha256,
+        ...(publicKeyHex ? { publicKeyHex } : {}),
         active: entry?.active !== false,
-      }))
-      .filter(
-        entry =>
-          entry.rootId.length > 0 &&
-          entry.subject.length > 0 &&
-          isHexSha256(entry.fingerprintSha256),
-      );
+      });
+    }
+    return roots;
   } catch {
     return [];
   }
+}
+
+function parseTrustRootsFromEnv(): CalibrationTrustRoot[] {
+  return parseCalibrationTrustRoots(process.env.CALIBRATION_TRUST_ROOTS_JSON || '');
+}
+
+/** Revocations configured by env (CALIBRATION_REVOKED_CERTIFICATES_JSON / _FINGERPRINTS). */
+export function calibrationRevocationsFromEnv(): CalibrationRevocationEntry[] {
+  return parseRevocationsFromEnv();
 }
 
 function parseRevocationsFromEnv(): CalibrationRevocationEntry[] {
@@ -404,7 +460,7 @@ export function canonicalizeCalibrationAttestationCid(rawCid: string): string | 
   return null;
 }
 
-function stableStringify(value: unknown): string {
+export function stableStringify(value: unknown): string {
   if (value === null || typeof value !== 'object') {
     return JSON.stringify(value);
   }
@@ -453,6 +509,7 @@ export function computeCalibrationSignedDigest(
     schemaVersion: artifact.schemaVersion,
     artifactId: artifact.artifactId,
     subject: artifact.subject,
+    ...(artifact.calibration !== undefined ? { calibration: artifact.calibration } : {}),
     issuer: artifact.issuer,
     attestation: artifact.attestation,
     signature: {
@@ -475,6 +532,130 @@ function parseIsoTimestamp(value: string): Date | null {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Schema-check and normalize an artifact; null when it is not a valid v1 artifact. */
+export function parseCalibrationArtifact(rawArtifact: unknown): ParsedArtifact | null {
+  if (!isObject(rawArtifact)) {
+    return null;
+  }
+
+  if (rawArtifact.schemaVersion !== 'wrf-calibration-attestation/v1') {
+    return null;
+  }
+  if (typeof rawArtifact.artifactId !== 'string' || rawArtifact.artifactId.trim().length === 0) {
+    return null;
+  }
+  if (!isObject(rawArtifact.subject) || typeof rawArtifact.subject.stationId !== 'string') {
+    return null;
+  }
+  const ownerAddress = rawArtifact.subject.ownerAddress;
+  if (ownerAddress !== undefined && (typeof ownerAddress !== 'string' || !/^0x[0-9a-f]{40}$/.test(ownerAddress))) {
+    return null;
+  }
+  let calibration: CalibrationDetailsV1 | undefined;
+  if (rawArtifact.calibration !== undefined) {
+    if (!isObject(rawArtifact.calibration)) {
+      return null;
+    }
+    const details = rawArtifact.calibration;
+    if (Object.keys(details).some(key => !(CALIBRATION_DETAIL_FIELDS as readonly string[]).includes(key))) {
+      return null;
+    }
+    calibration = {};
+    for (const field of CALIBRATION_DETAIL_FIELDS) {
+      const value = details[field];
+      if (value === undefined) continue;
+      if (
+        typeof value !== 'string' ||
+        value.trim().length === 0 ||
+        value.length > CALIBRATION_DETAIL_MAX_LEN ||
+        hasControlCharacters(value)
+      ) {
+        return null;
+      }
+      calibration[field] = value;
+    }
+  }
+  if (
+    !isObject(rawArtifact.issuer) ||
+    typeof rawArtifact.issuer.issuerId !== 'string' ||
+    !Array.isArray(rawArtifact.issuer.certificateChain)
+  ) {
+    return null;
+  }
+  if (
+    !isObject(rawArtifact.attestation) ||
+    typeof rawArtifact.attestation.issuedAt !== 'string' ||
+    typeof rawArtifact.attestation.expiresAt !== 'string'
+  ) {
+    return null;
+  }
+  if (
+    !isObject(rawArtifact.signature) ||
+    typeof rawArtifact.signature.algorithm !== 'string' ||
+    rawArtifact.signature.algorithm.trim().length === 0 ||
+    typeof rawArtifact.signature.value !== 'string' ||
+    rawArtifact.signature.value.trim().length === 0
+  ) {
+    return null;
+  }
+
+  const certificateChain: CalibrationCertificateRecord[] = [];
+  for (const cert of rawArtifact.issuer.certificateChain) {
+    if (!isObject(cert)) {
+      return null;
+    }
+    if (
+      typeof cert.certId !== 'string' ||
+      typeof cert.subject !== 'string' ||
+      typeof cert.issuer !== 'string' ||
+      typeof cert.notBefore !== 'string' ||
+      typeof cert.notAfter !== 'string' ||
+      typeof cert.fingerprintSha256 !== 'string'
+    ) {
+      return null;
+    }
+    certificateChain.push({
+      certId: cert.certId,
+      subject: cert.subject,
+      issuer: cert.issuer,
+      notBefore: cert.notBefore,
+      notAfter: cert.notAfter,
+      fingerprintSha256: cert.fingerprintSha256,
+    });
+  }
+
+  const normalizedArtifact: CalibrationAttestationArtifactV1 = {
+    schemaVersion: 'wrf-calibration-attestation/v1',
+    artifactId: rawArtifact.artifactId,
+    subject: {
+      stationId: rawArtifact.subject.stationId,
+      ...(typeof ownerAddress === 'string' ? { ownerAddress } : {}),
+    },
+    ...(calibration !== undefined ? { calibration } : {}),
+    issuer: {
+      issuerId: rawArtifact.issuer.issuerId,
+      certificateChain,
+    },
+    attestation: {
+      issuedAt: rawArtifact.attestation.issuedAt,
+      expiresAt: rawArtifact.attestation.expiresAt,
+    },
+    signature: {
+      algorithm: rawArtifact.signature.algorithm,
+      value: rawArtifact.signature.value,
+      ...(typeof rawArtifact.signature.signerPublicKey === 'string'
+        ? { signerPublicKey: rawArtifact.signature.signerPublicKey }
+        : {}),
+    },
+  };
+
+  const artifactDigestSha256 = computeSha256Hex(stableStringify(normalizedArtifact));
+  return {
+    raw: normalizedArtifact,
+    artifactDigestSha256,
+  };
 }
 
 export class CalibrationAttestationVerifierService {
@@ -685,96 +866,7 @@ export class CalibrationAttestationVerifierService {
   }
 
   private parseArtifact(rawArtifact: unknown): ParsedArtifact | null {
-    if (!isObject(rawArtifact)) {
-      return null;
-    }
-
-    if (rawArtifact.schemaVersion !== 'wrf-calibration-attestation/v1') {
-      return null;
-    }
-    if (typeof rawArtifact.artifactId !== 'string' || rawArtifact.artifactId.trim().length === 0) {
-      return null;
-    }
-    if (!isObject(rawArtifact.subject) || typeof rawArtifact.subject.stationId !== 'string') {
-      return null;
-    }
-    if (
-      !isObject(rawArtifact.issuer) ||
-      typeof rawArtifact.issuer.issuerId !== 'string' ||
-      !Array.isArray(rawArtifact.issuer.certificateChain)
-    ) {
-      return null;
-    }
-    if (
-      !isObject(rawArtifact.attestation) ||
-      typeof rawArtifact.attestation.issuedAt !== 'string' ||
-      typeof rawArtifact.attestation.expiresAt !== 'string'
-    ) {
-      return null;
-    }
-    if (
-      !isObject(rawArtifact.signature) ||
-      typeof rawArtifact.signature.algorithm !== 'string' ||
-      rawArtifact.signature.algorithm.trim().length === 0 ||
-      typeof rawArtifact.signature.value !== 'string' ||
-      rawArtifact.signature.value.trim().length === 0
-    ) {
-      return null;
-    }
-
-    const certificateChain: CalibrationCertificateRecord[] = [];
-    for (const cert of rawArtifact.issuer.certificateChain) {
-      if (!isObject(cert)) {
-        return null;
-      }
-      if (
-        typeof cert.certId !== 'string' ||
-        typeof cert.subject !== 'string' ||
-        typeof cert.issuer !== 'string' ||
-        typeof cert.notBefore !== 'string' ||
-        typeof cert.notAfter !== 'string' ||
-        typeof cert.fingerprintSha256 !== 'string'
-      ) {
-        return null;
-      }
-      certificateChain.push({
-        certId: cert.certId,
-        subject: cert.subject,
-        issuer: cert.issuer,
-        notBefore: cert.notBefore,
-        notAfter: cert.notAfter,
-        fingerprintSha256: cert.fingerprintSha256,
-      });
-    }
-
-    const normalizedArtifact: CalibrationAttestationArtifactV1 = {
-      schemaVersion: 'wrf-calibration-attestation/v1',
-      artifactId: rawArtifact.artifactId,
-      subject: {
-        stationId: rawArtifact.subject.stationId,
-      },
-      issuer: {
-        issuerId: rawArtifact.issuer.issuerId,
-        certificateChain,
-      },
-      attestation: {
-        issuedAt: rawArtifact.attestation.issuedAt,
-        expiresAt: rawArtifact.attestation.expiresAt,
-      },
-      signature: {
-        algorithm: rawArtifact.signature.algorithm,
-        value: rawArtifact.signature.value,
-        ...(typeof rawArtifact.signature.signerPublicKey === 'string'
-          ? { signerPublicKey: rawArtifact.signature.signerPublicKey }
-          : {}),
-      },
-    };
-
-    const artifactDigestSha256 = computeSha256Hex(stableStringify(normalizedArtifact));
-    return {
-      raw: normalizedArtifact,
-      artifactDigestSha256,
-    };
+    return parseCalibrationArtifact(rawArtifact);
   }
 
   /**

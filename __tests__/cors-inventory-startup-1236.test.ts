@@ -5,8 +5,7 @@
  *     to the same relative path (infra companion adds that COPY).
  *   - services/feedback-collection-service.ts (allowedOrigins || '*') —
  *     applies CORS in its constructor, so construction is its startup.
- *   - graphql/server.ts and server/routes/climate-model-routes.js
- *     (FRONTEND_URL || localhost).
+ *   - graphql/server.ts (FRONTEND_URL || localhost).
  */
 import { spawn, type ChildProcess } from 'child_process';
 import * as fs from 'fs';
@@ -148,7 +147,7 @@ describe('feedback-collection OracleAPIService applies CORS at construction', ()
 });
 
 describe('FRONTEND_URL servers route through the helper', () => {
-  it.each(['graphql/server.ts', 'server/routes/climate-model-routes.js'])('%s', file => {
+  it.each(['graphql/server.ts'])('%s', file => {
     const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
     expect(source).toMatch(/resolveServiceCorsOrigins\(process\.env\.FRONTEND_URL/);
     expect(source).not.toMatch(/FRONTEND_URL \|\| 'http:\/\/localhost/);

@@ -5,8 +5,10 @@
  *
  * Field-aware, never textual (backend#1397 review): only known horizontal
  * coordinate fields are rounded, i.e. `latitude`/`longitude`/`lat`/`lon`/`lng`
- * (also as `_lat`-style and camelCase `…Lat` suffixes), and axes 0 and 1 of
- * GeoJSON positions (`coordinates`) and of `center`/`bbox`. Every string,
+ * (also as `_lat`-style and camelCase `…Lat` suffixes), their fixed-point
+ * spellings in 1e-7 degree (`latitude_e7`, `lonE7`, the chain's station
+ * record form), and axes 0 and 1 of GeoJSON positions (`coordinates`) and of
+ * `center`/`bbox`. Every string,
  * every id and every other axis (a 3D point's altitude) is left exactly as it
  * is: this guard never rewrites text. Owner-entered station NAMES are coarsened
  * by the station projections that serialise them (coarsenCoordinatesInName in
@@ -32,6 +34,29 @@ const HORIZONTAL_CAMEL_SUFFIX = /[a-z0-9](Lat|Latitude|Lng|Lon|Longitude)$/;
 const NUMBER_LIKE = /^\s*[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?\s*$/;
 function isCoordinateKey(key) {
   return HORIZONTAL_KEY.test(key) || HORIZONTAL_SUFFIX.test(key) || HORIZONTAL_CAMEL_SUFFIX.test(key);
+}
+
+// Fixed-point horizontal coordinates in units of 1e-7 degree: `latitude_e7`,
+// `station_lon_e7`, `latE7`, `stationLonE7`. 0.1 degree is 1_000_000 units.
+const FIXED_E7_KEY = /^(lat|latitude|lng|lon|longitude)_?e7$/i;
+const FIXED_E7_SUFFIX = /_(lat|latitude|lng|lon|longitude)_?e7$/i;
+const FIXED_E7_CAMEL_SUFFIX = /[a-z0-9](Lat|Latitude|Lng|Lon|Longitude)_?E7$/;
+const E7_UNITS_PER_TENTH_DEGREE = 1_000_000;
+const INTEGER_LIKE = /^\s*[+-]?\d+\s*$/;
+function isFixedE7CoordinateKey(key) {
+  return FIXED_E7_KEY.test(key) || FIXED_E7_SUFFIX.test(key) || FIXED_E7_CAMEL_SUFFIX.test(key);
+}
+
+/** A 1e-7 degree value on the 0.1 degree grid, keeping its JSON type. */
+function coarsenFixedE7Value(value) {
+  const round = (units) => Math.round(units / E7_UNITS_PER_TENTH_DEGREE) * E7_UNITS_PER_TENTH_DEGREE + 0;
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? round(value) : value;
+  }
+  if (typeof value === 'string' && INTEGER_LIKE.test(value)) {
+    return String(round(Number(value)));
+  }
+  return value;
 }
 
 /** One horizontal coordinate value at one decimal, keeping its JSON type. */
@@ -85,6 +110,8 @@ function coarsenCoordinatesDeep(value, depth = 0) {
   for (const [key, child] of Object.entries(value)) {
     if (isCoordinateKey(key) && (typeof child === 'number' || typeof child === 'string')) {
       out[key] = coarsenValue(child);
+    } else if (isFixedE7CoordinateKey(key) && (typeof child === 'number' || typeof child === 'string')) {
+      out[key] = coarsenFixedE7Value(child);
     } else if (key === 'coordinates' && Array.isArray(child)) {
       out[key] = coarsenCoordinatesArray(child);
     } else if (key === 'bbox' && Array.isArray(child)) {
@@ -174,4 +201,5 @@ module.exports = {
   coarsenCoordinatesDeep,
   isAuthorizedForExactCoordinates,
   isCoordinateKey,
+  isFixedE7CoordinateKey,
 };

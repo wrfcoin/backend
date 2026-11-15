@@ -24,6 +24,18 @@
 import express, { Router } from 'express';
 import { earningsEnabled } from '../services/chain-rewards/earnings.js';
 import { forecastersEnabled } from '../services/chain-rewards/forecaster-stats.js';
+import { competitionsEnabled } from '../services/chain-rewards/competition-stats.js';
+import { payoutNotifyEnabled } from '../services/payout-notify/watcher.js';
+import { calibrationCertificatesEnabled } from '../services/calibration-certificates.js';
+import { forecastVerificationEnabled } from '../services/forecast-verification/observed-verification-job.js';
+import { friendChallengesEnabled } from '../services/friend-challenges.js';
+import { duelsEnabled } from '../services/forecast-duels.js';
+
+/** Same per-request flag proof-card-routes.ts reads. */
+const proofCardsEnabled = () => process.env.PROOF_CARDS_ENABLED === 'true';
+
+/** Same per-request flag network-nodes-routes.ts reads. */
+const networkNodesEnabled = () => process.env.NETWORK_NODES_READ_ENABLED === 'true';
 import type {
   CapabilityMode,
   CapabilityReadinessResult,
@@ -146,6 +158,8 @@ export interface CapabilitiesRouterOptions {
  */
 const FEATURE_SEEDS: FeatureSeed[] = [
   { key: 'earningsRead', status: 'unavailable', note: 'Default-OFF indexed producer/attester earnings; contribution and forecast coverage remain gated' },
+  { key: 'networkNodesRead', status: 'unavailable', note: 'Default-OFF (NETWORK_NODES_READ_ENABLED) /api/network/nodes (network-nodes-routes.ts): producers from core4\'s genesis roster with activity counted from block producer keys, bonded nodes found via settlement epochs and NETWORK_NODES_BOND_IDS then checked with /node/bonds, attesters from oracle status; core4 has no list route for producers or bonds' },
+  { key: 'calibrationCertificates', status: 'unavailable', note: 'Default-OFF station calibration certificates (/api/calibration-certificates, core4#388/#435, backend#931): trust-root-signed ed25519 certificates stored off chain (migration 0038, applied by hand on CT101) and re-verified on every public read; trust roots only from CALIBRATION_TRUST_ROOTS_JSON (owner decision pending; recommended: the owner key alone on testnet). Nothing is written to core4 calibration_attestations: no live transaction writes that state and it feeds reward weight (consensus change)' },
   { key: 'forecastersRead', status: 'unavailable', note: 'Default-OFF forecaster track record (/api/forecasters, core4#3604 A4) read from the chain-rewards indexer forecast rows; skill and per-forecaster paid totals are not yet exposed by the node' },
   { key: 'wallet', status: 'operational', note: '/api/wallet and /api/wallet-auth are mounted (wallet-routes.js, wallet-auth-legacy-routes.js)' },
   // backend#1167: sub-capability of wallet, not a frontend features.ts key.
@@ -199,7 +213,7 @@ const FEATURE_SEEDS: FeatureSeed[] = [
   { key: 'computeMarketplace', status: 'unavailable', note: 'no compute-marketplace route is proxied into the main API; compute_networks_server.ts runs as a separate optional microservice behind infra\'s "full" profile — see readiness.computeMarketplace below' },
   { key: 'community', status: 'unavailable', note: 'no backend route found for community as of 2026-09-16' },
   { key: 'forecastStudio', status: 'unavailable', note: 'no dedicated route beyond the base forecast (/api/pythia, /api/weather) as of 2026-09-16' },
-  { key: 'notifications', status: 'unavailable', note: 'no backend route found for notifications as of 2026-09-16' },
+  { key: 'notifications', status: 'unavailable', note: 'Default-OFF payout notifications (/api/notifications, backend#389): wallet-login subscriptions delivered by Web Push or ntfy, no email or personal data; migration 0037. Needs PAYOUT_NOTIFY_ENABLED' },
   { key: 'leaderboard', status: 'operational', note: '/api/weather/leaderboard is mounted (weather-leaderboard-routes.ts, backend#695/#1131)' },
   { key: 'governanceAdvanced', status: 'operational', note: 'same backing as governance: /api/governance is mounted' },
   { key: 'realTime', status: 'operational', note: 'initializeRealtimeWebSocketServer(server) is real and called at startup' },
@@ -227,17 +241,40 @@ const FEATURE_SEEDS: FeatureSeed[] = [
   // backend#1178: the rest of the growth cluster stays DEFERRED — these routers
   // were only ever mounted in the never-deployed unified_api_server.ts. Like
   // wallet.history these are backend-side records, not features.ts keys.
-  { key: 'duels', status: 'unavailable', note: 'DEFERRED, not mounted (duel-routes.ts): forecast_duels has no migration, no code ever sets winner/resolvedAt (no resolver), and nothing escrows stakeAmount — mounting would accept stakes that can never settle (backend#1178)' },
-  { key: 'challenges', status: 'unavailable', note: 'DEFERRED, not mounted (challenge-routes.ts): challenges/challenge_participants have no migration (backend#1178)' },
-  { key: 'competitions', status: 'unavailable', note: 'DEFERRED, not mounted (competition-routes.ts): competitions/competition_scores have no migration (backend#1178)' },
-  { key: 'proofCards', status: 'unavailable', note: 'DEFERRED, not mounted (proof-card-routes.ts): only unified_api_server.ts mounted it and that entrypoint never deploys (backend#1178)' },
+  { key: 'duels', status: 'unavailable', note: 'Default-OFF (FORECAST_DUELS_ENABLED) FREE-PLAY /api/duels (duel-routes.ts, backend#228/#1424, migration 0041_forecast_duels): no stake, escrow or payout; players link their own forecast commits before the lock, hand in the commit record after the reveal (hash = commit id, valid_at = target hour), and a resolver judges from each commit\'s finalized forecast reward on chain (reward-evidence): higher wins, equal draws. Funded duels stay a separate consensus feature (forecast_duels_v1), not built' },
+  { key: 'competitions', status: 'unavailable', note: 'Default-OFF weekly forecast competition (/api/competitions, backend#251), points only, computed from the forecast index rows /api/forecasters reads; finished weeks frozen by migration 0036. Needs CHAIN_REWARD_INDEX_ENABLED and FORECAST_COMPETITIONS_ENABLED' },
+  { key: 'challenges', status: 'unavailable', note: 'Default-OFF (FRIEND_CHALLENGES_ENABLED) /api/challenges (challenge-routes.ts, backend#249, migration 0040_friend_challenges): friend challenges for the phone screen (mobile#260) and the web board; create/join/read need a wallet JWT for the acting wallet, the board by invite code is public. Points only, nothing is paid. Counts are readings from stations the wallet owns that landed on chain in the window (node observation scan), never a count the phone reports' },
+  { key: 'proofCards', status: 'unavailable', note: 'Default-OFF (PROOF_CARDS_ENABLED) /api/proofs/:commitId (proof-card-routes.ts, backend#229): one station reading and the block it landed in, read from the node (reward-evidence, observation scan, /chain/block); no backend table. A reveal outside the bounded scan is reported not_located, never guessed' },
+  { key: 'forecastVerification', status: 'unavailable', note: 'Default-OFF (FORECAST_VERIFICATION_ENABLED) /api/forecast-verification (forecast-verification-routes.ts default export, backend PR#72 / #1494, migration 0039): on-chain forecasts whose forecaster hands in the commit record (sha3 must equal the chain commit id, node must report a revealed forecast for that station) are scored against the hourly mean of the chain\'s own readings for the station, and against NOAA\'s hourly forecast captured before the forecast was issued. No reading in the target hour => unavailable, never a guessed truth. Read-side only, never feeds rewards' },
   { key: 'marketplace', status: 'unavailable', note: 'DEFERRED, not mounted (marketplace-routes.ts): only unified_api_server.ts mounted it and that entrypoint never deploys (backend#1178)' },
   { key: 'academic', status: 'unavailable', note: 'DEFERRED, not mounted (academic-routes.ts): only unified_api_server.ts mounted it and that entrypoint never deploys (backend#1178)' },
   { key: 'subscription', status: 'unavailable', note: 'DEFERRED, not mounted (subscription-routes.ts): only the never-deployed unified_api_server.ts mounted it (backend#1178)' },
-  { key: 'webhooks', status: 'unavailable', note: 'DEFERRED, not mounted (webhook-routes.ts): only the never-deployed unified_api_server.ts mounted it (backend#1178)' },
+  { key: 'webhooks', status: 'unavailable', note: 'NOT mounted (webhook-routes.ts): user-registered URLs are an SSRF surface; payout notifications ship as /api/notifications (Web Push/ntfy, backend#389) instead' },
   { key: 'telemetry', status: 'unavailable', note: 'DEFERRED, not mounted (telemetry-routes.ts): only the never-deployed unified_api_server.ts mounted it (backend#1178)' },
   { key: 'contributorSummary', status: 'unavailable', note: 'DEFERRED, not mounted (contributor-summary-routes.ts): only the never-deployed unified_api_server.ts mounted it (backend#1178)' },
 ];
+
+/** Read features that are honestly `configured` (never operational without evidence) once their flags are on. */
+const FLAG_GATED_READS = new Set(['earningsRead', 'forecastersRead', 'proofCards', 'networkNodesRead', 'competitions', 'notifications', 'calibrationCertificates', 'forecastVerification', 'challenges', 'duels']);
+
+/**
+ * Optional operator declaration of what this deployment really offers.
+ * `CAPABILITIES_ENABLED_FEATURES` is a comma-separated list of feature keys.
+ * Unset or empty: no change. Set: every feature NOT listed is reported
+ * `unavailable` / `not_wired` and is not release-required, whatever the
+ * static inventory says. A route being mounted in this process does not mean
+ * the deployment serves it (the public edge may not admit it, or the service
+ * behind it may not run), and only the operator knows that. The list can
+ * only narrow the answer: a listed feature is still classified by its seed,
+ * its flag and its evidence, and unknown keys are ignored. Read per request,
+ * like the other flags here. The value is never serialized.
+ */
+function declaredEnabledFeatures(): Set<string> | null {
+  const raw = process.env.CAPABILITIES_ENABLED_FEATURES?.trim();
+  if (!raw) return null;
+  const keys = raw.split(',').map((key) => key.trim()).filter((key) => key !== '');
+  return keys.length > 0 ? new Set(keys) : null;
+}
 
 const DEFAULT_MAX_EVIDENCE_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_PROBE_TIMEOUT_MS = 2_000;
@@ -453,14 +490,23 @@ export function createCapabilitiesRouter(
       probeTimeoutMs,
     );
     const features: Record<string, FeatureStatusEntry> = {};
+    const declared = declaredEnabledFeatures();
     for (const seed of FEATURE_SEEDS) {
-      if ((seed.key === 'earningsRead' && !earningsEnabled()) || (seed.key === 'forecastersRead' && !forecastersEnabled())) {
+      if ((declared !== null && !declared.has(seed.key)) || (seed.key === 'earningsRead' && !earningsEnabled()) || (seed.key === 'forecastersRead' && !forecastersEnabled())
+        || (seed.key === 'proofCards' && !proofCardsEnabled())
+        || (seed.key === 'networkNodesRead' && !networkNodesEnabled())
+        || (seed.key === 'competitions' && !competitionsEnabled())
+        || (seed.key === 'notifications' && !payoutNotifyEnabled())
+        || (seed.key === 'calibrationCertificates' && !calibrationCertificatesEnabled())
+        || (seed.key === 'forecastVerification' && !forecastVerificationEnabled())
+        || (seed.key === 'challenges' && !friendChallengesEnabled())
+        || (seed.key === 'duels' && !duelsEnabled())) {
         features[seed.key] = { status: 'unavailable', reasonCode: 'not_wired' };
         continue;
       }
       const observation = evidence[seed.key];
       features[seed.key] = evaluateFeature(
-        seed.key === 'earningsRead' || seed.key === 'forecastersRead' ? { ...seed, status: 'configured' } : seed,
+        FLAG_GATED_READS.has(seed.key) ? { ...seed, status: 'configured' } : seed,
         observation?.capabilityId === seed.key ? observation : undefined,
         evaluatedAt,
         maxEvidenceAgeMs,
@@ -470,6 +516,7 @@ export function createCapabilitiesRouter(
 
     const requiredCapabilities = FEATURE_SEEDS
       .filter((seed) => seed.status !== 'unavailable')
+      .filter((seed) => declared === null || declared.has(seed.key))
       .map((seed) => seed.key);
     const failures = requiredCapabilities
       .filter((capabilityId) => features[capabilityId].status !== 'operational')

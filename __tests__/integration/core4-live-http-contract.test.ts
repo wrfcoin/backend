@@ -14,9 +14,9 @@
  * exists to run this live: it sets `WRFCOIN_REQUIRE_LIVE_CORE4=1`, so losing
  * the env there throws instead of reporting a vacuous green skip.
  *
- * The `core4-http-contract` job in `.github/workflows/ci.yml` starts an
- * isolated launch_api on the CT102 self-hosted runner and runs this file with
- * the env supplied — the live assertions execute on every backend PR.
+ * `.github/workflows/core4-http-contract.yml` starts an isolated launch_api on
+ * a GitHub-hosted runner and runs this file with the env supplied, on pushes to
+ * main and on manual dispatch.
  */
 import { describe, expect, jest, test } from '@jest/globals';
 import { createWeatherCommitRevealService } from '../../server/routes/weather-commit-reveal-routes.js';

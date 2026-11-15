@@ -31,7 +31,7 @@ const rows = (): Row[] => [
 function makeApp(cache: any = null) {
   const execute = jest.fn(async () => ({ rows: rows() }));
   const app = express();
-  app.use('/api/weather/leaderboard', createWeatherLeaderboardRouter({ db: { execute } as any, cache, rateLimit: null }));
+  app.use('/api/weather/leaderboard', createWeatherLeaderboardRouter({ rewardChain: () => ({ chainId: '888', genesis: 'a'.repeat(64) }), db: { execute } as any, cache, rateLimit: null }));
   return { app, execute };
 }
 

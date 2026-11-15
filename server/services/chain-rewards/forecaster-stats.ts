@@ -46,6 +46,39 @@ export interface ForecasterStatsSource {
   resolveAddress(keyOrAddress: string): Promise<string | null>;
 }
 
+/**
+ * Run `fn` inside one consistent REPEATABLE READ view of the forecast index, but only when the index
+ * is healthy: status `ok`, no reorg probe, complete coverage from height 1, `checked_at` at most 10
+ * minutes old. Anything else rejects with `ForecastStatsUnavailable`. Shared with the weekly
+ * competition read model so both answer from the same gate.
+ */
+export async function withForecastSnapshot<T>(pool: Pool, chain: string, genesis: string, clock: () => number,
+  fn: (client: Client, header: SnapshotHeader) => Promise<T>): Promise<T> {
+  const args = [chain, genesis];
+  let client: Client | undefined;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const state = (await client.query(`SELECT s.*, to_char(b.block_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS block_time
+      FROM chain_reward_index_state s
+      JOIN chain_reward_blocks b ON b.chain_id=s.chain_id AND b.genesis_hash=s.genesis_hash AND b.height=s.cursor_height AND b.block_hash=s.cursor_hash
+      WHERE s.chain_id=$1 AND s.genesis_hash=$2`, args)).rows[0];
+    const age = state ? clock() - new Date(state.checked_at).getTime() : NaN;
+    if (!state || state.status !== 'ok' || state.reorg_probe_height !== null || state.parser_version !== 1 ||
+        Number(state.history_floor) !== 1 || !Number.isFinite(age) || age < -5000 || age > 600000) throw new ForecastStatsUnavailable();
+    const coverage = (await client.query(`SELECT count(*)::text AS count, min(height)::text AS floor, max(height)::text AS ceiling,
+      bool_and(parser_version=1) AS parsed FROM chain_reward_blocks WHERE chain_id=$1 AND genesis_hash=$2`, args)).rows[0];
+    if (!coverage?.parsed || coverage.floor !== '1' || coverage.ceiling !== String(state.cursor_height) || coverage.count !== String(state.cursor_height)) throw new ForecastStatsUnavailable();
+    const skipped = (await client.query('SELECT coalesce(sum(skipped_records),0)::text AS skipped FROM chain_forecast_block_stats WHERE chain_id=$1 AND genesis_hash=$2', args)).rows[0];
+    const header: SnapshotHeader = { units,
+      coverage: { fromHeight: '1', throughHeight: String(state.cursor_height), complete: true, skippedRecords: skipped.skipped },
+      asOf: { height: String(state.cursor_height), hash: state.cursor_hash, time: state.block_time, checkedAt: new Date(state.checked_at).toISOString() },
+      finalityPolicy: 'confirmed-canonical-with-rollback' };
+    const result = await fn(client, header); await client.query('COMMIT'); return result;
+  } catch { if (client) { try { await client.query('ROLLBACK'); } catch {} } throw new ForecastStatsUnavailable(); }
+  finally { client?.release(); }
+}
+
 function display(amount: string) {
   const n = BigInt(amount); return `${n / 100000000n}.${(n % 100000000n).toString().padStart(8, '0')}`;
 }
@@ -55,30 +88,8 @@ export function createForecasterStatsSource(pool: Pool, chain: string, genesis: 
   profileKeyFor: (address: string) => string | null = () => null): ForecasterStatsSource {
   const args = [chain, genesis];
 
-  async function snapshot<T>(fn: (client: Client, header: SnapshotHeader) => Promise<T>): Promise<T> {
-    let client: Client | undefined;
-    try {
-      client = await pool.connect();
-      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-      const state = (await client.query(`SELECT s.*, to_char(b.block_time AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS block_time
-        FROM chain_reward_index_state s
-        JOIN chain_reward_blocks b ON b.chain_id=s.chain_id AND b.genesis_hash=s.genesis_hash AND b.height=s.cursor_height AND b.block_hash=s.cursor_hash
-        WHERE s.chain_id=$1 AND s.genesis_hash=$2`, args)).rows[0];
-      const age = state ? clock() - new Date(state.checked_at).getTime() : NaN;
-      if (!state || state.status !== 'ok' || state.reorg_probe_height !== null || state.parser_version !== 1 ||
-          Number(state.history_floor) !== 1 || !Number.isFinite(age) || age < -5000 || age > 600000) throw new ForecastStatsUnavailable();
-      const coverage = (await client.query(`SELECT count(*)::text AS count, min(height)::text AS floor, max(height)::text AS ceiling,
-        bool_and(parser_version=1) AS parsed FROM chain_reward_blocks WHERE chain_id=$1 AND genesis_hash=$2`, args)).rows[0];
-      if (!coverage?.parsed || coverage.floor !== '1' || coverage.ceiling !== String(state.cursor_height) || coverage.count !== String(state.cursor_height)) throw new ForecastStatsUnavailable();
-      const skipped = (await client.query('SELECT coalesce(sum(skipped_records),0)::text AS skipped FROM chain_forecast_block_stats WHERE chain_id=$1 AND genesis_hash=$2', args)).rows[0];
-      const header: SnapshotHeader = { units,
-        coverage: { fromHeight: '1', throughHeight: String(state.cursor_height), complete: true, skippedRecords: skipped.skipped },
-        asOf: { height: String(state.cursor_height), hash: state.cursor_hash, time: state.block_time, checkedAt: new Date(state.checked_at).toISOString() },
-        finalityPolicy: 'confirmed-canonical-with-rollback' };
-      const result = await fn(client, header); await client.query('COMMIT'); return result;
-    } catch { if (client) { try { await client.query('ROLLBACK'); } catch {} } throw new ForecastStatsUnavailable(); }
-    finally { client?.release(); }
-  }
+  const snapshot = <T>(fn: (client: Client, header: SnapshotHeader) => Promise<T>): Promise<T> =>
+    withForecastSnapshot(pool, chain, genesis, clock, fn);
 
   /** [start, end] bounds for a period ending at the snapshot's block time; `null` start = all time. */
   async function bounds(client: Client, header: SnapshotHeader, period: ForecasterPeriod, back = 0): Promise<{ start: string | null; end: string }> {

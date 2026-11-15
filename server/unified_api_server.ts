@@ -48,9 +48,6 @@ const {
 const { requireAuth } = require('./middleware/authMiddleware');
 
 // Import modular router systems
-const computeRoutes = require('./routes/compute-routes');
-const aimlRoutes = require('./routes/aiml-routes');
-const performanceRoutes = require('./routes/performance-routes');
 import referralRoutes from './routes/referral-routes.js';
 import telemetryRoutes from './routes/telemetry-routes.js';
 import challengeRoutes from './routes/challenge-routes.js';
@@ -305,9 +302,6 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Mount modular router systems
-app.use('/api/compute', computeRoutes);
-app.use('/api/aiml', aimlRoutes);
-app.use('/api/performance', performanceRoutes);
 app.use('/api/referrals', referralRoutes);
 app.use('/api/telemetry', telemetryRoutes);
 app.use('/api/challenges', challengeRoutes);
@@ -334,9 +328,6 @@ import('./routes/weather-leaderboard-routes.js').then(m => {
 import('./routes/webhook-routes.js').then(m => {
   app.use('/api/webhooks', m.default);
 }).catch((err: unknown) => appLogger.error('Failed to load webhook-routes', { err }));
-import('./routes/contributor-summary-routes.js').then(m => {
-  app.use('/api/contributor', m.createContributorSummaryRouter());
-}).catch((err: unknown) => appLogger.error('Failed to load contributor-summary-routes', { err }));
 
 // LangChain Analytics Integration API
 const langchainStatusHandler: RequestHandler = (

@@ -315,6 +315,20 @@ router.post('/stations', weatherPostLimiter, authenticateWeatherRequest, async (
     }
 
     const { registerStation } = await getStationService();
+    // With website station registration switched on, a NEW station always gets
+    // a neutral server-issued id (`pws-` + 16 hex from the system CSPRNG): a
+    // station id is public on chain for good and must not hold the name its
+    // owner typed. A client-supplied id is honoured only for a station this
+    // wallet already owns (an update).
+    // The switch is read here, from the environment, so that with it OFF this route
+    // does not even load the registration module and cannot be broken by it. With
+    // it ON a load failure refuses the request (500): issuing a name-based id
+    // would defeat the point of the switch.
+    let neutralStationId;
+    if (process.env.WEBSITE_STATION_CHAIN_REGISTRATION_ENABLED === 'true') {
+      const chainRegistration = await getChainRegistrationService();
+      neutralStationId = chainRegistration.newNeutralStationId;
+    }
     const pool = await getPool();
     // Single connection + explicit transaction: the service takes a per-owner
     // pg_advisory_xact_lock over its count-then-insert section, which only
@@ -330,7 +344,7 @@ router.post('/stations', weatherPostLimiter, authenticateWeatherRequest, async (
         ownerAddress,
         { pool: client, fetchFn: defaultFetch, encryptionKey },
         (bytes) => crypto.randomBytes(bytes).toString('hex'),
-        { isAdminOverride, maxStationsPerOwner: process.env.MAX_STATIONS_PER_OWNER }
+        { isAdminOverride, maxStationsPerOwner: process.env.MAX_STATIONS_PER_OWNER, neutralStationId }
       );
       if (result.status < 400) {
         await client.query('COMMIT');
@@ -497,7 +511,11 @@ router.get('/stations/:stationId/reward-progress', weatherGetLimiter, authentica
       const progress = await getStationRewardProgress(pool, stationId, ownerAddress, undefined, {
         chainEvidence: await getChainRewardEvidence(),
       });
-      return res.json(progress);
+      // Where the station is on its way to earning: needs the owner's signature,
+      // waiting for an on-chain registration batch, or earning. Owner-only (this
+      // route already is). Absent when the switch is off; null when unreadable.
+      const chainRegistration = await readChainRegistration(pool, stationId, ownerAddress);
+      return res.json(chainRegistration === undefined ? progress : { ...progress, chainRegistration });
     } catch (error) {
       if (error instanceof StationRewardProgressNotFound) {
         // Do not reveal whether a station exists for a different wallet.
@@ -510,6 +528,226 @@ router.get('/stations/:stationId/reward-progress', weatherGetLimiter, authentica
       error: error.message,
     });
     return res.status(503).json(createApiError('SERVICE_UNAVAILABLE', 'Reward progress temporarily unavailable'));
+  }
+});
+
+// Website station on-chain registration (off unless
+// WEBSITE_STATION_CHAIN_REGISTRATION_ENABLED=true; needs migration 0045).
+let _chainRegistrationService = null;
+async function getChainRegistrationService() {
+  if (!_chainRegistrationService) {
+    _chainRegistrationService = await import('../services/website-station-chain-registration.js');
+  }
+  return _chainRegistrationService;
+}
+
+/** undefined = switched off (field omitted); null = could not be read, or no chain is configured. */
+async function readChainRegistration(pool, stationId, ownerAddress) {
+  try {
+    const service = await getChainRegistrationService();
+    if (!service.websiteStationChainRegistrationEnabled()) return undefined;
+    const chain = service.resolveWebsiteStationChain();
+    if (!chain) return null;
+    return await service.getChainRegistrationStatus(pool, stationId, ownerAddress, chain);
+  } catch (error) {
+    logger.warn('Station chain registration status unavailable');
+    return null;
+  }
+}
+
+// The owner's wallet hands in its ownership proof for one of its stations: a
+// public key and a signature over the chain's station ownership message. It is
+// stored for the next on-chain registration batch. This never registers
+// anything on chain and never marks a station as earning.
+// Switched off, the route does not exist for anyone: the 404 comes before the
+// session check, so a signed-out caller cannot tell it apart from no route.
+async function requireWebsiteStationChainRegistration(req, res, next) {
+  try {
+    const service = await getChainRegistrationService();
+    if (!service.websiteStationChainRegistrationEnabled()) {
+      return res.status(404).json(createApiError('NOT_FOUND', 'Not found'));
+    }
+    return next();
+  } catch (error) {
+    return res.status(404).json(createApiError('NOT_FOUND', 'Not found'));
+  }
+}
+
+router.post(
+  '/stations/:stationId/ownership-proof',
+  weatherPostLimiter,
+  requireWebsiteStationChainRegistration,
+  authenticateWeatherRequest,
+  async (req, res) => {
+    try {
+      const service = await getChainRegistrationService();
+      // No default chain on this path: an unset chain id or network id refuses
+      // the request rather than checking the signature against a guessed chain.
+      const chain = service.resolveWebsiteStationChain();
+      if (!chain) {
+        logger.error('Station ownership proof refused: WRFCOIN_CHAIN_ID / WRFCOIN_NETWORK_ID not set');
+        return res
+          .status(503)
+          .json(createApiError('CHAIN_NOT_CONFIGURED', 'Station registration is not configured on this server'));
+      }
+      const ownerAddress = req.user?.address;
+      if (!ownerAddress || ownerAddress === 'unknown') {
+        return res.status(401).json(createApiError('UNAUTHORIZED', 'Wallet address required'));
+      }
+      let stationId = String(req.params.stationId || '');
+      if (!/^[a-zA-Z0-9_-]{1,64}$/.test(stationId)) {
+        return res.status(400).json(createApiError('INVALID_REQUEST', 'Invalid station ID'));
+      }
+      const pool = await getPool();
+      if (isStationAlias(stationId)) {
+        const resolved = await resolveStationAlias(
+          async (sql, params) => (await pool.query(sql, params)).rows || [],
+          stationId
+        );
+        if (resolved.status !== 'found') {
+          return res.status(404).json(createApiError('NOT_FOUND', 'Station not found'));
+        }
+        stationId = resolved.stationId;
+      }
+      const result = await service.submitOwnershipProof(pool, ownerAddress, stationId, req.body, chain);
+      const body = result.status < 400 ? { success: true, ...result.body } : result.body;
+      return res.status(result.status).json(body);
+    } catch (error) {
+      logger.error('Error storing station ownership proof');
+      return res
+        .status(503)
+        .json(createApiError('SERVICE_UNAVAILABLE', 'Station registration temporarily unavailable'));
+    }
+  }
+);
+
+// "My stations" (owner decision 2026-11-10): the stations the signed-in wallet
+// owns, whichever browser connected them. OFF unless MY_STATIONS_ENABLED=true.
+// The session check comes first (401 for every signed-out caller, switch on or
+// off, so the anonymous-GET ratchet sees an auth-required route); a signed-in
+// wallet gets 404 while it is off. The owner is the session's JWT address,
+// never a parameter. Passkey sessions get an empty list until Phase 2
+// (MY_STATIONS_PASSKEY_ENABLED=true), when the chain pays passkey owners.
+// Rows carry the public alias and name, freshness and the on-chain step; never
+// coordinates, raw ids, keys or rewards.
+function myStationsEnabled(env = process.env) {
+  return env.MY_STATIONS_ENABLED === 'true';
+}
+function myStationsPasskeyEnabled(env = process.env) {
+  return env.MY_STATIONS_PASSKEY_ENABLED === 'true';
+}
+function requireMyStations(req, res, next) {
+  if (!myStationsEnabled()) return res.status(404).json(createApiError('NOT_FOUND', 'Not found'));
+  return next();
+}
+const myStationsWalletLimiter = walletRateLimit(60);
+
+function publicChainState(status) {
+  if (status === undefined) return undefined;
+  if (!status || typeof status.state !== 'string') return null;
+  return {
+    state: status.state,
+    ...(typeof status.waitingFor === 'string' ? { waitingFor: status.waitingFor } : {}),
+    ...(typeof status.blockedReason === 'string' ? { blockedReason: status.blockedReason } : {}),
+  };
+}
+
+router.get(
+  '/stations/mine',
+  weatherGetLimiter,
+  authenticateWeatherRequest,
+  requireMyStations,
+  myStationsWalletLimiter,
+  async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const ownerAddress = typeof req.user?.address === 'string' ? req.user.address.trim().toLowerCase() : '';
+    if (!ownerAddress || ownerAddress === 'unknown') {
+      return res.status(401).json(createApiError('UNAUTHORIZED', 'Wallet address required'));
+    }
+    if (req.user?.walletScheme === 'passkey' && !myStationsPasskeyEnabled()) {
+      return res.json({ success: true, stations: [], truncated: false, passkey: 'later' });
+    }
+    try {
+      const { listStationsOwnedBy } = await getStationService();
+      const pool = await getPool();
+      let chainLastSeen;
+      try {
+        chainLastSeen = await getChainLastSeen();
+      } catch (error) {
+        chainLastSeen = undefined;
+      }
+      const owned = await listStationsOwnedBy(pool, ownerAddress, { chainLastSeen });
+      const stations = [];
+      for (const station of owned.stations) {
+        const onChain = publicChainState(await readChainRegistration(pool, station.stationId, ownerAddress));
+        stations.push(
+          scrubRawId(
+            {
+              alias: stationAlias(station.stationId),
+              name: publicStationName(station),
+              status: PUBLIC_STATION_STATUSES.has(station.status) ? station.status : null,
+              lastReadingAt: isoTimestampOrNull(station.lastDataUpdate),
+              ...(onChain === undefined ? {} : { onChain }),
+            },
+            station.stationId
+          )
+        );
+      }
+      return res.json({ success: true, stations, truncated: owned.truncated });
+    } catch (error) {
+      logger.error('Error listing the wallet\'s own stations');
+      return res.status(503).json(createApiError('SERVICE_UNAVAILABLE', 'Your stations are temporarily unavailable'));
+    }
+  }
+);
+
+// The collector's roster: website stations that are registered on chain, with
+// their DECRYPTED provider keys (see services/collector-roster.ts). Internal
+// only: the collector calls the backend on the compose network, and the public
+// edge does not admit this path.
+//  - The operator token only, checked first. A reader token, a wallet session,
+//    no token and a wrong token all get the same 403, switch on or off, so a
+//    caller without the token learns nothing about the switch.
+//  - OFF unless COLLECTOR_ROSTER_ENABLED=true: 404 even with the token.
+//  - Never cached, rate limited, and no key, provider answer or raw error
+//    message reaches a log line or a response body.
+const collectorRosterLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 12,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' },
+});
+router.get('/stations/collector-roster', collectorRosterLimiter, async (req, res) => {
+  res.set('Cache-Control', 'private, no-store');
+  const operatorToken = process.env.WRFCOIN_OPERATOR_TOKEN;
+  const auth = req.header('authorization') || '';
+  const presented = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+  if (!operatorToken || !presented || !secureCompare(presented, operatorToken)) {
+    return res.status(403).json(createApiError('FORBIDDEN', 'Operator token required'));
+  }
+  if (process.env.COLLECTOR_ROSTER_ENABLED !== 'true') {
+    return res.status(404).json(createApiError('NOT_FOUND', 'Not found'));
+  }
+  try {
+    let encryptionKey;
+    try {
+      encryptionKey = getEncryptionKey();
+    } catch {
+      logger.error('Collector roster misconfigured: encryption key not usable');
+      return res.status(500).json(createApiError('SERVER_MISCONFIGURED', 'Encryption key not configured'));
+    }
+    const { listCollectorRoster } = await import('../services/collector-roster.js');
+    const pool = await getPool();
+    const roster = await listCollectorRoster(pool, encryptionKey);
+    if (roster.skipped > 0) {
+      logger.warn('Collector roster left stations out', { skipped: roster.skipped, served: roster.stations.length });
+    }
+    return res.json(roster);
+  } catch (error) {
+    // The error's code only: its message could quote a row.
+    logger.error('Collector roster unavailable', { code: typeof error?.code === 'string' ? error.code : 'UNKNOWN' });
+    return res.status(503).json(createApiError('SERVICE_UNAVAILABLE', 'Collector roster temporarily unavailable'));
   }
 });
 

@@ -53,7 +53,25 @@ const reachedHeader = 'x-safe-mount-build-reached';
 // 56: core4#3604 A4 adds the default-OFF /api/forecasters read router (./routes/forecasters-routes).
 // 57: self-serve bond-grant proxy.
 // 58: backend-archive#1495 mounts the default-OFF /api/transport/email observation gateway.
-const expectedMountCount = 58;
+// 59: backend#21's passkey send router reaches the deployed entrypoint (./routes/wallet-passkey-send-gate).
+// 60: owner ruling 2026-10-28 (b) mounts the default-OFF /api/public/balance read.
+// 61: backend#229 mounts the default-OFF /api/proofs proof card read (./routes/proof-card-routes).
+// 62: owner demo queue 2026-11-01 item 3 mounts the default-OFF /api/network nodes read (./routes/network-nodes-routes).
+// 63: owner ruling 2026-11-01 mounts the default-OFF bring-your-own-key Wolfram reading check.
+// 64: backend#251 mounts the default-OFF weekly forecast competition read (./routes/competition-routes).
+// 65: backend#389 mounts the default-OFF payout notifications (./routes/payout-notification-routes).
+// 66: core4#388/#435 mounts the default-OFF /api/calibration-certificates router.
+// 67: owner demo queue 2026-11-01 item 7 mounts the default-OFF /api/forecast-verification read.
+// 68: backend#249 mounts the default-OFF /api/challenges friend challenges (./routes/challenge-routes).
+// 69: backend#228 mounts the default-OFF free-play /api/duels (./routes/duel-routes).
+// 70: epic 7 mounts the default-OFF website forecast relay /api/forecasts (./routes/website-forecast-routes).
+// 71: operator-only usage counts /api/admin/usage-counts (./routes/usage-counts-routes).
+// 72: default-OFF bond admission proxy /api/bond-admission (./routes/bond-admission-routes).
+// 73: skill-pay backtest mounts the default-OFF /api/public/station-history read (./routes/public-station-history-routes).
+// 74: default-OFF claim mailbox read proxy /api/claim-mailbox (./routes/claim-mailbox-routes).
+// 75: owner decision 2026-11-01 mounts the default-OFF /api/public/network-status read (./routes/public-network-status-routes).
+// 76: epic 6 option B mounts the default-OFF node address record POST /api/node-addresses (./routes/node-address-routes).
+const expectedMountCount = 76;
 
 // Removed by #935/#937 — each of these now PASSES this gate, and the gate
 // itself instructed the removal ("known failures now pass; remove their

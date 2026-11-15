@@ -233,7 +233,10 @@ describe('live entrypoint wiring (#1178)', () => {
   });
 
   it.each([
-    'duel-routes', 'challenge-routes', 'competition-routes', 'proof-card-routes', 'marketplace-routes',
+    // proof-card-routes left this list in backend#229 and competition-routes in backend#251: both mounted default-OFF.
+    // challenge-routes left this list in backend#249: rebuilt for the phone screen, mounted default-OFF.
+    // duel-routes left this list in backend#228: rebuilt as free play (no stakes), mounted default-OFF.
+    'marketplace-routes',
     'academic-routes', 'subscription-routes', 'webhook-routes', 'telemetry-routes', 'contributor-summary-routes',
   ])('does not mount the deferred %s', (mod) => {
     expect(entry).not.toMatch(new RegExp(`['"]\\./routes/${mod}(\\.js)?['"]`));

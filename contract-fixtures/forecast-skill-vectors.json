@@ -1,0 +1,4779 @@
+{
+ "schema": "wrfcoin-forecast-skill-vectors/v3",
+ "about": "Shared vectors for the integer forecast skill rule. A second implementation passes when it reproduces every 'expect' exactly. Every number is an integer.",
+ "rule": [
+  "Arithmetic: every division is integer division truncating toward zero; isqrt is the floor square root.",
+  "Units: temperature in 0.01 degC, pressure in Pa (0.01 hPa); skill in millionths, 0..=1000000.",
+  "1 Range ('range'): temperature -10000..=10000, pressure 30000..=120000, inclusive. An out-of-range reading is ignored; an out-of-range forecast is unscored.",
+  "2 Times: commit = the commit block's time; target = commit + lead hours.",
+  "3 Readings that count ('rule3_scenarios'): a station reading counts when it is in range (rule 1), its provenance class is not 'synthetic' (no class recorded, or any other class, counts), and it has reached the oracle attestation quorum.",
+  "3a Quorum is taken AS OF the closing block: the first block whose time is >= target + 35 min. A reading that reaches quorum later does not count. A forecast is not scored before the chain tip's time has reached target + 35 min (15 minutes of readings plus 20 minutes to land and reach quorum), so the candidate set is closed. In 'rule3_scenarios', has_quorum is the state as of the closing block.",
+  "3b Truth candidates: landed in a block whose time is in [target - 15 min, target + 35 min). nearest_reading then requires |observed_at - target| <= 15 min.",
+  "3c Window candidates (for hourly_window and 'last'): landed at a height from the first block whose time is >= commit - 24 h up to commit_height - 1 (so: block_time >= commit - 24 h and height < commit_height). hourly_window and last_reading_before then require observed_at in [commit - 24 h, commit).",
+  "3d A reading that landed in any other block does not count, whatever observation time it claims (back-dated or future-dated).",
+  "4 Truth ('nearest_reading'): the candidate nearest target; ties go to the earlier reading, then the smaller id (byte order). None: no score.",
+  "5 Window ('hourly_window'): 24 slots, slot k = [commit - (24-k) h, commit - (23-k) h); sample = sum / count of the slot's readings, or null. 'last' ('last_reading_before') = the newest reading in [commit - 24 h, commit); ties: the smaller id.",
+  "6 Reference ('reference'), n = slots with a sample, lag = lead hours: fewer than 12 samples = no baseline (expect null, unscored). mean24 = sum/n. spread = isqrt((n*sum(x^2) - sum(x)^2) / n^2). pairs = slot pairs (i, i+lag) where both have a sample. persistence = isqrt(sum((x[i+lag]-x[i])^2) / pairs) when pairs >= 6, else null. reference = persistence when it is not null and smaller than spread ('persistence_spread'), else spread ('climatology_spread').",
+  "7 Score ('skill'): err = |forecast - truth|. copy = |forecast - mean24| <= tol or |forecast - last| <= tol (tol default 5). skill = 0 if copy or reference == 0, else max(0, 1000000 - 1000000*err/reference). beat_baseline = skill > 0.",
+  "Widths: with |x| <= 120000 (rule 1) and n <= 24: n*sum(x^2) <= 24*24*120000^2 < 8.3e12, sum(x)^2 < 8.3e12, sum of squared differences < 1.4e12, 1000000*err <= 2.4e11. Everything fits i64; no 128-bit arithmetic is needed. The separate 'skill_wide_arithmetic' section uses values near 2^31, outside the range rule, to check the arithmetic alone (1000000*err stays below 2^53); an implementation that range-checks inside its score function may skip that section. Every case in 'skill' names its variable and has forecast, truth, mean24 and last inside that variable's range.",
+  "'fixed_point' is NOT part of the rule: it is the backend's adapter from the decimal text the node relays today to fixed point (2 places, round half away from zero; null = refused). The rule itself takes integers."
+ ],
+ "precision": 1000000,
+ "default_tol": 5,
+ "min_window_samples": 12,
+ "min_persistence_pairs": 6,
+ "truth_max_distance_s": 900,
+ "landing_margin_s": 1200,
+ "score_delay_s": 2100,
+ "range": [
+  {
+   "variable": "temperature_c",
+   "value": -10000,
+   "expect": true
+  },
+  {
+   "variable": "temperature_c",
+   "value": -10001,
+   "expect": false
+  },
+  {
+   "variable": "temperature_c",
+   "value": 10000,
+   "expect": true
+  },
+  {
+   "variable": "temperature_c",
+   "value": 10001,
+   "expect": false
+  },
+  {
+   "variable": "temperature_c",
+   "value": 0,
+   "expect": true
+  },
+  {
+   "variable": "pressure_hpa",
+   "value": 30000,
+   "expect": true
+  },
+  {
+   "variable": "pressure_hpa",
+   "value": 29999,
+   "expect": false
+  },
+  {
+   "variable": "pressure_hpa",
+   "value": 120000,
+   "expect": true
+  },
+  {
+   "variable": "pressure_hpa",
+   "value": 120001,
+   "expect": false
+  },
+  {
+   "variable": "pressure_hpa",
+   "value": 101325,
+   "expect": true
+  },
+  {
+   "variable": "pressure_hpa",
+   "value": 0,
+   "expect": false
+  }
+ ],
+ "rule3_scenarios": [
+  {
+   "name": "quorum: the nearest reading has no quorum, the next nearest is the truth",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "a",
+     "observed_at": 1800121600,
+     "value": 1900,
+     "height": 5282,
+     "block_time": 1800121750,
+     "has_quorum": false,
+     "provenance": "real"
+    },
+    {
+     "id": "b",
+     "observed_at": 1800121000,
+     "value": 1895,
+     "height": 5274,
+     "block_time": 1800121150,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "c",
+     "observed_at": 1800122260,
+     "value": 1906,
+     "height": 5291,
+     "block_time": 1800122410,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [
+     "b",
+     "c"
+    ],
+    "truth": "b",
+    "window_candidates": [],
+    "last": null,
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ]
+   }
+  },
+  {
+   "name": "quorum: no candidate has quorum, no truth",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "a",
+     "observed_at": 1800121600,
+     "value": 1900,
+     "height": 5282,
+     "block_time": 1800121750,
+     "has_quorum": false,
+     "provenance": "real"
+    },
+    {
+     "id": "b",
+     "observed_at": 1800121000,
+     "value": 1895,
+     "height": 5274,
+     "block_time": 1800121150,
+     "has_quorum": false,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [],
+    "truth": null,
+    "window_candidates": [],
+    "last": null,
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ]
+   }
+  },
+  {
+   "name": "provenance: synthetic never counts; no class recorded and other classes count",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "a",
+     "observed_at": 1800121600,
+     "value": 1900,
+     "height": 5282,
+     "block_time": 1800121750,
+     "has_quorum": true,
+     "provenance": "synthetic"
+    },
+    {
+     "id": "b",
+     "observed_at": 1800121630,
+     "value": 1901,
+     "height": 5282,
+     "block_time": 1800121780,
+     "has_quorum": true,
+     "provenance": null
+    },
+    {
+     "id": "c",
+     "observed_at": 1800121560,
+     "value": 1899,
+     "height": 5281,
+     "block_time": 1800121710,
+     "has_quorum": true,
+     "provenance": "unclassified"
+    },
+    {
+     "id": "d",
+     "observed_at": 1800121650,
+     "value": 1902,
+     "height": 5283,
+     "block_time": 1800121800,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "w1",
+     "observed_at": 1800099700,
+     "value": 1700,
+     "height": 4998,
+     "block_time": 1800099850,
+     "has_quorum": true,
+     "provenance": "synthetic"
+    },
+    {
+     "id": "w2",
+     "observed_at": 1800099100,
+     "value": 1690,
+     "height": 4990,
+     "block_time": 1800099250,
+     "has_quorum": true,
+     "provenance": null
+    }
+   ],
+   "expect": {
+    "truth_candidates": [
+     "b",
+     "c",
+     "d"
+    ],
+    "truth": "b",
+    "window_candidates": [
+     "w2"
+    ],
+    "last": "w2",
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     1690
+    ]
+   }
+  },
+  {
+   "name": "range: an out-of-range reading is skipped for the next nearest",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "a",
+     "observed_at": 1800121600,
+     "value": 50000,
+     "height": 5282,
+     "block_time": 1800121750,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "b",
+     "observed_at": 1800121720,
+     "value": 10001,
+     "height": 5284,
+     "block_time": 1800121870,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "c",
+     "observed_at": 1800121300,
+     "value": 10000,
+     "height": 5278,
+     "block_time": 1800121450,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "d",
+     "observed_at": 1800122200,
+     "value": 1900,
+     "height": 5290,
+     "block_time": 1800122350,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [
+     "c",
+     "d"
+    ],
+    "truth": "c",
+    "window_candidates": [],
+    "last": null,
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ]
+   }
+  },
+  {
+   "name": "range: pressure bounds",
+   "variable": "pressure_hpa",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 1,
+   "target": 1800103600,
+   "readings": [
+    {
+     "id": "a",
+     "observed_at": 1800103600,
+     "value": 29999,
+     "height": 5048,
+     "block_time": 1800103750,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "b",
+     "observed_at": 1800103660,
+     "value": 30000,
+     "height": 5049,
+     "block_time": 1800103810,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "c",
+     "observed_at": 1800103510,
+     "value": 120001,
+     "height": 5047,
+     "block_time": 1800103660,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "w1",
+     "observed_at": 1800099940,
+     "value": 120000,
+     "height": 4999,
+     "block_time": 1800099990,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "w2",
+     "observed_at": 1800099970,
+     "value": 120001,
+     "height": 4999,
+     "block_time": 1800099995,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [
+     "b"
+    ],
+    "truth": "b",
+    "window_candidates": [
+     "w1"
+    ],
+    "last": "w1",
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     120000
+    ]
+   }
+  },
+  {
+   "name": "truth landing blocks: [target - 15 min, target + 35 min)",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "in_first",
+     "observed_at": 1800120700,
+     "value": 1880,
+     "height": 5268,
+     "block_time": 1800120700,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "out_before",
+     "observed_at": 1800120710,
+     "value": 1881,
+     "height": 5268,
+     "block_time": 1800120699,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "in_last",
+     "observed_at": 1800121660,
+     "value": 1903,
+     "height": 5307,
+     "block_time": 1800123699,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "out_closing_block",
+     "observed_at": 1800121630,
+     "value": 1902,
+     "height": 5307,
+     "block_time": 1800123700,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "out_later",
+     "observed_at": 1800121600,
+     "value": 1900,
+     "height": 5397,
+     "block_time": 1800130600,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [
+     "in_first",
+     "in_last"
+    ],
+    "truth": "in_last",
+    "window_candidates": [],
+    "last": null,
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ]
+   }
+  },
+  {
+   "name": "truth: a reading landed in time but observed more than 15 minutes away is a candidate, not the truth",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "a",
+     "observed_at": 1800120699,
+     "value": 1880,
+     "height": 5271,
+     "block_time": 1800120900,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "b",
+     "observed_at": 1800122501,
+     "value": 1910,
+     "height": 5293,
+     "block_time": 1800122600,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [
+     "a",
+     "b"
+    ],
+    "truth": null,
+    "window_candidates": [],
+    "last": null,
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ]
+   }
+  },
+  {
+   "name": "window landing height: commit - 1 counts, the commit block and later do not",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "below",
+     "observed_at": 1800099400,
+     "value": 1715,
+     "height": 4999,
+     "block_time": 1800099923,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "at_commit",
+     "observed_at": 1800099940,
+     "value": 1810,
+     "height": 5000,
+     "block_time": 1800100000,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "above",
+     "observed_at": 1800099970,
+     "value": 1811,
+     "height": 5001,
+     "block_time": 1800100077,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "backdated",
+     "observed_at": 1800099997,
+     "value": 1812,
+     "height": 5008,
+     "block_time": 1800100660,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [],
+    "truth": null,
+    "window_candidates": [
+     "below"
+    ],
+    "last": "below",
+    "window": [
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     1715
+    ]
+   }
+  },
+  {
+   "name": "window lower bound: landed at or after commit - 24 h",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "in_first",
+     "observed_at": 1800013600,
+     "value": 1000,
+     "height": 3877,
+     "block_time": 1800013600,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "out_before",
+     "observed_at": 1800013600,
+     "value": 1001,
+     "height": 3877,
+     "block_time": 1800013599,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "future_dated",
+     "observed_at": 1800099900,
+     "value": 1002,
+     "height": 3831,
+     "block_time": 1800010000,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "in_mid",
+     "observed_at": 1800060000,
+     "value": 1300,
+     "height": 4482,
+     "block_time": 1800060150,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [],
+    "truth": null,
+    "window_candidates": [
+     "in_first",
+     "in_mid"
+    ],
+    "last": "in_mid",
+    "window": [
+     1000,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     1300,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null,
+     null
+    ]
+   }
+  },
+  {
+   "name": "a full day: 24 hourly samples and a truth",
+   "variable": "temperature_c",
+   "commit_time": 1800100000,
+   "commit_height": 5000,
+   "lead_hours": 6,
+   "target": 1800121600,
+   "readings": [
+    {
+     "id": "h00",
+     "observed_at": 1800014200,
+     "value": 1000,
+     "height": 3887,
+     "block_time": 1800014350,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h01",
+     "observed_at": 1800017800,
+     "value": 1030,
+     "height": 3934,
+     "block_time": 1800017950,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h02",
+     "observed_at": 1800021400,
+     "value": 1060,
+     "height": 3981,
+     "block_time": 1800021550,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h03",
+     "observed_at": 1800025000,
+     "value": 1090,
+     "height": 4027,
+     "block_time": 1800025150,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h04",
+     "observed_at": 1800028600,
+     "value": 1120,
+     "height": 4074,
+     "block_time": 1800028750,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h05",
+     "observed_at": 1800032200,
+     "value": 1150,
+     "height": 4121,
+     "block_time": 1800032350,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h06",
+     "observed_at": 1800035800,
+     "value": 1180,
+     "height": 4168,
+     "block_time": 1800035950,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h07",
+     "observed_at": 1800039400,
+     "value": 1210,
+     "height": 4214,
+     "block_time": 1800039550,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h08",
+     "observed_at": 1800043000,
+     "value": 1240,
+     "height": 4261,
+     "block_time": 1800043150,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h09",
+     "observed_at": 1800046600,
+     "value": 1270,
+     "height": 4308,
+     "block_time": 1800046750,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h10",
+     "observed_at": 1800050200,
+     "value": 1300,
+     "height": 4355,
+     "block_time": 1800050350,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h11",
+     "observed_at": 1800053800,
+     "value": 1330,
+     "height": 4401,
+     "block_time": 1800053950,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h12",
+     "observed_at": 1800057400,
+     "value": 1360,
+     "height": 4448,
+     "block_time": 1800057550,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h13",
+     "observed_at": 1800061000,
+     "value": 1390,
+     "height": 4495,
+     "block_time": 1800061150,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h14",
+     "observed_at": 1800064600,
+     "value": 1420,
+     "height": 4542,
+     "block_time": 1800064750,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h15",
+     "observed_at": 1800068200,
+     "value": 1450,
+     "height": 4588,
+     "block_time": 1800068350,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h16",
+     "observed_at": 1800071800,
+     "value": 1480,
+     "height": 4635,
+     "block_time": 1800071950,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h17",
+     "observed_at": 1800075400,
+     "value": 1510,
+     "height": 4682,
+     "block_time": 1800075550,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h18",
+     "observed_at": 1800079000,
+     "value": 1540,
+     "height": 4729,
+     "block_time": 1800079150,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h19",
+     "observed_at": 1800082600,
+     "value": 1570,
+     "height": 4775,
+     "block_time": 1800082750,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h20",
+     "observed_at": 1800086200,
+     "value": 1600,
+     "height": 4822,
+     "block_time": 1800086350,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h21",
+     "observed_at": 1800089800,
+     "value": 1630,
+     "height": 4869,
+     "block_time": 1800089950,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h22",
+     "observed_at": 1800093400,
+     "value": 1660,
+     "height": 4916,
+     "block_time": 1800093550,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "h23",
+     "observed_at": 1800097000,
+     "value": 1690,
+     "height": 4962,
+     "block_time": 1800097150,
+     "has_quorum": true,
+     "provenance": "real"
+    },
+    {
+     "id": "t",
+     "observed_at": 1800121720,
+     "value": 1900,
+     "height": 5284,
+     "block_time": 1800121870,
+     "has_quorum": true,
+     "provenance": "real"
+    }
+   ],
+   "expect": {
+    "truth_candidates": [
+     "t"
+    ],
+    "truth": "t",
+    "window_candidates": [
+     "h00",
+     "h01",
+     "h02",
+     "h03",
+     "h04",
+     "h05",
+     "h06",
+     "h07",
+     "h08",
+     "h09",
+     "h10",
+     "h11",
+     "h12",
+     "h13",
+     "h14",
+     "h15",
+     "h16",
+     "h17",
+     "h18",
+     "h19",
+     "h20",
+     "h21",
+     "h22",
+     "h23"
+    ],
+    "last": "h23",
+    "window": [
+     1000,
+     1030,
+     1060,
+     1090,
+     1120,
+     1150,
+     1180,
+     1210,
+     1240,
+     1270,
+     1300,
+     1330,
+     1360,
+     1390,
+     1420,
+     1450,
+     1480,
+     1510,
+     1540,
+     1570,
+     1600,
+     1630,
+     1660,
+     1690
+    ]
+   }
+  }
+ ],
+ "skill": [
+  {
+   "name": "perfect forecast",
+   "variable": "temperature_c",
+   "forecast": 2137,
+   "truth": 2137,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": false,
+    "skill": 1000000,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "half the reference error",
+   "variable": "temperature_c",
+   "forecast": 2137,
+   "truth": 2012,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 5,
+   "expect": {
+    "err": 125,
+    "copy": false,
+    "skill": 500000,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "error equals the reference: zero",
+   "variable": "temperature_c",
+   "forecast": 2137,
+   "truth": 1887,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 5,
+   "expect": {
+    "err": 250,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "error one unit under the reference: smallest win",
+   "variable": "temperature_c",
+   "forecast": 2137,
+   "truth": 1888,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 5,
+   "expect": {
+    "err": 249,
+    "copy": false,
+    "skill": 4000,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "error above the reference: clamped to zero",
+   "variable": "temperature_c",
+   "forecast": 2137,
+   "truth": 1500,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 5,
+   "expect": {
+    "err": 637,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "integer division truncates (1/3)",
+   "variable": "temperature_c",
+   "forecast": 1001,
+   "truth": 1000,
+   "reference": 3,
+   "mean24": 0,
+   "last": 0,
+   "tol": 5,
+   "expect": {
+    "err": 1,
+    "copy": false,
+    "skill": 666667,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "integer division truncates (2/3)",
+   "variable": "temperature_c",
+   "forecast": 1002,
+   "truth": 1000,
+   "reference": 3,
+   "mean24": 0,
+   "last": 0,
+   "tol": 5,
+   "expect": {
+    "err": 2,
+    "copy": false,
+    "skill": 333334,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "copy of the 24 h mean, exactly",
+   "variable": "temperature_c",
+   "forecast": 1800,
+   "truth": 1800,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1500,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": true,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "copy of the 24 h mean, at the tolerance",
+   "variable": "temperature_c",
+   "forecast": 1805,
+   "truth": 1805,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1500,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": true,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "one past the tolerance of the mean: scored",
+   "variable": "temperature_c",
+   "forecast": 1806,
+   "truth": 1806,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1500,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": false,
+    "skill": 1000000,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "copy of the last reading, at the tolerance below",
+   "variable": "temperature_c",
+   "forecast": 1495,
+   "truth": 1495,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1500,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": true,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "one past the tolerance of the last reading: scored",
+   "variable": "temperature_c",
+   "forecast": 1494,
+   "truth": 1494,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1500,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": false,
+    "skill": 1000000,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "zero reference: zero even when perfect",
+   "variable": "temperature_c",
+   "forecast": 2137,
+   "truth": 2137,
+   "reference": 0,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "zero tolerance still catches an exact copy",
+   "variable": "temperature_c",
+   "forecast": 1900,
+   "truth": 1900,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 0,
+   "expect": {
+    "err": 0,
+    "copy": true,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "zero tolerance, one unit off the last reading",
+   "variable": "temperature_c",
+   "forecast": 1901,
+   "truth": 1900,
+   "reference": 250,
+   "mean24": 1800,
+   "last": 1900,
+   "tol": 0,
+   "expect": {
+    "err": 1,
+    "copy": false,
+    "skill": 996000,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "negative temperatures",
+   "variable": "temperature_c",
+   "forecast": -1250,
+   "truth": -1180,
+   "reference": 300,
+   "mean24": -900,
+   "last": -1000,
+   "tol": 5,
+   "expect": {
+    "err": 70,
+    "copy": false,
+    "skill": 766667,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "forecast and truth on either side of zero",
+   "variable": "temperature_c",
+   "forecast": -40,
+   "truth": 35,
+   "reference": 400,
+   "mean24": 300,
+   "last": 250,
+   "tol": 5,
+   "expect": {
+    "err": 75,
+    "copy": false,
+    "skill": 812500,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "pressure in Pa",
+   "variable": "pressure_hpa",
+   "forecast": 101325,
+   "truth": 101290,
+   "reference": 180,
+   "mean24": 101000,
+   "last": 101100,
+   "tol": 5,
+   "expect": {
+    "err": 35,
+    "copy": false,
+    "skill": 805556,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "pressure in Pa, large miss",
+   "variable": "pressure_hpa",
+   "forecast": 98000,
+   "truth": 101290,
+   "reference": 180,
+   "mean24": 101000,
+   "last": 101100,
+   "tol": 5,
+   "expect": {
+    "err": 3290,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "reference of one unit, error zero",
+   "variable": "temperature_c",
+   "forecast": 500,
+   "truth": 500,
+   "reference": 1,
+   "mean24": 0,
+   "last": 0,
+   "tol": 5,
+   "expect": {
+    "err": 0,
+    "copy": false,
+    "skill": 1000000,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "reference of one unit, error one",
+   "variable": "temperature_c",
+   "forecast": 501,
+   "truth": 500,
+   "reference": 1,
+   "mean24": 0,
+   "last": 0,
+   "tol": 5,
+   "expect": {
+    "err": 1,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "widest in-range temperature miss",
+   "variable": "temperature_c",
+   "forecast": 10000,
+   "truth": -10000,
+   "reference": 20000,
+   "mean24": 0,
+   "last": 0,
+   "tol": 5,
+   "expect": {
+    "err": 20000,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "widest in-range pressure miss",
+   "variable": "pressure_hpa",
+   "forecast": 120000,
+   "truth": 30000,
+   "reference": 90001,
+   "mean24": 75000,
+   "last": 75000,
+   "tol": 5,
+   "expect": {
+    "err": 90000,
+    "copy": false,
+    "skill": 12,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 00",
+   "variable": "temperature_c",
+   "forecast": -4692,
+   "truth": -4650,
+   "reference": 597,
+   "mean24": 1292,
+   "last": 2136,
+   "tol": 0,
+   "expect": {
+    "err": 42,
+    "copy": false,
+    "skill": 929649,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 01",
+   "variable": "temperature_c",
+   "forecast": 4319,
+   "truth": 4302,
+   "reference": 554,
+   "mean24": 853,
+   "last": -3183,
+   "tol": 0,
+   "expect": {
+    "err": 17,
+    "copy": false,
+    "skill": 969315,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 02",
+   "variable": "temperature_c",
+   "forecast": 5714,
+   "truth": 5700,
+   "reference": 442,
+   "mean24": -1521,
+   "last": 166,
+   "tol": 10,
+   "expect": {
+    "err": 14,
+    "copy": false,
+    "skill": 968326,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 03",
+   "variable": "temperature_c",
+   "forecast": -5825,
+   "truth": -5631,
+   "reference": 541,
+   "mean24": 4447,
+   "last": 97,
+   "tol": 0,
+   "expect": {
+    "err": 194,
+    "copy": false,
+    "skill": 641405,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 04",
+   "variable": "temperature_c",
+   "forecast": -2042,
+   "truth": -2121,
+   "reference": 269,
+   "mean24": -2293,
+   "last": -4176,
+   "tol": 10,
+   "expect": {
+    "err": 79,
+    "copy": false,
+    "skill": 706320,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 05",
+   "variable": "temperature_c",
+   "forecast": -1019,
+   "truth": -1128,
+   "reference": 168,
+   "mean24": 5505,
+   "last": 1511,
+   "tol": 5,
+   "expect": {
+    "err": 109,
+    "copy": false,
+    "skill": 351191,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 06",
+   "variable": "temperature_c",
+   "forecast": -2732,
+   "truth": -2511,
+   "reference": 234,
+   "mean24": 5387,
+   "last": -5317,
+   "tol": 10,
+   "expect": {
+    "err": 221,
+    "copy": false,
+    "skill": 55556,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 07",
+   "variable": "temperature_c",
+   "forecast": -2577,
+   "truth": -2447,
+   "reference": 496,
+   "mean24": -5778,
+   "last": -4735,
+   "tol": 0,
+   "expect": {
+    "err": 130,
+    "copy": false,
+    "skill": 737904,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 08",
+   "variable": "temperature_c",
+   "forecast": 1155,
+   "truth": 1085,
+   "reference": 526,
+   "mean24": -841,
+   "last": -1530,
+   "tol": 5,
+   "expect": {
+    "err": 70,
+    "copy": false,
+    "skill": 866921,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 09",
+   "variable": "temperature_c",
+   "forecast": 2438,
+   "truth": 2192,
+   "reference": 38,
+   "mean24": -2377,
+   "last": -177,
+   "tol": 0,
+   "expect": {
+    "err": 246,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "random 10",
+   "variable": "temperature_c",
+   "forecast": 301,
+   "truth": 407,
+   "reference": 215,
+   "mean24": -2422,
+   "last": 2702,
+   "tol": 5,
+   "expect": {
+    "err": 106,
+    "copy": false,
+    "skill": 506977,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 11",
+   "variable": "temperature_c",
+   "forecast": -1398,
+   "truth": -1668,
+   "reference": 64,
+   "mean24": -498,
+   "last": -4184,
+   "tol": 10,
+   "expect": {
+    "err": 270,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "random 12",
+   "variable": "temperature_c",
+   "forecast": 2164,
+   "truth": 2366,
+   "reference": 242,
+   "mean24": -5325,
+   "last": -5780,
+   "tol": 10,
+   "expect": {
+    "err": 202,
+    "copy": false,
+    "skill": 165290,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 13",
+   "variable": "temperature_c",
+   "forecast": -2011,
+   "truth": -1637,
+   "reference": 468,
+   "mean24": 2492,
+   "last": -4785,
+   "tol": 5,
+   "expect": {
+    "err": 374,
+    "copy": false,
+    "skill": 200855,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 14",
+   "variable": "temperature_c",
+   "forecast": -4333,
+   "truth": -4678,
+   "reference": 314,
+   "mean24": -3722,
+   "last": 4658,
+   "tol": 5,
+   "expect": {
+    "err": 345,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "random 15",
+   "variable": "temperature_c",
+   "forecast": 275,
+   "truth": 192,
+   "reference": 138,
+   "mean24": -1365,
+   "last": -661,
+   "tol": 5,
+   "expect": {
+    "err": 83,
+    "copy": false,
+    "skill": 398551,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 16",
+   "variable": "temperature_c",
+   "forecast": -5437,
+   "truth": -5491,
+   "reference": 114,
+   "mean24": 5202,
+   "last": -897,
+   "tol": 5,
+   "expect": {
+    "err": 54,
+    "copy": false,
+    "skill": 526316,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 17",
+   "variable": "temperature_c",
+   "forecast": 4515,
+   "truth": 4233,
+   "reference": 104,
+   "mean24": -4529,
+   "last": -3695,
+   "tol": 10,
+   "expect": {
+    "err": 282,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "random 18",
+   "variable": "temperature_c",
+   "forecast": -5436,
+   "truth": -5741,
+   "reference": 54,
+   "mean24": -4404,
+   "last": 4158,
+   "tol": 0,
+   "expect": {
+    "err": 305,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "random 19",
+   "variable": "temperature_c",
+   "forecast": 5351,
+   "truth": 5686,
+   "reference": 170,
+   "mean24": -1556,
+   "last": 1876,
+   "tol": 5,
+   "expect": {
+    "err": 335,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "random 20",
+   "variable": "temperature_c",
+   "forecast": -2001,
+   "truth": -1835,
+   "reference": 486,
+   "mean24": 5728,
+   "last": -4641,
+   "tol": 5,
+   "expect": {
+    "err": 166,
+    "copy": false,
+    "skill": 658437,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 21",
+   "variable": "temperature_c",
+   "forecast": -5306,
+   "truth": -5529,
+   "reference": 443,
+   "mean24": -3524,
+   "last": 5459,
+   "tol": 5,
+   "expect": {
+    "err": 223,
+    "copy": false,
+    "skill": 496614,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 22",
+   "variable": "temperature_c",
+   "forecast": -2599,
+   "truth": -2310,
+   "reference": 312,
+   "mean24": -5659,
+   "last": -1123,
+   "tol": 10,
+   "expect": {
+    "err": 289,
+    "copy": false,
+    "skill": 73718,
+    "beat_baseline": true
+   }
+  },
+  {
+   "name": "random 23",
+   "variable": "temperature_c",
+   "forecast": 3880,
+   "truth": 4117,
+   "reference": 267,
+   "mean24": -950,
+   "last": -35,
+   "tol": 5,
+   "expect": {
+    "err": 237,
+    "copy": false,
+    "skill": 112360,
+    "beat_baseline": true
+   }
+  }
+ ],
+ "skill_wide_arithmetic": [
+  {
+   "name": "values near 2^31 stay exact",
+   "forecast": 2000000000,
+   "truth": -2000000000,
+   "reference": 2147483647,
+   "mean24": 0,
+   "last": 0,
+   "tol": 5,
+   "expect": {
+    "err": 4000000000,
+    "copy": false,
+    "skill": 0,
+    "beat_baseline": false
+   }
+  },
+  {
+   "name": "values near 2^31, reference just above the error",
+   "forecast": 2147483647,
+   "truth": -2147483647,
+   "reference": 4294967295,
+   "mean24": 0,
+   "last": 0,
+   "tol": 5,
+   "expect": {
+    "err": 4294967294,
+    "copy": false,
+    "skill": 1,
+    "beat_baseline": true
+   }
+  }
+ ],
+ "reference": [
+  {
+   "name": "daily cycle, 1 h lead: persistence is the reference",
+   "window": [
+    1000,
+    1104,
+    1200,
+    1283,
+    1346,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    1104,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 24,
+    "mean24": 1000,
+    "spread": 282,
+    "pairs": 23,
+    "persistence": 72,
+    "reference": 72,
+    "kind": "persistence_spread"
+   }
+  },
+  {
+   "name": "daily cycle, 6 h lead: spread is the reference",
+   "window": [
+    1000,
+    1104,
+    1200,
+    1283,
+    1346,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    1104,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 6,
+   "expect": {
+    "samples": 24,
+    "mean24": 1000,
+    "spread": 282,
+    "pairs": 18,
+    "persistence": 355,
+    "reference": 282,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "daily cycle, 12 h lead: 12 pairs",
+   "window": [
+    1000,
+    1104,
+    1200,
+    1283,
+    1346,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    1104,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 12,
+   "expect": {
+    "samples": 24,
+    "mean24": 1000,
+    "spread": 282,
+    "pairs": 12,
+    "persistence": 565,
+    "reference": 282,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "daily cycle, 24 h lead: no pair, spread is the reference",
+   "window": [
+    1000,
+    1104,
+    1200,
+    1283,
+    1346,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    1104,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 24,
+   "expect": {
+    "samples": 24,
+    "mean24": 1000,
+    "spread": 282,
+    "pairs": 0,
+    "persistence": null,
+    "reference": 282,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "flat window: zero reference",
+   "window": [
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500,
+    1500
+   ],
+   "lag": 6,
+   "expect": {
+    "samples": 24,
+    "mean24": 1500,
+    "spread": 0,
+    "pairs": 18,
+    "persistence": 0,
+    "reference": 0,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "exactly 12 samples: scored",
+   "window": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 12,
+    "mean24": 746,
+    "spread": 125,
+    "pairs": 11,
+    "persistence": 70,
+    "reference": 70,
+    "kind": "persistence_spread"
+   }
+  },
+  {
+   "name": "11 samples: no baseline",
+   "window": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 1,
+   "expect": null
+  },
+  {
+   "name": "12 samples spread out, no adjacent pair: spread",
+   "window": [
+    1000,
+    null,
+    1200,
+    null,
+    1346,
+    null,
+    1400,
+    null,
+    1346,
+    null,
+    1200,
+    null,
+    1000,
+    null,
+    800,
+    null,
+    654,
+    null,
+    600,
+    null,
+    654,
+    null,
+    800,
+    null
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 12,
+    "mean24": 1000,
+    "spread": 282,
+    "pairs": 0,
+    "persistence": null,
+    "reference": 282,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "12 samples, 6 h lead: exactly 6 pairs, persistence considered",
+   "window": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 6,
+   "expect": {
+    "samples": 12,
+    "mean24": 746,
+    "spread": 125,
+    "pairs": 6,
+    "persistence": 245,
+    "reference": 125,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "12 samples, 7 h lead: 5 pairs, persistence not used",
+   "window": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 7,
+   "expect": {
+    "samples": 12,
+    "mean24": 746,
+    "spread": 125,
+    "pairs": 5,
+    "persistence": null,
+    "reference": 125,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "18 h lead on a full window: exactly 6 pairs",
+   "window": [
+    1000,
+    1104,
+    1200,
+    1283,
+    1346,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    1104,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 18,
+   "expect": {
+    "samples": 24,
+    "mean24": 1000,
+    "spread": 282,
+    "pairs": 6,
+    "persistence": 509,
+    "reference": 282,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "19 h lead on a full window: 5 pairs, persistence not used",
+   "window": [
+    1000,
+    1104,
+    1200,
+    1283,
+    1346,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    1104,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    614,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 19,
+   "expect": {
+    "samples": 24,
+    "mean24": 1000,
+    "spread": 282,
+    "pairs": 5,
+    "persistence": null,
+    "reference": 282,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "empty window: no baseline",
+   "window": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "lag": 1,
+   "expect": null
+  },
+  {
+   "name": "gaps: pairs need both hours",
+   "window": [
+    1000,
+    1104,
+    1200,
+    null,
+    null,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    null,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    null,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 20,
+    "mean24": 982,
+    "spread": 278,
+    "pairs": 16,
+    "persistence": 73,
+    "reference": 73,
+    "kind": "persistence_spread"
+   }
+  },
+  {
+   "name": "gaps, 6 h lead",
+   "window": [
+    1000,
+    1104,
+    1200,
+    null,
+    null,
+    1386,
+    1400,
+    1386,
+    1346,
+    1283,
+    1200,
+    null,
+    1000,
+    896,
+    800,
+    717,
+    654,
+    null,
+    600,
+    614,
+    654,
+    717,
+    800,
+    896
+   ],
+   "lag": 6,
+   "expect": {
+    "samples": 20,
+    "mean24": 982,
+    "spread": 278,
+    "pairs": 13,
+    "persistence": 378,
+    "reference": 278,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "negative values: mean truncates toward zero",
+   "window": [
+    -7,
+    -8,
+    -7,
+    -8,
+    -7,
+    -8,
+    -7,
+    -8,
+    -7,
+    -8,
+    -7,
+    -8,
+    -8,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 13,
+    "mean24": -7,
+    "spread": 0,
+    "pairs": 12,
+    "persistence": 0,
+    "reference": 0,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "mixed signs: mean truncates toward zero",
+   "window": [
+    -3,
+    -3,
+    -4,
+    1,
+    -3,
+    -3,
+    -4,
+    1,
+    -3,
+    -3,
+    -4,
+    1,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 12,
+    "mean24": -2,
+    "spread": 1,
+    "pairs": 11,
+    "persistence": 3,
+    "reference": 1,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "steady ramp: persistence equals the step",
+   "window": [
+    0,
+    100,
+    200,
+    300,
+    400,
+    500,
+    600,
+    700,
+    800,
+    900,
+    1000,
+    1100,
+    1200,
+    1300,
+    1400,
+    1500,
+    1600,
+    1700,
+    1800,
+    1900,
+    2000,
+    2100,
+    2200,
+    2300
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 24,
+    "mean24": 1150,
+    "spread": 692,
+    "pairs": 23,
+    "persistence": 100,
+    "reference": 100,
+    "kind": "persistence_spread"
+   }
+  },
+  {
+   "name": "pressure window in Pa",
+   "window": [
+    101300,
+    101413,
+    101493,
+    101514,
+    101469,
+    101365,
+    101228,
+    101091,
+    100987,
+    100942,
+    100963,
+    101043,
+    101156,
+    101269,
+    101349,
+    101370,
+    101325,
+    101221,
+    101084,
+    100947,
+    100843,
+    100798,
+    100819,
+    100899
+   ],
+   "lag": 6,
+   "expect": {
+    "samples": 24,
+    "mean24": 101162,
+    "spread": 222,
+    "pairs": 18,
+    "persistence": 381,
+    "reference": 222,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "range extremes, pressure: fits 64 bits",
+   "window": [
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000,
+    120000,
+    30000
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 24,
+    "mean24": 75000,
+    "spread": 45000,
+    "pairs": 23,
+    "persistence": 90000,
+    "reference": 45000,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "range extremes, temperature",
+   "window": [
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000,
+    10000,
+    -10000
+   ],
+   "lag": 12,
+   "expect": {
+    "samples": 24,
+    "mean24": 0,
+    "spread": 10000,
+    "pairs": 12,
+    "persistence": 0,
+    "reference": 0,
+    "kind": "persistence_spread"
+   }
+  },
+  {
+   "name": "random 00",
+   "window": [
+    null,
+    null,
+    2268,
+    -2633,
+    3485,
+    3108,
+    null,
+    3213,
+    -57,
+    null,
+    3870,
+    -1880,
+    -2151,
+    null,
+    3205,
+    -1679,
+    2933,
+    2970,
+    -38,
+    null,
+    null,
+    3421,
+    -2801,
+    1183
+   ],
+   "lag": 12,
+   "expect": {
+    "samples": 17,
+    "mean24": 1083,
+    "spread": 2411,
+    "pairs": 6,
+    "persistence": 3054,
+    "reference": 2411,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 01",
+   "window": [
+    null,
+    null,
+    null,
+    null,
+    1726,
+    null,
+    -2447,
+    null,
+    null,
+    3873,
+    1213,
+    3506,
+    2173,
+    -430,
+    null,
+    null,
+    null,
+    -2184,
+    114,
+    -2764,
+    -988,
+    null,
+    -568,
+    null
+   ],
+   "lag": 12,
+   "expect": {
+    "samples": 12,
+    "mean24": 268,
+    "spread": 2150,
+    "pairs": 2,
+    "persistence": null,
+    "reference": 2150,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 02",
+   "window": [
+    -637,
+    986,
+    null,
+    null,
+    null,
+    -1277,
+    498,
+    null,
+    null,
+    -1417,
+    2393,
+    -2979,
+    -187,
+    954,
+    1827,
+    312,
+    null,
+    -1266,
+    -135,
+    2813,
+    -1456,
+    850,
+    null,
+    -1666
+   ],
+   "lag": 12,
+   "expect": {
+    "samples": 17,
+    "mean24": -22,
+    "spread": 1522,
+    "pairs": 6,
+    "persistence": 1115,
+    "reference": 1115,
+    "kind": "persistence_spread"
+   }
+  },
+  {
+   "name": "random 03",
+   "window": [
+    -2179,
+    3281,
+    1574,
+    -2433,
+    -1095,
+    null,
+    -115,
+    null,
+    3377,
+    -593,
+    1149,
+    3582,
+    2381,
+    null,
+    -368,
+    -1978,
+    -1402,
+    985,
+    2415,
+    1031,
+    1601,
+    2474,
+    -784,
+    1838
+   ],
+   "lag": 24,
+   "expect": {
+    "samples": 21,
+    "mean24": 701,
+    "spread": 1863,
+    "pairs": 0,
+    "persistence": null,
+    "reference": 1863,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 04",
+   "window": [
+    91,
+    -2691,
+    1580,
+    3456,
+    -4,
+    null,
+    -2014,
+    null,
+    null,
+    null,
+    319,
+    1083,
+    2744,
+    1133,
+    -2403,
+    null,
+    -743,
+    -2750,
+    1165,
+    null,
+    -2754,
+    -1859,
+    2424,
+    -144
+   ],
+   "lag": 6,
+   "expect": {
+    "samples": 18,
+    "mean24": -75,
+    "spread": 1942,
+    "pairs": 9,
+    "persistence": 2633,
+    "reference": 1942,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 05",
+   "window": [
+    -1909,
+    -756,
+    null,
+    3526,
+    3784,
+    -1437,
+    870,
+    null,
+    3991,
+    -592,
+    null,
+    null,
+    -214,
+    3374,
+    1616,
+    628,
+    null,
+    -2062,
+    787,
+    -1214,
+    -1319,
+    null,
+    null,
+    -2347
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 17,
+    "mean24": 395,
+    "spread": 2106,
+    "pairs": 11,
+    "persistence": 2764,
+    "reference": 2106,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 06",
+   "window": [
+    null,
+    -1926,
+    3564,
+    1565,
+    1900,
+    1034,
+    510,
+    398,
+    3529,
+    null,
+    -749,
+    647,
+    -2331,
+    1171,
+    -2574,
+    506,
+    3860,
+    1619,
+    820,
+    null,
+    -1059,
+    1176,
+    -274,
+    -2792
+   ],
+   "lag": 1,
+   "expect": {
+    "samples": 21,
+    "mean24": 504,
+    "spread": 1881,
+    "pairs": 18,
+    "persistence": 2603,
+    "reference": 1881,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 07",
+   "window": [
+    2297,
+    -254,
+    -1407,
+    null,
+    -2248,
+    90,
+    3118,
+    318,
+    -612,
+    -1939,
+    3683,
+    -549,
+    3482,
+    2256,
+    56,
+    2562,
+    null,
+    42,
+    3742,
+    2772,
+    null,
+    -1226,
+    2329,
+    null
+   ],
+   "lag": 12,
+   "expect": {
+    "samples": 20,
+    "mean24": 925,
+    "spread": 1942,
+    "pairs": 8,
+    "persistence": 1524,
+    "reference": 1524,
+    "kind": "persistence_spread"
+   }
+  },
+  {
+   "name": "random 08",
+   "window": [
+    -1600,
+    2722,
+    null,
+    null,
+    null,
+    3662,
+    null,
+    1790,
+    -1831,
+    null,
+    null,
+    null,
+    -2535,
+    -856,
+    null,
+    -1313,
+    -1985,
+    -2578,
+    -2280,
+    3789,
+    3888,
+    1758,
+    null,
+    -315
+   ],
+   "lag": 6,
+   "expect": {
+    "samples": 15,
+    "mean24": 154,
+    "spread": 2407,
+    "pairs": 6,
+    "persistence": 2709,
+    "reference": 2407,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 09",
+   "window": [
+    -1644,
+    -1566,
+    null,
+    null,
+    -1946,
+    3542,
+    2015,
+    -1127,
+    -535,
+    null,
+    null,
+    658,
+    -693,
+    null,
+    1681,
+    150,
+    2106,
+    -284,
+    null,
+    -1006,
+    2323,
+    null,
+    null,
+    3260
+   ],
+   "lag": 12,
+   "expect": {
+    "samples": 16,
+    "mean24": 433,
+    "spread": 1757,
+    "pairs": 6,
+    "persistence": 2796,
+    "reference": 1757,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 10",
+   "window": [
+    null,
+    -2513,
+    -2078,
+    -2971,
+    1123,
+    2329,
+    -2677,
+    null,
+    -1249,
+    -1944,
+    null,
+    null,
+    -2818,
+    1364,
+    3268,
+    2152,
+    1028,
+    1852,
+    -2121,
+    800,
+    1363,
+    2805,
+    -1038,
+    1975
+   ],
+   "lag": 12,
+   "expect": {
+    "samples": 20,
+    "mean24": 32,
+    "spread": 2098,
+    "pairs": 8,
+    "persistence": 3531,
+    "reference": 2098,
+    "kind": "climatology_spread"
+   }
+  },
+  {
+   "name": "random 11",
+   "window": [
+    null,
+    697,
+    null,
+    null,
+    1349,
+    null,
+    215,
+    2380,
+    3206,
+    null,
+    -1341,
+    null,
+    -259,
+    786,
+    -1609,
+    621,
+    -108,
+    null,
+    3896,
+    null,
+    null,
+    3352,
+    1112,
+    -2120
+   ],
+   "lag": 24,
+   "expect": {
+    "samples": 15,
+    "mean24": 811,
+    "spread": 1751,
+    "pairs": 0,
+    "persistence": null,
+    "reference": 1751,
+    "kind": "climatology_spread"
+   }
+  }
+ ],
+ "hourly_window": [
+  {
+   "name": "slot edges: the window start is in, the anchor is out",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799913600,
+     "value": 100,
+     "id": "a"
+    },
+    {
+     "observed_at": 1799913599,
+     "value": 999,
+     "id": "b"
+    },
+    {
+     "observed_at": 1800000000,
+     "value": 999,
+     "id": "c"
+    },
+    {
+     "observed_at": 1799999999,
+     "value": 7,
+     "id": "d"
+    }
+   ],
+   "expect": [
+    100,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    7
+   ]
+  },
+  {
+   "name": "an hour boundary belongs to the later slot",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799996400,
+     "value": 50,
+     "id": "a"
+    },
+    {
+     "observed_at": 1799996399,
+     "value": 70,
+     "id": "b"
+    },
+    {
+     "observed_at": 1799992800,
+     "value": 90,
+     "id": "c"
+    }
+   ],
+   "expect": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    80,
+    50
+   ]
+  },
+  {
+   "name": "slot mean truncates toward zero, both signs",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799999990,
+     "value": 7,
+     "id": "a"
+    },
+    {
+     "observed_at": 1799999980,
+     "value": -8,
+     "id": "b"
+    },
+    {
+     "observed_at": 1799996000,
+     "value": 100,
+     "id": "c"
+    },
+    {
+     "observed_at": 1799995900,
+     "value": 103,
+     "id": "d"
+    },
+    {
+     "observed_at": 1799992000,
+     "value": -100,
+     "id": "e"
+    },
+    {
+     "observed_at": 1799991900,
+     "value": -103,
+     "id": "f"
+    }
+   ],
+   "expect": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    -101,
+    101,
+    0
+   ]
+  },
+  {
+   "name": "several readings in one slot, missing hours stay empty",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799913600,
+     "value": 1000,
+     "id": "j000"
+    },
+    {
+     "observed_at": 1799914200,
+     "value": 1005,
+     "id": "j001"
+    },
+    {
+     "observed_at": 1799914800,
+     "value": 1010,
+     "id": "j002"
+    },
+    {
+     "observed_at": 1799915400,
+     "value": 1015,
+     "id": "j003"
+    },
+    {
+     "observed_at": 1799916000,
+     "value": 1020,
+     "id": "j004"
+    },
+    {
+     "observed_at": 1799916600,
+     "value": 1025,
+     "id": "j005"
+    },
+    {
+     "observed_at": 1799917200,
+     "value": 1030,
+     "id": "j006"
+    },
+    {
+     "observed_at": 1799917800,
+     "value": 1035,
+     "id": "j007"
+    },
+    {
+     "observed_at": 1799918400,
+     "value": 1040,
+     "id": "j008"
+    },
+    {
+     "observed_at": 1799919000,
+     "value": 1045,
+     "id": "j009"
+    },
+    {
+     "observed_at": 1799919600,
+     "value": 1050,
+     "id": "j010"
+    },
+    {
+     "observed_at": 1799920200,
+     "value": 1055,
+     "id": "j011"
+    },
+    {
+     "observed_at": 1799920800,
+     "value": 1060,
+     "id": "j012"
+    },
+    {
+     "observed_at": 1799921400,
+     "value": 1065,
+     "id": "j013"
+    },
+    {
+     "observed_at": 1799922000,
+     "value": 1070,
+     "id": "j014"
+    },
+    {
+     "observed_at": 1799922600,
+     "value": 1075,
+     "id": "j015"
+    },
+    {
+     "observed_at": 1799923200,
+     "value": 1080,
+     "id": "j016"
+    },
+    {
+     "observed_at": 1799923800,
+     "value": 1085,
+     "id": "j017"
+    },
+    {
+     "observed_at": 1799931600,
+     "value": 1150,
+     "id": "j030"
+    },
+    {
+     "observed_at": 1799932200,
+     "value": 1155,
+     "id": "j031"
+    },
+    {
+     "observed_at": 1799932800,
+     "value": 1160,
+     "id": "j032"
+    },
+    {
+     "observed_at": 1799933400,
+     "value": 1165,
+     "id": "j033"
+    },
+    {
+     "observed_at": 1799934000,
+     "value": 1170,
+     "id": "j034"
+    },
+    {
+     "observed_at": 1799934600,
+     "value": 1175,
+     "id": "j035"
+    },
+    {
+     "observed_at": 1799935200,
+     "value": 1180,
+     "id": "j036"
+    },
+    {
+     "observed_at": 1799935800,
+     "value": 1185,
+     "id": "j037"
+    },
+    {
+     "observed_at": 1799936400,
+     "value": 1190,
+     "id": "j038"
+    },
+    {
+     "observed_at": 1799937000,
+     "value": 1195,
+     "id": "j039"
+    },
+    {
+     "observed_at": 1799937600,
+     "value": 1200,
+     "id": "j040"
+    },
+    {
+     "observed_at": 1799938200,
+     "value": 1205,
+     "id": "j041"
+    },
+    {
+     "observed_at": 1799938800,
+     "value": 1210,
+     "id": "j042"
+    },
+    {
+     "observed_at": 1799939400,
+     "value": 1215,
+     "id": "j043"
+    },
+    {
+     "observed_at": 1799940000,
+     "value": 1220,
+     "id": "j044"
+    },
+    {
+     "observed_at": 1799940600,
+     "value": 1225,
+     "id": "j045"
+    },
+    {
+     "observed_at": 1799941200,
+     "value": 1230,
+     "id": "j046"
+    },
+    {
+     "observed_at": 1799941800,
+     "value": 1235,
+     "id": "j047"
+    },
+    {
+     "observed_at": 1799942400,
+     "value": 1240,
+     "id": "j048"
+    },
+    {
+     "observed_at": 1799943000,
+     "value": 1245,
+     "id": "j049"
+    },
+    {
+     "observed_at": 1799943600,
+     "value": 1250,
+     "id": "j050"
+    },
+    {
+     "observed_at": 1799944200,
+     "value": 1255,
+     "id": "j051"
+    },
+    {
+     "observed_at": 1799944800,
+     "value": 1260,
+     "id": "j052"
+    },
+    {
+     "observed_at": 1799945400,
+     "value": 1265,
+     "id": "j053"
+    },
+    {
+     "observed_at": 1799946000,
+     "value": 1270,
+     "id": "j054"
+    },
+    {
+     "observed_at": 1799946600,
+     "value": 1275,
+     "id": "j055"
+    },
+    {
+     "observed_at": 1799947200,
+     "value": 1280,
+     "id": "j056"
+    },
+    {
+     "observed_at": 1799947800,
+     "value": 1285,
+     "id": "j057"
+    },
+    {
+     "observed_at": 1799948400,
+     "value": 1290,
+     "id": "j058"
+    },
+    {
+     "observed_at": 1799949000,
+     "value": 1295,
+     "id": "j059"
+    },
+    {
+     "observed_at": 1799949600,
+     "value": 1300,
+     "id": "j060"
+    },
+    {
+     "observed_at": 1799950200,
+     "value": 1305,
+     "id": "j061"
+    },
+    {
+     "observed_at": 1799950800,
+     "value": 1310,
+     "id": "j062"
+    },
+    {
+     "observed_at": 1799951400,
+     "value": 1315,
+     "id": "j063"
+    },
+    {
+     "observed_at": 1799952000,
+     "value": 1320,
+     "id": "j064"
+    },
+    {
+     "observed_at": 1799952600,
+     "value": 1325,
+     "id": "j065"
+    },
+    {
+     "observed_at": 1799953200,
+     "value": 1330,
+     "id": "j066"
+    },
+    {
+     "observed_at": 1799953800,
+     "value": 1335,
+     "id": "j067"
+    },
+    {
+     "observed_at": 1799954400,
+     "value": 1340,
+     "id": "j068"
+    },
+    {
+     "observed_at": 1799955000,
+     "value": 1345,
+     "id": "j069"
+    },
+    {
+     "observed_at": 1799955600,
+     "value": 1350,
+     "id": "j070"
+    },
+    {
+     "observed_at": 1799956200,
+     "value": 1355,
+     "id": "j071"
+    },
+    {
+     "observed_at": 1799956800,
+     "value": 1360,
+     "id": "j072"
+    },
+    {
+     "observed_at": 1799957400,
+     "value": 1365,
+     "id": "j073"
+    },
+    {
+     "observed_at": 1799958000,
+     "value": 1370,
+     "id": "j074"
+    },
+    {
+     "observed_at": 1799958600,
+     "value": 1375,
+     "id": "j075"
+    },
+    {
+     "observed_at": 1799959200,
+     "value": 1380,
+     "id": "j076"
+    },
+    {
+     "observed_at": 1799959800,
+     "value": 1385,
+     "id": "j077"
+    },
+    {
+     "observed_at": 1799960400,
+     "value": 1390,
+     "id": "j078"
+    },
+    {
+     "observed_at": 1799961000,
+     "value": 1395,
+     "id": "j079"
+    },
+    {
+     "observed_at": 1799961600,
+     "value": 1400,
+     "id": "j080"
+    },
+    {
+     "observed_at": 1799962200,
+     "value": 1405,
+     "id": "j081"
+    },
+    {
+     "observed_at": 1799962800,
+     "value": 1410,
+     "id": "j082"
+    },
+    {
+     "observed_at": 1799963400,
+     "value": 1415,
+     "id": "j083"
+    },
+    {
+     "observed_at": 1799964000,
+     "value": 1420,
+     "id": "j084"
+    },
+    {
+     "observed_at": 1799964600,
+     "value": 1425,
+     "id": "j085"
+    },
+    {
+     "observed_at": 1799965200,
+     "value": 1430,
+     "id": "j086"
+    },
+    {
+     "observed_at": 1799965800,
+     "value": 1435,
+     "id": "j087"
+    },
+    {
+     "observed_at": 1799966400,
+     "value": 1440,
+     "id": "j088"
+    },
+    {
+     "observed_at": 1799967000,
+     "value": 1445,
+     "id": "j089"
+    },
+    {
+     "observed_at": 1799967600,
+     "value": 1450,
+     "id": "j090"
+    },
+    {
+     "observed_at": 1799968200,
+     "value": 1455,
+     "id": "j091"
+    },
+    {
+     "observed_at": 1799968800,
+     "value": 1460,
+     "id": "j092"
+    },
+    {
+     "observed_at": 1799969400,
+     "value": 1465,
+     "id": "j093"
+    },
+    {
+     "observed_at": 1799970000,
+     "value": 1470,
+     "id": "j094"
+    },
+    {
+     "observed_at": 1799970600,
+     "value": 1475,
+     "id": "j095"
+    },
+    {
+     "observed_at": 1799971200,
+     "value": 1480,
+     "id": "j096"
+    },
+    {
+     "observed_at": 1799971800,
+     "value": 1485,
+     "id": "j097"
+    },
+    {
+     "observed_at": 1799972400,
+     "value": 1490,
+     "id": "j098"
+    },
+    {
+     "observed_at": 1799973000,
+     "value": 1495,
+     "id": "j099"
+    },
+    {
+     "observed_at": 1799973600,
+     "value": 1500,
+     "id": "j100"
+    },
+    {
+     "observed_at": 1799974200,
+     "value": 1505,
+     "id": "j101"
+    },
+    {
+     "observed_at": 1799978400,
+     "value": 1540,
+     "id": "j108"
+    },
+    {
+     "observed_at": 1799979000,
+     "value": 1545,
+     "id": "j109"
+    },
+    {
+     "observed_at": 1799979600,
+     "value": 1550,
+     "id": "j110"
+    },
+    {
+     "observed_at": 1799980200,
+     "value": 1555,
+     "id": "j111"
+    },
+    {
+     "observed_at": 1799980800,
+     "value": 1560,
+     "id": "j112"
+    },
+    {
+     "observed_at": 1799981400,
+     "value": 1565,
+     "id": "j113"
+    },
+    {
+     "observed_at": 1799982000,
+     "value": 1570,
+     "id": "j114"
+    },
+    {
+     "observed_at": 1799982600,
+     "value": 1575,
+     "id": "j115"
+    },
+    {
+     "observed_at": 1799983200,
+     "value": 1580,
+     "id": "j116"
+    },
+    {
+     "observed_at": 1799983800,
+     "value": 1585,
+     "id": "j117"
+    },
+    {
+     "observed_at": 1799984400,
+     "value": 1590,
+     "id": "j118"
+    },
+    {
+     "observed_at": 1799985000,
+     "value": 1595,
+     "id": "j119"
+    },
+    {
+     "observed_at": 1799985600,
+     "value": 1600,
+     "id": "j120"
+    },
+    {
+     "observed_at": 1799986200,
+     "value": 1605,
+     "id": "j121"
+    },
+    {
+     "observed_at": 1799986800,
+     "value": 1610,
+     "id": "j122"
+    },
+    {
+     "observed_at": 1799987400,
+     "value": 1615,
+     "id": "j123"
+    },
+    {
+     "observed_at": 1799988000,
+     "value": 1620,
+     "id": "j124"
+    },
+    {
+     "observed_at": 1799988600,
+     "value": 1625,
+     "id": "j125"
+    },
+    {
+     "observed_at": 1799989200,
+     "value": 1630,
+     "id": "j126"
+    },
+    {
+     "observed_at": 1799989800,
+     "value": 1635,
+     "id": "j127"
+    },
+    {
+     "observed_at": 1799990400,
+     "value": 1640,
+     "id": "j128"
+    },
+    {
+     "observed_at": 1799991000,
+     "value": 1645,
+     "id": "j129"
+    },
+    {
+     "observed_at": 1799991600,
+     "value": 1650,
+     "id": "j130"
+    },
+    {
+     "observed_at": 1799992200,
+     "value": 1655,
+     "id": "j131"
+    },
+    {
+     "observed_at": 1799992800,
+     "value": 1660,
+     "id": "j132"
+    },
+    {
+     "observed_at": 1799993400,
+     "value": 1665,
+     "id": "j133"
+    },
+    {
+     "observed_at": 1799994000,
+     "value": 1670,
+     "id": "j134"
+    },
+    {
+     "observed_at": 1799994600,
+     "value": 1675,
+     "id": "j135"
+    },
+    {
+     "observed_at": 1799995200,
+     "value": 1680,
+     "id": "j136"
+    },
+    {
+     "observed_at": 1799995800,
+     "value": 1685,
+     "id": "j137"
+    },
+    {
+     "observed_at": 1799996400,
+     "value": 1690,
+     "id": "j138"
+    },
+    {
+     "observed_at": 1799997000,
+     "value": 1695,
+     "id": "j139"
+    },
+    {
+     "observed_at": 1799997600,
+     "value": 1700,
+     "id": "j140"
+    },
+    {
+     "observed_at": 1799998200,
+     "value": 1705,
+     "id": "j141"
+    },
+    {
+     "observed_at": 1799998800,
+     "value": 1710,
+     "id": "j142"
+    },
+    {
+     "observed_at": 1799999400,
+     "value": 1715,
+     "id": "j143"
+    }
+   ],
+   "expect": [
+    1012,
+    1042,
+    1072,
+    null,
+    null,
+    1162,
+    1192,
+    1222,
+    1252,
+    1282,
+    1312,
+    1342,
+    1372,
+    1402,
+    1432,
+    1462,
+    1492,
+    null,
+    1552,
+    1582,
+    1612,
+    1642,
+    1672,
+    1702
+   ]
+  },
+  {
+   "name": "no readings",
+   "anchor": 1800000000,
+   "readings": [],
+   "expect": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "name": "readings outside the window only",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799910000,
+     "value": 1,
+     "id": "a"
+    },
+    {
+     "observed_at": 1800000060,
+     "value": 2,
+     "id": "b"
+    }
+   ],
+   "expect": [
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "name": "random",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799962162,
+     "value": 3991,
+     "id": "x000"
+    },
+    {
+     "observed_at": 1799952274,
+     "value": -2387,
+     "id": "x001"
+    },
+    {
+     "observed_at": 1799993247,
+     "value": 768,
+     "id": "x002"
+    },
+    {
+     "observed_at": 1799982565,
+     "value": 426,
+     "id": "x003"
+    },
+    {
+     "observed_at": 1799980052,
+     "value": -1722,
+     "id": "x004"
+    },
+    {
+     "observed_at": 1799923987,
+     "value": -1140,
+     "id": "x005"
+    },
+    {
+     "observed_at": 1799949807,
+     "value": 429,
+     "id": "x006"
+    },
+    {
+     "observed_at": 1799922941,
+     "value": 480,
+     "id": "x007"
+    },
+    {
+     "observed_at": 1799999740,
+     "value": -2335,
+     "id": "x008"
+    },
+    {
+     "observed_at": 1799989544,
+     "value": -2168,
+     "id": "x009"
+    },
+    {
+     "observed_at": 1799936499,
+     "value": 3617,
+     "id": "x010"
+    },
+    {
+     "observed_at": 1799930792,
+     "value": -912,
+     "id": "x011"
+    },
+    {
+     "observed_at": 1799926982,
+     "value": -1490,
+     "id": "x012"
+    },
+    {
+     "observed_at": 1799946215,
+     "value": -465,
+     "id": "x013"
+    },
+    {
+     "observed_at": 1799933971,
+     "value": 463,
+     "id": "x014"
+    },
+    {
+     "observed_at": 1799991671,
+     "value": -259,
+     "id": "x015"
+    },
+    {
+     "observed_at": 1799964846,
+     "value": -2916,
+     "id": "x016"
+    },
+    {
+     "observed_at": 1799958328,
+     "value": 2493,
+     "id": "x017"
+    },
+    {
+     "observed_at": 1799981904,
+     "value": 2682,
+     "id": "x018"
+    },
+    {
+     "observed_at": 1799935960,
+     "value": -467,
+     "id": "x019"
+    },
+    {
+     "observed_at": 1799926190,
+     "value": 161,
+     "id": "x020"
+    },
+    {
+     "observed_at": 1799966157,
+     "value": 472,
+     "id": "x021"
+    },
+    {
+     "observed_at": 1799918763,
+     "value": -2491,
+     "id": "x022"
+    },
+    {
+     "observed_at": 1799960592,
+     "value": 674,
+     "id": "x023"
+    },
+    {
+     "observed_at": 1799981198,
+     "value": -2421,
+     "id": "x024"
+    },
+    {
+     "observed_at": 1799952284,
+     "value": -2603,
+     "id": "x025"
+    },
+    {
+     "observed_at": 1799945236,
+     "value": -2932,
+     "id": "x026"
+    },
+    {
+     "observed_at": 1799961867,
+     "value": 320,
+     "id": "x027"
+    },
+    {
+     "observed_at": 1799933096,
+     "value": 2050,
+     "id": "x028"
+    },
+    {
+     "observed_at": 1799952453,
+     "value": -1841,
+     "id": "x029"
+    },
+    {
+     "observed_at": 1799935176,
+     "value": 411,
+     "id": "x030"
+    },
+    {
+     "observed_at": 1799987482,
+     "value": -1828,
+     "id": "x031"
+    },
+    {
+     "observed_at": 1799919087,
+     "value": 1126,
+     "id": "x032"
+    },
+    {
+     "observed_at": 1799969678,
+     "value": -421,
+     "id": "x033"
+    },
+    {
+     "observed_at": 1799956944,
+     "value": -176,
+     "id": "x034"
+    },
+    {
+     "observed_at": 1799942016,
+     "value": -2048,
+     "id": "x035"
+    },
+    {
+     "observed_at": 1799988731,
+     "value": -1130,
+     "id": "x036"
+    },
+    {
+     "observed_at": 1799967405,
+     "value": 1127,
+     "id": "x037"
+    },
+    {
+     "observed_at": 1799990872,
+     "value": 1211,
+     "id": "x038"
+    },
+    {
+     "observed_at": 1799938137,
+     "value": 1621,
+     "id": "x039"
+    },
+    {
+     "observed_at": 1799934205,
+     "value": -1197,
+     "id": "x040"
+    },
+    {
+     "observed_at": 1799935109,
+     "value": 3585,
+     "id": "x041"
+    },
+    {
+     "observed_at": 1799937678,
+     "value": -1894,
+     "id": "x042"
+    },
+    {
+     "observed_at": 1799963956,
+     "value": 219,
+     "id": "x043"
+    },
+    {
+     "observed_at": 1799922621,
+     "value": -2667,
+     "id": "x044"
+    },
+    {
+     "observed_at": 1799948301,
+     "value": 309,
+     "id": "x045"
+    },
+    {
+     "observed_at": 1799958765,
+     "value": -2576,
+     "id": "x046"
+    },
+    {
+     "observed_at": 1799982281,
+     "value": 421,
+     "id": "x047"
+    },
+    {
+     "observed_at": 1799944802,
+     "value": 66,
+     "id": "x048"
+    },
+    {
+     "observed_at": 1799955647,
+     "value": 3221,
+     "id": "x049"
+    },
+    {
+     "observed_at": 1799926867,
+     "value": -1505,
+     "id": "x050"
+    },
+    {
+     "observed_at": 1799944674,
+     "value": 2785,
+     "id": "x051"
+    },
+    {
+     "observed_at": 1799989078,
+     "value": 1034,
+     "id": "x052"
+    },
+    {
+     "observed_at": 1799928270,
+     "value": 1229,
+     "id": "x053"
+    },
+    {
+     "observed_at": 1799986664,
+     "value": -2619,
+     "id": "x054"
+    },
+    {
+     "observed_at": 1799939426,
+     "value": 2281,
+     "id": "x055"
+    },
+    {
+     "observed_at": 1799942020,
+     "value": 1796,
+     "id": "x056"
+    },
+    {
+     "observed_at": 1799984224,
+     "value": 3653,
+     "id": "x057"
+    },
+    {
+     "observed_at": 1799916412,
+     "value": 2460,
+     "id": "x058"
+    },
+    {
+     "observed_at": 1799932658,
+     "value": 327,
+     "id": "x059"
+    }
+   ],
+   "expect": [
+    2460,
+    -682,
+    -1109,
+    -944,
+    158,
+    939,
+    719,
+    676,
+    -27,
+    -78,
+    -1600,
+    3221,
+    -86,
+    1301,
+    -439,
+    -421,
+    null,
+    null,
+    -487,
+    1500,
+    -1135,
+    -405,
+    768,
+    -2335
+   ]
+  }
+ ],
+ "nearest_reading": [
+  {
+   "name": "exactly 15 minutes away is in",
+   "target": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799999100,
+     "value": 1,
+     "id": "a"
+    },
+    {
+     "observed_at": 1800000901,
+     "value": 2,
+     "id": "b"
+    }
+   ],
+   "expect": {
+    "observed_at": 1799999100,
+    "value": 1,
+    "id": "a"
+   }
+  },
+  {
+   "name": "one second past 15 minutes is out",
+   "target": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799999099,
+     "value": 1,
+     "id": "a"
+    },
+    {
+     "observed_at": 1800000901,
+     "value": 2,
+     "id": "b"
+    }
+   ],
+   "expect": null
+  },
+  {
+   "name": "nearest wins",
+   "target": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1800000300,
+     "value": 1,
+     "id": "a"
+    },
+    {
+     "observed_at": 1799999700,
+     "value": 2,
+     "id": "b"
+    },
+    {
+     "observed_at": 1800000200,
+     "value": 3,
+     "id": "c"
+    }
+   ],
+   "expect": {
+    "observed_at": 1800000200,
+    "value": 3,
+    "id": "c"
+   }
+  },
+  {
+   "name": "same distance before and after: the earlier reading",
+   "target": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1800000300,
+     "value": 1,
+     "id": "a"
+    },
+    {
+     "observed_at": 1799999700,
+     "value": 2,
+     "id": "b"
+    }
+   ],
+   "expect": {
+    "observed_at": 1799999700,
+    "value": 2,
+    "id": "b"
+   }
+  },
+  {
+   "name": "same distance, listed the other way round: still the earlier reading",
+   "target": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799999700,
+     "value": 2,
+     "id": "b"
+    },
+    {
+     "observed_at": 1800000300,
+     "value": 1,
+     "id": "a"
+    }
+   ],
+   "expect": {
+    "observed_at": 1799999700,
+    "value": 2,
+    "id": "b"
+   }
+  },
+  {
+   "name": "same time: the smaller id",
+   "target": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1800000060,
+     "value": 1,
+     "id": "b"
+    },
+    {
+     "observed_at": 1800000060,
+     "value": 2,
+     "id": "a"
+    }
+   ],
+   "expect": {
+    "observed_at": 1800000060,
+    "value": 2,
+    "id": "a"
+   }
+  },
+  {
+   "name": "a reading exactly at the target",
+   "target": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1800000000,
+     "value": 5,
+     "id": "z"
+    },
+    {
+     "observed_at": 1799999999,
+     "value": 6,
+     "id": "a"
+    }
+   ],
+   "expect": {
+    "observed_at": 1800000000,
+    "value": 5,
+    "id": "z"
+   }
+  },
+  {
+   "name": "no readings",
+   "target": 1800000000,
+   "readings": [],
+   "expect": null
+  }
+ ],
+ "last_reading_before": [
+  {
+   "name": "the anchor itself is out",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1800000000,
+     "value": 1,
+     "id": "a"
+    },
+    {
+     "observed_at": 1799999995,
+     "value": 2,
+     "id": "b"
+    },
+    {
+     "observed_at": 1799999400,
+     "value": 3,
+     "id": "c"
+    }
+   ],
+   "expect": {
+    "observed_at": 1799999995,
+    "value": 2,
+    "id": "b"
+   }
+  },
+  {
+   "name": "same time: the smaller id",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799999995,
+     "value": 2,
+     "id": "b"
+    },
+    {
+     "observed_at": 1799999995,
+     "value": 9,
+     "id": "a"
+    }
+   ],
+   "expect": {
+    "observed_at": 1799999995,
+    "value": 9,
+    "id": "a"
+   }
+  },
+  {
+   "name": "older than 24 hours is out",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799913599,
+     "value": 1,
+     "id": "a"
+    }
+   ],
+   "expect": null
+  },
+  {
+   "name": "exactly 24 hours before is in",
+   "anchor": 1800000000,
+   "readings": [
+    {
+     "observed_at": 1799913600,
+     "value": 1,
+     "id": "a"
+    }
+   ],
+   "expect": {
+    "observed_at": 1799913600,
+    "value": 1,
+    "id": "a"
+   }
+  },
+  {
+   "name": "no readings",
+   "anchor": 1800000000,
+   "readings": [],
+   "expect": null
+  }
+ ],
+ "fixed_point": [
+  {
+   "text": "12.3",
+   "expect": 1230
+  },
+  {
+   "text": "12",
+   "expect": 1200
+  },
+  {
+   "text": "-0.045",
+   "expect": -5
+  },
+  {
+   "text": "-0.044",
+   "expect": -4
+  },
+  {
+   "text": "0.005",
+   "expect": 1
+  },
+  {
+   "text": "0.004",
+   "expect": 0
+  },
+  {
+   "text": "-0.004",
+   "expect": 0
+  },
+  {
+   "text": "21.375",
+   "expect": 2138
+  },
+  {
+   "text": "21.374999",
+   "expect": 2137
+  },
+  {
+   "text": "1013.25",
+   "expect": 101325
+  },
+  {
+   "text": "-60",
+   "expect": -6000
+  },
+  {
+   "text": "0",
+   "expect": 0
+  },
+  {
+   "text": "-0.0",
+   "expect": 0
+  },
+  {
+   "text": "999.995",
+   "expect": 100000
+  },
+  {
+   "text": "1099.9",
+   "expect": 109990
+  },
+  {
+   "text": "7.1",
+   "expect": 710
+  },
+  {
+   "text": "0.1",
+   "expect": 10
+  },
+  {
+   "text": "0.30000000000000004",
+   "expect": 30
+  },
+  {
+   "text": "0.99999999999999999999",
+   "expect": 100
+  },
+  {
+   "text": "1e3",
+   "expect": null
+  },
+  {
+   "text": "1E3",
+   "expect": null
+  },
+  {
+   "text": "1.5e-7",
+   "expect": null
+  },
+  {
+   "text": "",
+   "expect": null
+  },
+  {
+   "text": " ",
+   "expect": null
+  },
+  {
+   "text": " 1",
+   "expect": null
+  },
+  {
+   "text": "1 ",
+   "expect": null
+  },
+  {
+   "text": "1.",
+   "expect": null
+  },
+  {
+   "text": ".5",
+   "expect": null
+  },
+  {
+   "text": "+1",
+   "expect": null
+  },
+  {
+   "text": "--1",
+   "expect": null
+  },
+  {
+   "text": "NaN",
+   "expect": null
+  },
+  {
+   "text": "Infinity",
+   "expect": null
+  },
+  {
+   "text": "1,5",
+   "expect": null
+  },
+  {
+   "text": "0x10",
+   "expect": null
+  },
+  {
+   "text": "1234567890123456",
+   "expect": null
+  },
+  {
+   "text": "0.111111111111111111111",
+   "expect": null
+  },
+  {
+   "text": "1.2.3",
+   "expect": null
+  }
+ ]
+}

@@ -17,6 +17,13 @@ import {
   isCore4Unavailable,
   type ChainTailReader,
 } from '../services/chain-station-tail.js';
+import {
+  createStationComparer,
+  nwsSourceFrom,
+  type NwsSource,
+  type RegisteredStation,
+  type StationComparer,
+} from '../services/station-compare.js';
 
 type Row = Record<string, unknown>;
 type DbExecutor = {
@@ -239,6 +246,8 @@ export function createStationDetailRouter(deps: {
   chainTail?: ChainTailReader;
   /** Per-address lifetime reader (backend#1232); shared with the leaderboard by default. */
   addressEarned?: AddressEarnedReader;
+  /** "How does my station compare?" (Epic 8). Built from db + chainTail + NWS by default. */
+  comparer?: StationComparer;
 } = {}): express.Router {
   const router = express.Router();
   const db = deps.db ?? defaultDb();
@@ -738,5 +747,52 @@ export function createStationDetailRouter(deps: {
     });
   }));
 
+  // Epic 8: "How does my station compare?" Newest chain reading next to the median of nearby
+  // stations (aggregates only) and the nearest NWS observation, all from 0.1-degree cells.
+  // Public, by alias, and takes no query string (the edge admits it bare).
+  const comparer = deps.comparer ?? createStationComparer({
+    chainTail,
+    now,
+    listStations: async (): Promise<RegisteredStation[]> => {
+      const result = await db.execute(
+        `SELECT station_id, latitude, longitude FROM weather_stations
+          WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+          ORDER BY station_id ASC LIMIT 1000`,
+      );
+      return result.rows.map((row) => ({
+        stationId: String(row.station_id),
+        latitude: nullableNumber(row.latitude),
+        longitude: nullableNumber(row.longitude),
+      }));
+    },
+    nws: lazyNwsSource(),
+  });
+
+  router.get('/stations/:stationId/compare', failSafe(async (_req, res) => {
+    const result = await comparer.compare(stationIdOf(res));
+    if (result.status === 'unavailable') {
+      return res.status(503).json({ error: { code: 'COMPARE_UNAVAILABLE', message: result.reason } });
+    }
+    res.set('Cache-Control', 'public, max-age=60');
+    return send(res, { ...result, source: 'core4+nws' });
+  }));
+
   return router;
+}
+
+/** The NOAA/NWS client is a CommonJS module; load it on first use only. */
+function lazyNwsSource(): NwsSource {
+  let source: Promise<NwsSource> | null = null;
+  return {
+    async latest(lat, lon) {
+      if (!source) {
+        source = import('../services/noaa-nws-api-service.js').then((mod: any) => {
+          const NOAAWeatherService = mod.default ?? mod;
+          return nwsSourceFrom(new NOAAWeatherService());
+        });
+        source.catch(() => { source = null; });
+      }
+      return (await source).latest(lat, lon);
+    },
+  };
 }

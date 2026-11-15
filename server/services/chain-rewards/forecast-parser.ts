@@ -67,7 +67,7 @@ export function forecasterAddress(value: unknown): string | null {
 }
 
 /** `Balance` is an unsigned 128-bit integer; losslessJson yields a bigint. A digit string is accepted too. */
-function baseUnits(value: unknown): string | null {
+export function baseUnits(value: unknown): string | null {
   if (typeof value === 'bigint') return value >= 0n && value <= U128_MAX ? value.toString() : null;
   if (typeof value === 'string' && /^(0|[1-9]\d*)$/.test(value) && BigInt(value) <= U128_MAX) return value;
   return null;

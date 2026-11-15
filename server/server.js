@@ -18,7 +18,6 @@ const { csrfProtectionMiddleware } = require('../shared/middleware/csrf-protecti
 // Graceful shutdown manager
 const { GracefulShutdown, ShutdownPriority } = require('../shared/graceful-shutdown/index.js');
 
-const wolframRoutes = require('./routes/wolfram-routes');
 const { logger, securityLogger } = require('./utils/logger');
 const apiAudit = require('./middleware/apiAudit');
 // SECURITY FIX (102.8): Import session store configuration for Redis-based sessions
@@ -49,10 +48,8 @@ const {
 const config = require('../config');
 const DbAccessControl = require('./middleware/dbAccessControl');
 const dbSecurityMiddleware = require('./middleware/dbSecurityMiddleware');
-const computationalRoutes = require('./routes/computational');
 const WrfcoinSDK = require('./sdk');
 const governanceController = require('./controllers/governanceController');
-const wolframPlugin = require('./plugins/wolframPlugin');
 const aiPluginManager = require('./plugins/ai_plugin_manager');
 const MCPServer = require('./mcp/mcpServer');
 const { createHealthMiddleware } = require('./middleware/create-health-middleware');
@@ -573,11 +570,11 @@ app.get('/api/metrics/cache', async (req, res) => {
   }
 });
 
-// Register Wolfram API routes
-app.use('/api/integrations/wolfram', wolframRoutes);
+// Wolfram is bring-your-own-key (owner ruling 2026-11-01): no shared server key, no settings store,
+// no code execution. The deployed entrypoint mounts the one reading-check relay; see
+// routes/wolfram-reading-check-routes.ts.
 
 // Register Computational NFT routes
-app.use('/api/computational', computationalRoutes);
 
 // Initialize SDK
 const sdk = new WrfcoinSDK({
@@ -593,9 +590,6 @@ if (typeof governanceController.initialize === 'function') {
 } else {
   logger.warn('Governance controller initialization skipped - method not available');
 }
-
-// Initialize Wolfram plugin with empty config (will be configured through API)
-wolframPlugin.initialize({ appId: null });
 
 // Initialize AI Plugin Manager
 aiPluginManager.initialize().then(initialized => {
@@ -729,10 +723,6 @@ app.use('/api/kpi/alignment', alignmentKpiRoutes.default || alignmentKpiRoutes);
 // Achievement routes for mobile gamification (backend#197)
 const achievementRoutes = require('./routes/achievementRoutes');
 app.use('/api/achievement', achievementRoutes.default || achievementRoutes);
-
-// Slack command routes for bidirectional Claude-in-Slack bridge
-const slackCommandRoutes = require('./routes/slack-command-routes');
-app.use('/api/slack', slackCommandRoutes.default || slackCommandRoutes);
 
 // Unknown API routes must fail closed before the production SPA catch-all.
 // Otherwise retired or misspelled GET endpoints return index.html with 200.

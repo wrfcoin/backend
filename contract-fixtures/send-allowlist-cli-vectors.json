@@ -1,0 +1,725 @@
+{
+  "note": "Written by the core4 CLI (wrfcoin send-allowlist <action> --key <throwaway test key 0x07*32> --chain-id 888 --nonce N --submitted-at T); core4 origin/main 3028db2 tools/cli/WrfcoinCLI/src/commands/send_allowlist.rs build_transaction",
+  "chain_id": "888",
+  "vectors": [
+    {
+      "name": "add",
+      "submitted_at": 1800000000,
+      "signed_action": {
+        "account": [
+          121,
+          16,
+          38,
+          226,
+          92,
+          193,
+          186,
+          70,
+          17,
+          103,
+          255,
+          181,
+          198,
+          220,
+          9,
+          92,
+          40,
+          75,
+          217,
+          44
+        ],
+        "action": {
+          "RequestAdd": {
+            "address": [
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3,
+              3
+            ]
+          }
+        },
+        "action_nonce": 4,
+        "public_key": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "signature": "7941cf0b9f47a08de376569f2f8527442a0b99e04d2ab6712c0e0ccaf3d63ef347cc2d7fd34ccdfcc47378f8b70a7d5f4cb8823893ca860d589fe276621bbc01"
+      },
+      "transaction": {
+        "id": {
+          "hash_type": "Sha3",
+          "bytes": [
+            53,
+            19,
+            125,
+            204,
+            104,
+            47,
+            25,
+            10,
+            101,
+            81,
+            210,
+            36,
+            14,
+            216,
+            118,
+            140,
+            233,
+            191,
+            218,
+            199,
+            103,
+            112,
+            109,
+            228,
+            103,
+            212,
+            53,
+            104,
+            92,
+            185,
+            100,
+            55
+          ]
+        },
+        "tx_type": "SendAllowlist",
+        "version": 1,
+        "timestamp": "2027-01-15T08:00:00Z",
+        "inputs": [
+          {
+            "txid": {
+              "hash_type": "Sha3",
+              "bytes": [
+                170,
+                207,
+                43,
+                139,
+                37,
+                158,
+                121,
+                121,
+                42,
+                18,
+                251,
+                142,
+                225,
+                183,
+                221,
+                234,
+                160,
+                130,
+                172,
+                111,
+                89,
+                187,
+                156,
+                20,
+                29,
+                24,
+                122,
+                169,
+                10,
+                248,
+                105,
+                9
+              ]
+            },
+            "vout": 0,
+            "signature": null,
+            "public_key": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+            "coinbase_data": null
+          }
+        ],
+        "outputs": [
+          {
+            "amount": 0,
+            "address": "0x791026e25cc1ba461167ffb5c6dc095c284bd92c",
+            "script": "OP_TRUE",
+            "nft_data": null
+          }
+        ],
+        "data": "{\"account\":[121,16,38,226,92,193,186,70,17,103,255,181,198,220,9,92,40,75,217,44],\"action\":{\"RequestAdd\":{\"address\":[3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3]}},\"action_nonce\":4,\"public_key\":\"ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c\",\"signature\":\"7941cf0b9f47a08de376569f2f8527442a0b99e04d2ab6712c0e0ccaf3d63ef347cc2d7fd34ccdfcc47378f8b70a7d5f4cb8823893ca860d589fe276621bbc01\"}",
+        "lock_time": null,
+        "fee": 0,
+        "sender_address": [
+          121,
+          16,
+          38,
+          226,
+          92,
+          193,
+          186,
+          70,
+          17,
+          103,
+          255,
+          181,
+          198,
+          220,
+          9,
+          92,
+          40,
+          75,
+          217,
+          44
+        ],
+        "recipient_address": null,
+        "amount": 0,
+        "operation": {
+          "Transfer": {
+            "amount": 0
+          }
+        },
+        "nonce": 4
+      }
+    },
+    {
+      "name": "enable",
+      "submitted_at": 1800000123,
+      "signed_action": {
+        "account": [
+          121,
+          16,
+          38,
+          226,
+          92,
+          193,
+          186,
+          70,
+          17,
+          103,
+          255,
+          181,
+          198,
+          220,
+          9,
+          92,
+          40,
+          75,
+          217,
+          44
+        ],
+        "action": {
+          "Enable": {
+            "add_delay_blocks": 2244,
+            "allowed": [
+              [
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3,
+                3
+              ],
+              [
+                171,
+                205,
+                239,
+                171,
+                205,
+                239,
+                171,
+                205,
+                239,
+                171,
+                205,
+                239,
+                171,
+                205,
+                239,
+                171,
+                205,
+                239,
+                171,
+                205
+              ]
+            ]
+          }
+        },
+        "action_nonce": 0,
+        "public_key": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "signature": "b9a0758506c6793636b21ce100e95066d98cb8c22eb5ecba18b485d3b1b8724f0b05aa5658b00770c8384a0b49d3cbf67f0dc8c4e2a1a979d18f9853fc77510e"
+      },
+      "transaction": {
+        "id": {
+          "hash_type": "Sha3",
+          "bytes": [
+            53,
+            229,
+            98,
+            236,
+            140,
+            93,
+            43,
+            55,
+            253,
+            16,
+            85,
+            77,
+            232,
+            96,
+            222,
+            0,
+            57,
+            47,
+            243,
+            104,
+            111,
+            122,
+            46,
+            78,
+            73,
+            241,
+            7,
+            122,
+            108,
+            22,
+            46,
+            162
+          ]
+        },
+        "tx_type": "SendAllowlist",
+        "version": 1,
+        "timestamp": "2027-01-15T08:02:03Z",
+        "inputs": [
+          {
+            "txid": {
+              "hash_type": "Sha3",
+              "bytes": [
+                146,
+                227,
+                184,
+                241,
+                151,
+                59,
+                155,
+                252,
+                69,
+                223,
+                239,
+                19,
+                233,
+                220,
+                176,
+                39,
+                14,
+                31,
+                231,
+                62,
+                187,
+                98,
+                120,
+                64,
+                249,
+                223,
+                98,
+                140,
+                36,
+                142,
+                31,
+                224
+              ]
+            },
+            "vout": 0,
+            "signature": null,
+            "public_key": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+            "coinbase_data": null
+          }
+        ],
+        "outputs": [
+          {
+            "amount": 0,
+            "address": "0x791026e25cc1ba461167ffb5c6dc095c284bd92c",
+            "script": "OP_TRUE",
+            "nft_data": null
+          }
+        ],
+        "data": "{\"account\":[121,16,38,226,92,193,186,70,17,103,255,181,198,220,9,92,40,75,217,44],\"action\":{\"Enable\":{\"add_delay_blocks\":2244,\"allowed\":[[3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],[171,205,239,171,205,239,171,205,239,171,205,239,171,205,239,171,205,239,171,205]]}},\"action_nonce\":0,\"public_key\":\"ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c\",\"signature\":\"b9a0758506c6793636b21ce100e95066d98cb8c22eb5ecba18b485d3b1b8724f0b05aa5658b00770c8384a0b49d3cbf67f0dc8c4e2a1a979d18f9853fc77510e\"}",
+        "lock_time": null,
+        "fee": 0,
+        "sender_address": [
+          121,
+          16,
+          38,
+          226,
+          92,
+          193,
+          186,
+          70,
+          17,
+          103,
+          255,
+          181,
+          198,
+          220,
+          9,
+          92,
+          40,
+          75,
+          217,
+          44
+        ],
+        "recipient_address": null,
+        "amount": 0,
+        "operation": {
+          "Transfer": {
+            "amount": 0
+          }
+        },
+        "nonce": 0
+      }
+    },
+    {
+      "name": "disable",
+      "submitted_at": 1800000456,
+      "signed_action": {
+        "account": [
+          121,
+          16,
+          38,
+          226,
+          92,
+          193,
+          186,
+          70,
+          17,
+          103,
+          255,
+          181,
+          198,
+          220,
+          9,
+          92,
+          40,
+          75,
+          217,
+          44
+        ],
+        "action": "RequestDisable",
+        "action_nonce": 7,
+        "public_key": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "signature": "4ea9f95480fc08ab20be3fc255619a7c416ca3698ba7a68ce994bd3fa1f1b43f8cfdab079f16b3b8a9e727ca0571367456e5668da5333f1c4c62bce53d14fb0a"
+      },
+      "transaction": {
+        "id": {
+          "hash_type": "Sha3",
+          "bytes": [
+            22,
+            96,
+            30,
+            38,
+            221,
+            85,
+            2,
+            2,
+            201,
+            251,
+            74,
+            53,
+            184,
+            34,
+            31,
+            151,
+            133,
+            52,
+            157,
+            85,
+            173,
+            93,
+            227,
+            102,
+            94,
+            231,
+            191,
+            163,
+            116,
+            113,
+            250,
+            122
+          ]
+        },
+        "tx_type": "SendAllowlist",
+        "version": 1,
+        "timestamp": "2027-01-15T08:07:36Z",
+        "inputs": [
+          {
+            "txid": {
+              "hash_type": "Sha3",
+              "bytes": [
+                118,
+                203,
+                60,
+                173,
+                71,
+                178,
+                115,
+                228,
+                100,
+                62,
+                108,
+                197,
+                136,
+                93,
+                92,
+                79,
+                118,
+                86,
+                148,
+                69,
+                3,
+                208,
+                250,
+                227,
+                67,
+                23,
+                95,
+                226,
+                222,
+                91,
+                97,
+                162
+              ]
+            },
+            "vout": 0,
+            "signature": null,
+            "public_key": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+            "coinbase_data": null
+          }
+        ],
+        "outputs": [
+          {
+            "amount": 0,
+            "address": "0x791026e25cc1ba461167ffb5c6dc095c284bd92c",
+            "script": "OP_TRUE",
+            "nft_data": null
+          }
+        ],
+        "data": "{\"account\":[121,16,38,226,92,193,186,70,17,103,255,181,198,220,9,92,40,75,217,44],\"action\":\"RequestDisable\",\"action_nonce\":7,\"public_key\":\"ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c\",\"signature\":\"4ea9f95480fc08ab20be3fc255619a7c416ca3698ba7a68ce994bd3fa1f1b43f8cfdab079f16b3b8a9e727ca0571367456e5668da5333f1c4c62bce53d14fb0a\"}",
+        "lock_time": null,
+        "fee": 0,
+        "sender_address": [
+          121,
+          16,
+          38,
+          226,
+          92,
+          193,
+          186,
+          70,
+          17,
+          103,
+          255,
+          181,
+          198,
+          220,
+          9,
+          92,
+          40,
+          75,
+          217,
+          44
+        ],
+        "recipient_address": null,
+        "amount": 0,
+        "operation": {
+          "Transfer": {
+            "amount": 0
+          }
+        },
+        "nonce": 7
+      }
+    },
+    {
+      "name": "raise",
+      "submitted_at": 1800000789,
+      "signed_action": {
+        "account": [
+          121,
+          16,
+          38,
+          226,
+          92,
+          193,
+          186,
+          70,
+          17,
+          103,
+          255,
+          181,
+          198,
+          220,
+          9,
+          92,
+          40,
+          75,
+          217,
+          44
+        ],
+        "action": {
+          "RaiseDelay": {
+            "add_delay_blocks": 33662
+          }
+        },
+        "action_nonce": 12345678901,
+        "public_key": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+        "signature": "dc0bd29bebefb566506a1366608360f4adc2ef8c928b622a5d13c83e1f5b29e15047513c6df8fcd39c414efc525e0917c55b1a3ce4c386be78f73733c3667101"
+      },
+      "transaction": {
+        "id": {
+          "hash_type": "Sha3",
+          "bytes": [
+            181,
+            88,
+            205,
+            203,
+            152,
+            79,
+            21,
+            177,
+            125,
+            80,
+            18,
+            58,
+            45,
+            175,
+            185,
+            48,
+            34,
+            171,
+            93,
+            241,
+            255,
+            130,
+            171,
+            50,
+            4,
+            130,
+            54,
+            181,
+            238,
+            123,
+            129,
+            135
+          ]
+        },
+        "tx_type": "SendAllowlist",
+        "version": 1,
+        "timestamp": "2027-01-15T08:13:09Z",
+        "inputs": [
+          {
+            "txid": {
+              "hash_type": "Sha3",
+              "bytes": [
+                91,
+                57,
+                138,
+                64,
+                46,
+                211,
+                165,
+                35,
+                117,
+                50,
+                166,
+                75,
+                58,
+                16,
+                102,
+                78,
+                63,
+                234,
+                126,
+                174,
+                145,
+                187,
+                48,
+                245,
+                216,
+                74,
+                82,
+                120,
+                40,
+                171,
+                21,
+                125
+              ]
+            },
+            "vout": 0,
+            "signature": null,
+            "public_key": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+            "coinbase_data": null
+          }
+        ],
+        "outputs": [
+          {
+            "amount": 0,
+            "address": "0x791026e25cc1ba461167ffb5c6dc095c284bd92c",
+            "script": "OP_TRUE",
+            "nft_data": null
+          }
+        ],
+        "data": "{\"account\":[121,16,38,226,92,193,186,70,17,103,255,181,198,220,9,92,40,75,217,44],\"action\":{\"RaiseDelay\":{\"add_delay_blocks\":33662}},\"action_nonce\":12345678901,\"public_key\":\"ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c\",\"signature\":\"dc0bd29bebefb566506a1366608360f4adc2ef8c928b622a5d13c83e1f5b29e15047513c6df8fcd39c414efc525e0917c55b1a3ce4c386be78f73733c3667101\"}",
+        "lock_time": null,
+        "fee": 0,
+        "sender_address": [
+          121,
+          16,
+          38,
+          226,
+          92,
+          193,
+          186,
+          70,
+          17,
+          103,
+          255,
+          181,
+          198,
+          220,
+          9,
+          92,
+          40,
+          75,
+          217,
+          44
+        ],
+        "recipient_address": null,
+        "amount": 0,
+        "operation": {
+          "Transfer": {
+            "amount": 0
+          }
+        },
+        "nonce": 12345678901
+      }
+    }
+  ]
+}

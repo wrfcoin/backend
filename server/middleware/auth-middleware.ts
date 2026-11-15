@@ -29,6 +29,7 @@ interface AuthenticatedUser {
   address: string;
   role: string;
   permissions: string[];
+  walletScheme?: string;
 }
 
 /**
@@ -235,6 +236,7 @@ export const authenticateToken = (
       role?: string;
       permissions?: string[];
       exp?: number;
+      wallet_scheme?: unknown;
     }>(token, {
       algorithms: ['HS256'],
       issuer: JWT_ISSUER,
@@ -261,6 +263,8 @@ export const authenticateToken = (
       address: decoded.address || 'unknown',
       role: decoded.role || 'user',
       permissions: decoded.permissions || ['read'],
+      // Which wallet kind signed in (a passkey session is told apart from a 12-word one). Absent on older tokens.
+      ...(typeof decoded.wallet_scheme === 'string' ? { walletScheme: decoded.wallet_scheme } : {}),
     };
 
     next();

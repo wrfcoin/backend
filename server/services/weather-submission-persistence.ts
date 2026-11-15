@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { executeQuery } from '../../database/index.js';
+import { toStorageGrid } from '../utils/coordinate-grid.js';
 import type { WeatherData } from './weather-ingestion-service.js';
 
 type QueryExecutor = (query: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
@@ -37,6 +38,18 @@ function asFiniteNumber(value: unknown): number | null {
     return Number.isFinite(parsed) ? parsed : null;
   }
   return null;
+}
+
+/**
+ * A submitted horizontal coordinate on the 0.1 degree storage grid
+ * (utils/coordinate-grid.js). The submit routes pass the caller's `location`
+ * through as sent, so the rounding happens here, at the one write to
+ * `weather_submissions`: no finer position is stored whatever a client sends.
+ * Altitude is not a horizontal position and is stored as sent.
+ */
+export function submissionGridCoordinate(value: unknown): number | null {
+  const numeric = asFiniteNumber(value);
+  return numeric === null ? null : toStorageGrid(numeric);
 }
 
 function asFiniteInteger(value: unknown): number | null {
@@ -181,8 +194,8 @@ export async function persistWeatherSubmission(
       walletAddress,
       asStringOrNull(transportMeta?.deviceId),
       input.stationId,
-      asFiniteNumber(location?.latitude),
-      asFiniteNumber(location?.longitude),
+      submissionGridCoordinate(location?.latitude),
+      submissionGridCoordinate(location?.longitude),
       asFiniteNumber(location?.altitude),
       asFiniteNumber(input.temperature),
       asFiniteNumber(input.humidity),

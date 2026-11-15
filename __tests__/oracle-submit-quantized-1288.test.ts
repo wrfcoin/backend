@@ -156,15 +156,46 @@ describe('core4 rejection attribution', () => {
     expect(warn.mock.calls.find((c) => String(c[0]).includes('commit rejected'))![1]).toMatchObject({ status: 400, message: 'bad commit' });
   });
 
-  it.each([
+  const REPLAYS = [
     [{ error: 'Launch protocol replay detected' }],
     [{ success: false, error: { code: 'X', message: 'Launch protocol replay detected: commit seen' } }],
-  ])('a commit 400 "Launch protocol replay detected" is a terminal 409, no reveal attempted', async (payload) => {
+  ];
+  const revealSent = () => mockFetchCore4Json.mock.calls.some((c) => c[0] === '/transactions/contribution/reveal');
+
+  it.each(REPLAYS)('a retried commit still sends the reveal an earlier attempt lost', async (payload) => {
     reject('/transactions/contribution/commit', 400, payload);
+    const res = await submit(buildApp(), longReading());
+    expect(revealSent()).toBe(true);
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+  });
+
+  it.each(REPLAYS)('commit and reveal both already queued is a terminal 409', async (payload) => {
+    mockFetchCore4Json.mockImplementation(async (p: string) =>
+      p.startsWith('/transactions/contribution/')
+        ? { ok: false, status: 400, payload }
+        : { ok: true, status: 200, payload: { data: {} } }
+    );
     const res = await submit(buildApp(), longReading());
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('COMMIT_ALREADY_SUBMITTED');
-    expect(mockFetchCore4Json.mock.calls.some((c) => c[0] === '/transactions/contribution/reveal')).toBe(false);
+  });
+
+  it('a fresh commit whose reveal is already queued is the same terminal 409', async () => {
+    reject('/transactions/contribution/reveal', 400, { error: 'Launch protocol replay detected' });
+    const res = await submit(buildApp(), longReading());
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('COMMIT_ALREADY_SUBMITTED');
+  });
+
+  it('a retried commit whose reveal fails again stays a retryable 502', async () => {
+    mockFetchCore4Json.mockImplementation(async (p: string) => {
+      if (p.endsWith('/commit')) return { ok: false, status: 400, payload: { error: 'Launch protocol replay detected' } };
+      if (p.endsWith('/reveal')) return { ok: false, status: 503, payload: { error: 'mempool full' } };
+      return { ok: true, status: 200, payload: { data: {} } };
+    });
+    const res = await submit(buildApp(), longReading());
+    expect(res.status).toBe(502);
   });
 
   it('other commit failures (and a replay-worded 500) stay 502', async () => {
