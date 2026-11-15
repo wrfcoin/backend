@@ -70,7 +70,8 @@ const reachedHeader = 'x-safe-mount-build-reached';
 // 73: skill-pay backtest mounts the default-OFF /api/public/station-history read (./routes/public-station-history-routes).
 // 74: default-OFF claim mailbox read proxy /api/claim-mailbox (./routes/claim-mailbox-routes).
 // 75: owner decision 2026-11-01 mounts the default-OFF /api/public/network-status read (./routes/public-network-status-routes).
-const expectedMountCount = 75;
+// 76: epic 6 option B mounts the default-OFF node address record POST /api/node-addresses (./routes/node-address-routes).
+const expectedMountCount = 76;
 
 // Removed by #935/#937 — each of these now PASSES this gate, and the gate
 // itself instructed the removal ("known failures now pass; remove their
