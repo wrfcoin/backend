@@ -601,15 +601,15 @@ describe('Onboarding Faucet Routes', () => {
       expect(dispenseCallCount() - before).toBe(dispensed);
     });
 
-    it('should return FAUCET_EMPTY and not consume the cooldown when dispense fails', async () => {
+    it.each([{ status: 503, code: 'FAUCET_EMPTY' }, { status: 502, code: 'FAUCET_TRANSFER_FAILED' }, { status: 429, code: 'RATE_LIMITED' }, { status: 503, code: 'FAUCET_NONCE_CLEANUP_PENDING' }])('releases the reservation for definitive refusal $code', async ({ status, code }) => {
       const walletAddress = '0x' + '1'.repeat(40);
       fetchMock.mockResolvedValueOnce({
         ok: false,
-        status: 503,
+        status,
         text: async () =>
           JSON.stringify({
             error: {
-              code: 'FAUCET_EMPTY',
+              code,
               message: 'Faucet temporarily unavailable',
             },
           }),
@@ -627,9 +627,9 @@ describe('Onboarding Faucet Routes', () => {
           challengeId: firstChallenge.body.challengeId,
           answer: firstAnswer,
         })
-        .expect(503);
+        .expect(status >= 500 ? 503 : status);
 
-      expect(failed.body.error.code).toBe('FAUCET_EMPTY');
+      expect(failed.body.error.code).toBe(code);
 
       fetchMock.mockResolvedValueOnce({
         ok: true,
@@ -654,6 +654,42 @@ describe('Onboarding Faucet Routes', () => {
           answer: secondAnswer,
         })
         .expect(200);
+    });
+
+    it.each([
+      { status: 409, body: { error: { code: 'CLAIM_PENDING', message: 'Outcome unknown' } }, expected: 'CLAIM_PENDING' },
+      { status: 502, body: '<html>proxy failure</html>', expected: 'FAUCET_UNCONFIRMED' },
+      { status: 503, body: { error: { code: 'UNREVIEWED_CODE' } }, expected: 'FAUCET_UNCONFIRMED' },
+    ])('keeps reservations after ambiguous dispenser response $status/$expected', async ({ status, body, expected }) => {
+      const walletAddress = '0x' + '6'.repeat(40);
+      fetchMock.mockResolvedValueOnce({ ok: false, status, headers: { get: () => '120' },
+        text: async () => typeof body === 'string' ? body : JSON.stringify(body) });
+      const claim = async () => {
+        const challenge = await request(app).post('/api/onboarding/faucet/challenge').expect(200);
+        return request(app).post('/api/onboarding/faucet/claim').send({ walletAddress,
+          challengeId: challenge.body.challengeId, answer: solveCaptcha(challenge.body.question) });
+      };
+      const first = await claim();
+      expect(first.status).toBe(status >= 500 ? 503 : status);
+      expect(first.body.error.code).toBe(expected);
+      expect(first.body.error.message).not.toContain('<html>');
+      expect(first.headers['retry-after']).toBe('120');
+      const second = await claim();
+      expect(second.status).toBe(429);
+      expect(second.body.error.code).toBe('ALREADY_CLAIMED');
+      expect(dispenseCallCount()).toBe(1);
+      expect([...redisState.ipClaims.values()].flat()).toHaveLength(1);
+    });
+
+    it.each(['transport', 'missing-hash'])('reports an unconfirmed outcome and retains cooldown after %s', async (mode) => {
+      if (mode === 'transport') fetchMock.mockRejectedValueOnce(new Error('transport failed'));
+      else fetchMock.mockResolvedValueOnce({ ok: true, text: async () => JSON.stringify({ ok: true }) });
+      const challenge = await request(app).post('/api/onboarding/faucet/challenge').expect(200);
+      const result = await request(app).post('/api/onboarding/faucet/claim').send({
+        walletAddress: '0x' + '6'.repeat(40), challengeId: challenge.body.challengeId, answer: solveCaptcha(challenge.body.question),
+      }).expect(503);
+      expect(result.body.error.code).toBe('FAUCET_UNCONFIRMED');
+      expect(redisState.addressClaims.size).toBe(1);
     });
 
     it('should preserve address cooldown across process restart with persisted Redis state', async () => {

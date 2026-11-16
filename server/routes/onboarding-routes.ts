@@ -273,12 +273,14 @@ class FaucetClaimError extends Error {
   // cases the dispenser may have already sent tokens, so the claim
   // reservation must NOT be rolled back (see the /faucet/claim handler).
   safeToRollback: boolean;
+  retryAfterSeconds?: number;
 
-  constructor(status: number, code: string, message: string, safeToRollback = false) {
+  constructor(status: number, code: string, message: string, safeToRollback = false, retryAfterSeconds?: number) {
     super(message);
     this.status = status;
     this.code = code;
     this.safeToRollback = safeToRollback;
+    this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
@@ -372,6 +374,16 @@ export function getFaucetServiceToken(): string | null {
   return token || null;
 }
 
+// Explicit dispenser refusals before submission, plus its definitive rejected-transfer result.
+// A new/unknown error code must not release a reservation until its outcome contract is reviewed.
+const DEFINITIVE_FAUCET_REFUSALS = new Set([
+  'FAUCET_EMPTY', 'FAUCET_NOT_CONFIGURED', 'CAPTCHA_NOT_CONFIGURED',
+  'FAUCET_WALLET_NONCE_UNAVAILABLE', 'FAUCET_WALLET_BALANCE_UNAVAILABLE',
+  'FAUCET_WALLET_LOW_BALANCE', 'FAUCET_TRANSFER_BUSY', 'FAUCET_NONCE_CLEANUP_PENDING', 'INVALID_WALLET',
+  'CAPTCHA_FAILED', 'INVALID_PROXY_TOKEN', 'RATE_LIMITED', 'DAILY_LIMIT_REACHED',
+  'GLOBAL_DAILY_LIMIT_EXCEEDED', 'FAUCET_TRANSFER_FAILED',
+]);
+
 async function dispenseFaucetTokens(walletAddress: string, clientIp: string) {
   const faucetUrl = getFaucetServiceUrl();
 
@@ -380,7 +392,7 @@ async function dispenseFaucetTokens(walletAddress: string, clientIp: string) {
     // so it's safe to release the reservation on retry.
     throw new FaucetClaimError(
       503,
-      'FAUCET_EMPTY',
+      'FAUCET_UNAVAILABLE',
       'Faucet temporarily unavailable',
       true
     );
@@ -419,17 +431,19 @@ async function dispenseFaucetTokens(walletAddress: string, clientIp: string) {
     }
 
     if (!response.ok) {
-      // The dispenser completed the round trip and explicitly declined the
-      // request (rate-limited, empty, rejected, etc). A response that made
-      // it back to us at all means the dispenser reached a final decision
-      // and didn't leave us in an unknown state — safe to release the
-      // reservation on retry.
+      const code = getPayloadCode(payload);
+      const definitive = code !== null && DEFINITIVE_FAUCET_REFUSALS.has(code);
+      const rawWait = response.headers?.get('Retry-After');
+      const wait = rawWait && /^[0-9]+$/.test(rawWait) ? Number(rawWait) : NaN;
+      // CLAIM_PENDING is an explicit unknown post-submit outcome, not a refusal.
+      // Likewise, an unrecognized/malformed proxy response cannot prove no transfer was sent.
       throw new FaucetClaimError(
         response.status === 429 ? 429 : response.status >= 500 ? 503 : response.status,
-        getPayloadCode(payload) ??
-          (response.status === 429 ? 'RATE_LIMITED' : 'FAUCET_EMPTY'),
-        getPayloadMessage(payload, 'Faucet temporarily unavailable'),
-        true
+        code === 'CLAIM_PENDING' ? code : definitive ? code! : 'FAUCET_UNCONFIRMED',
+        definitive ? getPayloadMessage(payload, 'Faucet temporarily unavailable')
+          : 'The faucet claim outcome could not be confirmed. Check your wallet before retrying.',
+        definitive,
+        Number.isSafeInteger(wait) && wait > 0 ? wait : undefined
       );
     }
 
@@ -447,8 +461,8 @@ async function dispenseFaucetTokens(walletAddress: string, clientIp: string) {
       // sent — do NOT mark this safeToRollback.
       throw new FaucetClaimError(
         503,
-        'FAUCET_EMPTY',
-        'Faucet temporarily unavailable'
+        'FAUCET_UNCONFIRMED',
+        'The faucet claim outcome could not be confirmed. Check your wallet before retrying.'
       );
     }
 
@@ -474,8 +488,8 @@ async function dispenseFaucetTokens(walletAddress: string, clientIp: string) {
     // Do NOT mark this safeToRollback.
     throw new FaucetClaimError(
       503,
-      'FAUCET_EMPTY',
-      'Faucet temporarily unavailable'
+      'FAUCET_UNCONFIRMED',
+      'The faucet claim outcome could not be confirmed. Check your wallet before retrying.'
     );
   } finally {
     clearTimeout(timeout);
@@ -675,8 +689,8 @@ router.post('/faucet/claim', asyncRoute(async (req: Request, res: Response) => {
         ? error
         : new FaucetClaimError(
             503,
-            'FAUCET_EMPTY',
-            'Faucet temporarily unavailable'
+            'FAUCET_UNCONFIRMED',
+            'The faucet claim outcome could not be confirmed. Check your wallet before retrying.'
           );
 
     // Only release the reservation when we can positively confirm nothing
@@ -697,6 +711,8 @@ router.post('/faucet/claim', asyncRoute(async (req: Request, res: Response) => {
         });
       }
     }
+
+    if (faucetError.retryAfterSeconds !== undefined) res.setHeader('Retry-After', String(faucetError.retryAfterSeconds));
 
     res.status(faucetError.status).json({
       error: {
