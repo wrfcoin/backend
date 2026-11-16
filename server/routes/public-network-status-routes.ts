@@ -18,7 +18,7 @@
  *   producers  how many producers of the set in force signed a block in the newest 64 blocks
  *              (/network/producers?window=64). A producer_id is operator configuration, so it is never
  *              published: each producer is shown by its approved public alias (PUBLIC_PRODUCER_ALIASES,
- *              an explicit compiled-in allowlist) or else by an opaque "producer N" (its place in the set).
+ *              an explicit compiled-in allowlist) or else by an opaque "Producer A/B/C" (its place in the set).
  *              No ids, keys, payout addresses, hosts or IPs.
  *   nodePay    the current node-pay epoch and the newest PAID epoch among the last 8
  *              (/node/bonds/<zero> for the epoch, /node/settlement/<e>). The node prunes old paid epochs,
@@ -70,24 +70,26 @@ const DAY_S = 86_400;
 const CALL_TIMEOUT_MS = 4_000;
 const MAX_REMEMBERED_TIMES = 512;
 const ZERO_ID = '0'.repeat(64);
-const MAX_PRODUCERS = 32;
+const MAX_PRODUCERS = 26; // Public labels are Producer A through Z; larger sets are unavailable.
 /** The only chain/network identity this endpoint ever publishes (chain 888 public testnet). */
 export const PUBLIC_CHAIN_ID = '888';
 export const PUBLIC_NETWORK_ID = 'testnet';
 /**
  * Approved public producer aliases, keyed by core4 producer_id. Explicit allowlist: adding an entry is an
  * owner decision (docs/plans/DECISIONS.md). A producer_id not listed here is published only as
- * "producer N", so hostnames, IPs or personal names in node configuration never reach the public.
- * Aliases must not look like "producer N".
+ * "Producer A/B/C", so hostnames, IPs or personal names in node configuration never reach the public.
+ * Aliases must match the ordinal label, "Producer A/B/C".
  */
 export const PUBLIC_PRODUCER_ALIASES: Readonly<Record<string, string>> = Object.freeze({});
-export const PUBLIC_ALIAS_RE = /^[A-Za-z][A-Za-z0-9 -]{0,31}$/;
+export const PUBLIC_ALIAS_RE = /^Producer [A-Z]$/;
 
 /** Public label for the producer at 0-based `index` of the set in force. */
 export function publicProducerLabel(producerId: unknown, index: number, aliases: Readonly<Record<string, string>> = PUBLIC_PRODUCER_ALIASES): string {
   const alias = typeof producerId === 'string' && Object.prototype.hasOwnProperty.call(aliases, producerId) ? aliases[producerId] : undefined;
-  if (typeof alias === 'string' && PUBLIC_ALIAS_RE.test(alias) && !/^producer \d+$/i.test(alias)) return alias;
-  return `producer ${index + 1}`;
+  const label = `Producer ${String.fromCharCode(65 + index)}`;
+  // Labels follow the set's stable order, never a hostname or configured identity.
+  if (typeof alias === 'string' && PUBLIC_ALIAS_RE.test(alias) && alias === label) return alias;
+  return label;
 }
 const FEATURE_RE = /^[a-z0-9_]{1,64}$/;
 
@@ -263,9 +265,9 @@ export function createNetworkStatusRouter(deps: NetworkStatusDeps = {}): express
     }
     while (times.size > MAX_REMEMBERED_TIMES) times.delete(times.keys().next().value as number);
 
-    // Producers (approved aliases or opaque "producer N" only; producer_id is never copied).
+    // Producers (approved aliases or opaque "Producer A/B/C" only; producer_id is never copied).
     let producers: NetworkStatusSnapshot['producers'] = unavailable;
-    if (producersView && Array.isArray(producersView.producers)) {
+    if (producersView && Array.isArray(producersView.producers) && producersView.producers.length <= MAX_PRODUCERS) {
       const windowTo = safeInt(producersView.activity_window?.to_height);
       const windowFrom = safeInt(producersView.activity_window?.from_height);
       const members = producersView.producers

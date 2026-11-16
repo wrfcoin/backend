@@ -149,9 +149,9 @@ describe('GET /api/public/network-status', () => {
     expect(r.body.producers).toEqual({
       status: 'ok', windowBlocks: 64, total: 3, online: 2,
       members: [
-        { label: 'producer 1', online: true, blocksInWindow: 40, lastHeight: 25_000 },
-        { label: 'producer 2', online: true, blocksInWindow: 24, lastHeight: 24_999 },
-        { label: 'producer 3', online: false, blocksInWindow: 0, lastHeight: null },
+        { label: 'Producer A', online: true, blocksInWindow: 40, lastHeight: 25_000 },
+        { label: 'Producer B', online: true, blocksInWindow: 24, lastHeight: 24_999 },
+        { label: 'Producer C', online: false, blocksInWindow: 0, lastHeight: null },
       ],
     });
     expect(r.body.nodePay).toEqual({ status: 'ok', currentEpoch: 21, lastPaidEpoch: 19, epochsScanned: [21, 20, 19] });
@@ -173,19 +173,27 @@ describe('GET /api/public/network-status', () => {
     for (const secret of [PEER_ID, GENESIS, KEY, PAYOUT, '0x', READER, '127.0.0.1', 'deployment']) expect(text).not.toContain(secret);
   });
 
-  it('publishes producers only by approved alias or opaque "producer N", never the configured producer_id', async () => {
+  it('publishes producers only by approved alias or opaque "Producer A/B/C", never the configured producer_id', async () => {
     const sensitive = ['tony-macbook.local', '192.0.2.17', 'jane.doe.home', 'worker.internal.example', '2001:db8::1', 'ct101'];
     producerIds = [sensitive[0], sensitive[1], sensitive[2]];
     const r = await request(makeApp()).get('/api/public/network-status');
-    expect(r.body.producers.members.map((m: { label: string }) => m.label)).toEqual(['producer 1', 'producer 2', 'producer 3']);
+    expect(r.body.producers.members.map((m: { label: string }) => m.label)).toEqual(['Producer A', 'Producer B', 'Producer C']);
     const text = JSON.stringify(r.body);
     for (const v of sensitive) expect(text).not.toContain(v);
 
-    // An approved alias is used; an alias that is malformed or mimics "producer N" falls back to opaque.
+    // An alias cannot change the stable ordinal label or disclose a configured identity.
     producerIds = ['n5-node-a', 'mango-mini', 'jane.doe.home'];
-    const aliased = await request(makeApp({ producerAliases: { 'n5-node-a': 'Producer A', 'mango-mini': 'producer 3', 'x': 'bad<alias>' } })).get('/api/public/network-status');
-    expect(aliased.body.producers.members.map((m: { label: string }) => m.label)).toEqual(['Producer A', 'producer 2', 'producer 3']);
+    const aliased = await request(makeApp({ producerAliases: { 'n5-node-a': 'Producer A', 'mango-mini': 'Producer C', 'x': 'bad<alias>' } })).get('/api/public/network-status');
+    expect(aliased.body.producers.members.map((m: { label: string }) => m.label)).toEqual(['Producer A', 'Producer B', 'Producer C']);
     expect(JSON.stringify(aliased.body)).not.toContain('jane');
+  });
+
+  it('uses alphabetic ordinal labels even if an alias tries to reorder them', () => {
+    const { publicProducerLabel } = require('../server/routes/public-network-status-routes');
+    expect(publicProducerLabel('private-host', 0, { 'private-host': 'Producer Z' })).toBe('Producer A');
+    expect(publicProducerLabel('private-host', 1)).toBe('Producer B');
+    expect(publicProducerLabel('private-host', 2)).toBe('Producer C');
+    expect(publicProducerLabel('private-host', 25)).toBe('Producer Z');
   });
 
   it('the default alias allowlist is explicit and holds only well-formed aliases', () => {
@@ -193,7 +201,7 @@ describe('GET /api/public/network-status', () => {
     expect(Object.isFrozen(PUBLIC_PRODUCER_ALIASES)).toBe(true);
     for (const alias of Object.values(PUBLIC_PRODUCER_ALIASES) as string[]) {
       expect(alias).toMatch(PUBLIC_ALIAS_RE);
-      expect(alias).not.toMatch(/^producer \d+$/i);
+      expect(alias).toMatch(/^Producer [A-Z]$/);
     }
   });
 
