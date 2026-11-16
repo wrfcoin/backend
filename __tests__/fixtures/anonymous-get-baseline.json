@@ -80,6 +80,7 @@
     "/api/iotex/devices/:id",
     "/api/live",
     "/api/network/nodes",
+    "/api/network/nodes/bonds/:bondId/payout-history",
     "/api/notifications/config",
     "/api/operators/:walletAddress/og-meta",
     "/api/operators/:walletAddress/profile",
