@@ -441,7 +441,9 @@ async function dispenseFaucetTokens(walletAddress: string, clientIp: string) {
         response.status === 429 ? 429 : response.status >= 500 ? 503 : response.status,
         code === 'CLAIM_PENDING' ? code : definitive ? code! : 'FAUCET_UNCONFIRMED',
         definitive ? getPayloadMessage(payload, 'Faucet temporarily unavailable')
-          : 'The faucet claim outcome could not be confirmed. Check your wallet before retrying.',
+          : code === 'CLAIM_PENDING'
+            ? "Your claim is being processed. Check your wallet; don't request again."
+            : 'The faucet claim outcome could not be confirmed. Check your wallet before retrying.',
         definitive,
         Number.isSafeInteger(wait) && wait > 0 ? wait : undefined
       );
@@ -712,7 +714,18 @@ router.post('/faucet/claim', asyncRoute(async (req: Request, res: Response) => {
       }
     }
 
-    if (faucetError.retryAfterSeconds !== undefined) res.setHeader('Retry-After', String(faucetError.retryAfterSeconds));
+    // A kept reservation holds this address for the full rolling cooldown, so
+    // never advertise a retry sooner than our own ALREADY_CLAIMED answer would
+    // allow: send max(dispenser wait, remaining backend cooldown).
+    const retryAfterSeconds = faucetError.safeToRollback
+      ? faucetError.retryAfterSeconds
+      : Math.max(
+          faucetError.retryAfterSeconds ?? 0,
+          Math.ceil((now + ADDRESS_COOLDOWN_MS - Date.now()) / 1000)
+        );
+    if (retryAfterSeconds !== undefined && retryAfterSeconds > 0) {
+      res.setHeader('Retry-After', String(retryAfterSeconds));
+    }
 
     res.status(faucetError.status).json({
       error: {

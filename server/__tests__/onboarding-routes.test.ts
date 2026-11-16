@@ -606,6 +606,7 @@ describe('Onboarding Faucet Routes', () => {
       fetchMock.mockResolvedValueOnce({
         ok: false,
         status,
+        headers: { get: (name: string) => (name === 'Retry-After' ? '120' : null) },
         text: async () =>
           JSON.stringify({
             error: {
@@ -630,6 +631,8 @@ describe('Onboarding Faucet Routes', () => {
         .expect(status >= 500 ? 503 : status);
 
       expect(failed.body.error.code).toBe(code);
+      // Released reservation: the dispenser's own wait is the real one.
+      expect(failed.headers['retry-after']).toBe('120');
 
       fetchMock.mockResolvedValueOnce({
         ok: true,
@@ -673,10 +676,20 @@ describe('Onboarding Faucet Routes', () => {
       expect(first.status).toBe(status >= 500 ? 503 : status);
       expect(first.body.error.code).toBe(expected);
       expect(first.body.error.message).not.toContain('<html>');
-      expect(first.headers['retry-after']).toBe('120');
+      // The reservation is kept, so the header must cover the backend's own
+      // 24 h address cooldown, not the dispenser's shorter 120 s hint.
+      const firstRetry = Number(first.headers['retry-after']);
+      expect(firstRetry).toBeGreaterThan(24 * 60 * 60 - 5);
+      expect(firstRetry).toBeLessThanOrEqual(24 * 60 * 60);
+      if (expected === 'CLAIM_PENDING') {
+        expect(first.body.error.message).toBe("Your claim is being processed. Check your wallet; don't request again.");
+      }
       const second = await claim();
       expect(second.status).toBe(429);
       expect(second.body.error.code).toBe('ALREADY_CLAIMED');
+      // The retry the header advertised matches what the backend actually enforces.
+      expect(Number(second.headers['retry-after'])).toBeLessThanOrEqual(firstRetry);
+      expect(Number(second.headers['retry-after'])).toBeGreaterThan(firstRetry - 5);
       expect(dispenseCallCount()).toBe(1);
       expect([...redisState.ipClaims.values()].flat()).toHaveLength(1);
     });
@@ -690,6 +703,7 @@ describe('Onboarding Faucet Routes', () => {
       }).expect(503);
       expect(result.body.error.code).toBe('FAUCET_UNCONFIRMED');
       expect(redisState.addressClaims.size).toBe(1);
+      expect(Number(result.headers['retry-after'])).toBeGreaterThan(24 * 60 * 60 - 5);
     });
 
     it('should preserve address cooldown across process restart with persisted Redis state', async () => {
