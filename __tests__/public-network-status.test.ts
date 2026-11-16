@@ -28,6 +28,11 @@ describe('GET /api/public/network-status', () => {
   let infoIds: { chain_id: unknown; network_id: unknown } = { chain_id: '888', network_id: 'testnet' };
   let producerIds = ['n5-node-a', 'mango-mini', 'producer-standby'];
   let paidEpoch = 19;
+  let oldSettlementStatus = 'UNISSUED';
+  let allUnknown = false;
+  let invalidEpoch = false;
+  let upgradeTruncated = false;
+  let badFeature = true;
   let upstream: http.Server;
   let clock = NOW;
 
@@ -64,17 +69,17 @@ describe('GET /api/public/network-status', () => {
     if (path === `/node/bonds/${'0'.repeat(64)}`) return { status: 200, json: { epoch: '21', status: 'UNKNOWN', deployment_id: '0'.repeat(64) } };
     if ((m = /^\/node\/settlement\/(\d+)$/.exec(path))) {
       const e = Number(m[1]);
-      const status = e === 21 ? 'OPEN' : e === 20 ? 'PROVISIONAL' : e === paidEpoch ? 'PAID' : 'UNKNOWN';
-      return { status: 200, json: { epoch: String(e), status, payouts_base_units: { ['a1'.repeat(32)]: '5' } } };
+      const status = allUnknown ? 'UNKNOWN' : e === 21 ? 'OPEN' : e === 20 ? 'PROVISIONAL' : e === paidEpoch ? 'PAID' : oldSettlementStatus;
+      return { status: 200, json: { epoch: String(invalidEpoch ? e + 1 : e), status, payouts_base_units: { ['a1'.repeat(32)]: '5' } } };
     }
     if (path === '/network/upgrade') {
       return { status: 200, json: {
         status: 'none', tip_height: tip, blocks_remaining: null, activation_height: null, notice: null,
-        scheduled: { status: 'ready', entries: [
-          { feature: 'passkey_p256_auth', activation_height: 3400, active_at_next: true, blocks_remaining: 0 },
-          { feature: 'governance_proposals', activation_height: 27000, active_at_next: false, blocks_remaining: 27000 - tip },
+        scheduled: { status: 'ready', next_height: tip + 1, truncated: upgradeTruncated, base_provisional: false, total_entries: badFeature ? 4 : 3, entries: [
+          { feature: 'passkey_p256_auth', activation_height: 3400, active_at_next: true, known: true, blocks_remaining: 0 },
+          { feature: 'governance_proposals', activation_height: 27000, active_at_next: false, known: false, blocks_remaining: 27000 - tip },
           { feature: 'transfer_fee_burn', activation_height: 26000, active_at_next: false, blocks_remaining: 26000 - tip },
-          { feature: 'Bad Feature<script>', activation_height: 26500, active_at_next: false, blocks_remaining: 1 },
+          ...(badFeature ? [{ feature: 'Bad Feature<script>', activation_height: 26500, active_at_next: false, blocks_remaining: 1 }] : []),
         ] },
       } };
     }
@@ -113,6 +118,11 @@ describe('GET /api/public/network-status', () => {
     infoIds = { chain_id: '888', network_id: 'testnet' };
     producerIds = ['n5-node-a', 'mango-mini', 'producer-standby'];
     paidEpoch = 19;
+    oldSettlementStatus = 'UNISSUED';
+    allUnknown = false;
+    invalidEpoch = false;
+    upgradeTruncated = false;
+    badFeature = true;
     clock = NOW;
   });
 
@@ -139,17 +149,18 @@ describe('GET /api/public/network-status', () => {
     expect(r.body.producers).toEqual({
       status: 'ok', windowBlocks: 64, total: 3, online: 2,
       members: [
-        { label: 'producer 1', online: true, blocksInWindow: 40, lastHeight: 25_000 },
-        { label: 'producer 2', online: true, blocksInWindow: 24, lastHeight: 24_999 },
-        { label: 'producer 3', online: false, blocksInWindow: 0, lastHeight: null },
+        { label: 'Producer A', online: true, blocksInWindow: 40, lastHeight: 25_000 },
+        { label: 'Producer B', online: true, blocksInWindow: 24, lastHeight: 24_999 },
+        { label: 'Producer C', online: false, blocksInWindow: 0, lastHeight: null },
       ],
     });
     expect(r.body.nodePay).toEqual({ status: 'ok', currentEpoch: 21, lastPaidEpoch: 19, epochsScanned: [21, 20, 19] });
     expect(r.body.upgrades).toEqual({
-      status: 'ok', activeFeatures: 1, signedNotice: null,
+      status: 'ok', activeFeatures: 1, signedNotice: null, evaluatedHeight: 25001, scheduleComplete: false,
+      active: [{ feature: 'passkey_p256_auth', activationHeight: 3400, supported: true }],
       pending: [
-        { feature: 'transfer_fee_burn', activationHeight: 26_000, blocksRemaining: 1000 },
-        { feature: 'governance_proposals', activationHeight: 27_000, blocksRemaining: 2000 },
+        { feature: 'transfer_fee_burn', activationHeight: 26_000, blocksRemaining: 1000, supported: null },
+        { feature: 'governance_proposals', activationHeight: 27_000, blocksRemaining: 2000, supported: false },
       ],
     });
     // Every node read uses the backend's own Reader credential.
@@ -162,19 +173,27 @@ describe('GET /api/public/network-status', () => {
     for (const secret of [PEER_ID, GENESIS, KEY, PAYOUT, '0x', READER, '127.0.0.1', 'deployment']) expect(text).not.toContain(secret);
   });
 
-  it('publishes producers only by approved alias or opaque "producer N", never the configured producer_id', async () => {
+  it('publishes producers only by approved alias or opaque "Producer A/B/C", never the configured producer_id', async () => {
     const sensitive = ['tony-macbook.local', '192.0.2.17', 'jane.doe.home', 'worker.internal.example', '2001:db8::1', 'ct101'];
     producerIds = [sensitive[0], sensitive[1], sensitive[2]];
     const r = await request(makeApp()).get('/api/public/network-status');
-    expect(r.body.producers.members.map((m: { label: string }) => m.label)).toEqual(['producer 1', 'producer 2', 'producer 3']);
+    expect(r.body.producers.members.map((m: { label: string }) => m.label)).toEqual(['Producer A', 'Producer B', 'Producer C']);
     const text = JSON.stringify(r.body);
     for (const v of sensitive) expect(text).not.toContain(v);
 
-    // An approved alias is used; an alias that is malformed or mimics "producer N" falls back to opaque.
+    // An alias cannot change the stable ordinal label or disclose a configured identity.
     producerIds = ['n5-node-a', 'mango-mini', 'jane.doe.home'];
-    const aliased = await request(makeApp({ producerAliases: { 'n5-node-a': 'Producer A', 'mango-mini': 'producer 3', 'x': 'bad<alias>' } })).get('/api/public/network-status');
-    expect(aliased.body.producers.members.map((m: { label: string }) => m.label)).toEqual(['Producer A', 'producer 2', 'producer 3']);
+    const aliased = await request(makeApp({ producerAliases: { 'n5-node-a': 'Producer A', 'mango-mini': 'Producer C', 'x': 'bad<alias>' } })).get('/api/public/network-status');
+    expect(aliased.body.producers.members.map((m: { label: string }) => m.label)).toEqual(['Producer A', 'Producer B', 'Producer C']);
     expect(JSON.stringify(aliased.body)).not.toContain('jane');
+  });
+
+  it('uses alphabetic ordinal labels even if an alias tries to reorder them', () => {
+    const { publicProducerLabel } = require('../server/routes/public-network-status-routes');
+    expect(publicProducerLabel('private-host', 0, { 'private-host': 'Producer Z' })).toBe('Producer A');
+    expect(publicProducerLabel('private-host', 1)).toBe('Producer B');
+    expect(publicProducerLabel('private-host', 2)).toBe('Producer C');
+    expect(publicProducerLabel('private-host', 25)).toBe('Producer Z');
   });
 
   it('the default alias allowlist is explicit and holds only well-formed aliases', () => {
@@ -182,7 +201,7 @@ describe('GET /api/public/network-status', () => {
     expect(Object.isFrozen(PUBLIC_PRODUCER_ALIASES)).toBe(true);
     for (const alias of Object.values(PUBLIC_PRODUCER_ALIASES) as string[]) {
       expect(alias).toMatch(PUBLIC_ALIAS_RE);
-      expect(alias).not.toMatch(/^producer \d+$/i);
+      expect(alias).toMatch(/^Producer [A-Z]$/);
     }
   });
 
@@ -226,6 +245,44 @@ describe('GET /api/public/network-status', () => {
     failing = new Set(['/node/settlement/15']);
     const p = await request(makeApp()).get('/api/public/network-status');
     expect(p.body.nodePay).toMatchObject({ status: 'partial', lastPaidEpoch: null, epochsUnread: [15] });
+  });
+
+  it('treats pruned UNKNOWN and unrecognized settlement states as missing history', async () => {
+    paidEpoch = -1;
+    for (const state of ['UNKNOWN', 'FUTURE_STATE', '']) {
+      oldSettlementStatus = state;
+      const r = await request(makeApp()).get('/api/public/network-status');
+      expect(r.body.nodePay).toEqual({ status: 'partial', currentEpoch: 21, lastPaidEpoch: null,
+        epochsScanned: [21, 20], epochsUnread: [19, 18, 17, 16, 15, 14] });
+    }
+  });
+
+  it('keeps an entirely unknown or mismatched epoch history partial', async () => {
+    allUnknown = true;
+    const r = await request(makeApp()).get('/api/public/network-status');
+    expect(r.body.nodePay).toEqual({ status: 'partial', currentEpoch: 21, lastPaidEpoch: null,
+      epochsScanned: [], epochsUnread: [21, 20, 19, 18, 17, 16, 15, 14] });
+    allUnknown = false;
+    invalidEpoch = true;
+    const mismatch = await request(makeApp()).get('/api/public/network-status');
+    expect(mismatch.body.nodePay).toEqual(r.body.nodePay);
+  });
+
+  it('publishes a complete next-block feature view when the node provides one', async () => {
+    badFeature = false;
+    const r = await request(makeApp()).get('/api/public/network-status');
+    expect(r.body.upgrades.scheduleComplete).toBe(true);
+    expect(r.body.upgrades.evaluatedHeight).toBe(25001);
+    expect(r.body.upgrades.active).toEqual([{ feature: 'passkey_p256_auth', activationHeight: 3400, supported: true }]);
+  });
+
+  it('marks a truncated schedule incomplete and keeps source support unknown rather than assuming it', async () => {
+    upgradeTruncated = true;
+    const r = await request(makeApp()).get('/api/public/network-status');
+    expect(r.body.upgrades.scheduleComplete).toBe(false);
+    expect(r.body.upgrades.pending[0].supported).toBeNull();
+    expect(r.body.upgrades.pending[1].supported).toBe(false);
+    expect(JSON.stringify(r.body.upgrades)).not.toContain('Bad Feature');
   });
 
   it('is 404 unless NETWORK_STATUS_READ_ENABLED=true, and makes no node reads', async () => {

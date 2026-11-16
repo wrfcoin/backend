@@ -29,6 +29,14 @@
  *
  * Dormant unless NETWORK_NODES_READ_ENABLED=true (read per request; 404 otherwise).
  *
+ *   GET /api/network/nodes/bonds/<deployment id>/payout-history[?window=30]
+ *
+ * One bonded node's node-pay record over the last `window` closed node-pay epochs (1..40, default 30),
+ * from the backend's own history table (services/bond-payout-history), because the node forgets a PAID
+ * epoch soon after paying it. Each epoch is paid / unpaid / pending / unknown; `paid` is null for
+ * pending and unknown (never observed is NOT unpaid). Dormant unless BOND_PAYOUT_HISTORY_ENABLED=true
+ * (its own flag, read per request; 404 otherwise). 30 reads a minute per client address.
+ *
  * Load: one snapshot is built at most once per 60 s for every caller (single flight). A rebuild reads at
  * most: 1 network info + 16 new blocks (an initial fill reads up to 64, once) + 1 epoch probe + 4
  * settlement epochs + 24 bonds + (3 + 24) accounts + 1 oracle status, about 75 node reads a minute at
@@ -36,6 +44,7 @@
  * Redis limiter). The response is cacheable for 30 s.
  */
 import express, { type Request, type RequestHandler, type Response } from 'express';
+import type { BondPayoutStore, PayoutRow } from '../services/bond-payout-history/store.js';
 
 type Row = Record<string, any>;
 type Core4Response = { ok: boolean; status: number; payload: any };
@@ -43,6 +52,10 @@ export type Core4Fetch = (path: string, options?: Record<string, unknown>) => Pr
 
 export interface NetworkNodesDeps {
   fetchCore4Json?: Core4Fetch;
+  /** Bond payout history store; defaults to the PostgreSQL table (migration 0047). */
+  payoutStore?: () => Promise<BondPayoutStore>;
+  /** Limiter for the payout-history read; defaults to the shared Redis limiter. */
+  payoutHistoryRateLimit?: RequestHandler;
   readerToken?: () => string | undefined;
   now?: () => number;
   rateLimit?: RequestHandler;
@@ -75,6 +88,80 @@ const ADDRESS_RE = /^0x[0-9a-f]{40}$/;
 const ZERO_ID = '0'.repeat(64);
 
 const enabled = () => process.env.NETWORK_NODES_READ_ENABLED === 'true';
+const payoutHistoryEnabled = () => process.env.BOND_PAYOUT_HISTORY_ENABLED === 'true';
+
+export const BOND_PAYOUT_HISTORY_RATE_LIMIT = { windowMs: 60 * 1000, maxRequests: 30, keyPrefix: 'ratelimit:bond-payout-history' };
+export const BOND_PAYOUT_HISTORY_DEFAULT_WINDOW = 30;
+/** Matches the store's retention (BOND_PAYOUT_RETAIN_EPOCHS). */
+export const BOND_PAYOUT_HISTORY_MAX_WINDOW = 40;
+
+export type BondPayoutEpoch = {
+  epoch: number;
+  status: 'paid' | 'unpaid' | 'pending' | 'unknown';
+  paid: boolean | null;
+  amount: string | null;
+  height: number | null;
+  source: 'settlement' | 'earned_total' | null;
+};
+export type BondPayoutHistory = {
+  bond_id: string;
+  window: number;
+  tip_epoch: number;
+  first_epoch: number | null;
+  last_epoch: number | null;
+  epochs: BondPayoutEpoch[];
+  paid_count: number;
+  known_count: number;
+  observed_at: string;
+};
+
+/**
+ * The response body for one bond: the last `window` closed epochs (tipEpoch - window .. tipEpoch - 1,
+ * clamped at 0), oldest first, one entry per epoch. A pending row whose maturity height has passed is
+ * reported as unknown (the recorder could not confirm it). Pure.
+ */
+export function bondPayoutHistoryBody(bondId: string, window: number, tip: { tipEpoch: number; tipHeight: number; observedAt: string },
+  rows: PayoutRow[]): BondPayoutHistory {
+  const last = tip.tipEpoch - 1;
+  const first = last < 0 ? null : Math.max(0, last - window + 1);
+  const byEpoch = new Map(rows.map((r) => [r.epoch, r]));
+  const epochs: BondPayoutEpoch[] = [];
+  if (first !== null) {
+    for (let e = first; e <= last; e += 1) {
+      const r = byEpoch.get(e);
+      if (!r) { epochs.push({ epoch: e, status: 'unknown', paid: null, amount: null, height: null, source: null }); continue; }
+      if (r.status === 'pending') {
+        const matured = r.height !== null && r.height <= tip.tipHeight;
+        epochs.push({ epoch: e, status: matured ? 'unknown' : 'pending', paid: null, amount: r.amount, height: r.height, source: r.source });
+        continue;
+      }
+      epochs.push({ epoch: e, status: r.status, paid: r.status === 'paid', amount: r.status === 'paid' ? r.amount : null, height: r.height, source: r.source });
+    }
+  }
+  return {
+    bond_id: bondId, window, tip_epoch: tip.tipEpoch, first_epoch: first, last_epoch: first === null ? null : last, epochs,
+    paid_count: epochs.filter((x) => x.paid === true).length,
+    known_count: epochs.filter((x) => x.paid !== null).length,
+    observed_at: tip.observedAt,
+  };
+}
+
+async function defaultPayoutStore(): Promise<BondPayoutStore> {
+  const [{ pool }, { createPgBondPayoutStore }] = await Promise.all([
+    import('../../database/db.js'),
+    import('../services/bond-payout-history/store.js'),
+  ]);
+  return createPgBondPayoutStore(pool as any);
+}
+
+async function defaultPayoutHistoryRateLimit(): Promise<RequestHandler> {
+  const mod = await import('../../shared/middleware/rate-limit-redis.js');
+  return mod.createRateLimitMiddleware({
+    ...BOND_PAYOUT_HISTORY_RATE_LIMIT,
+    keyGenerator: mod.apiIpBudgetKey,
+    message: 'Too many bond payout history requests, please try again later.',
+  });
+}
 
 /** NETWORK_NODES_BOND_IDS: comma/space separated 64-hex deployment ids; anything malformed is ignored. */
 export function configuredBondIds(): string[] {
@@ -348,6 +435,61 @@ export function createNetworkNodesRouter(deps: NetworkNodesDeps = {}): express.R
       () => fail(res, 503, 'RATE_LIMIT_UNAVAILABLE', 'Network node reads are unavailable, please try again later.'),
     );
   });
+
+  let payoutStorePromise: Promise<BondPayoutStore> | null = null;
+  const getPayoutStore = () => {
+    if (!payoutStorePromise) {
+      payoutStorePromise = deps.payoutStore ? deps.payoutStore() : defaultPayoutStore();
+      payoutStorePromise.catch(() => { payoutStorePromise = null; });
+    }
+    return payoutStorePromise;
+  };
+  let payoutLimitPromise: Promise<RequestHandler> | null = null;
+  const getPayoutLimit = () => {
+    if (!payoutLimitPromise) {
+      payoutLimitPromise = deps.payoutHistoryRateLimit ? Promise.resolve(deps.payoutHistoryRateLimit) : defaultPayoutHistoryRateLimit();
+      payoutLimitPromise.catch(() => { payoutLimitPromise = null; });
+    }
+    return payoutLimitPromise;
+  };
+
+  router.get('/nodes/bonds/:bondId/payout-history', (req, res, next) => {
+    if (!payoutHistoryEnabled()) return res.status(404).json({ error: 'Not found' });
+    getPayoutLimit().then(
+      (limit) => limit(req, res, (err?: unknown) => (err ? next(err) : void handlePayoutHistory(req, res))),
+      () => fail(res, 503, 'RATE_LIMIT_UNAVAILABLE', 'Bond payout history is unavailable, please try again later.'),
+    );
+  });
+
+  async function handlePayoutHistory(req: Request, res: Response) {
+    const bondId = String(req.params.bondId ?? '');
+    if (!BOND_ID_RE.test(bondId)) return fail(res, 400, 'VALIDATION_ERROR', 'bondId must be a 64-character lowercase hex deployment id.');
+    const extra = Object.keys(req.query).filter((k) => k !== 'window');
+    if (extra.length > 0) return fail(res, 400, 'VALIDATION_ERROR', 'The only query parameter is window.');
+    let window = BOND_PAYOUT_HISTORY_DEFAULT_WINDOW;
+    if (req.query.window !== undefined) {
+      const raw = req.query.window;
+      if (typeof raw !== 'string' || !/^[1-9][0-9]{0,2}$/.test(raw) || Number(raw) > BOND_PAYOUT_HISTORY_MAX_WINDOW) {
+        return fail(res, 400, 'VALIDATION_ERROR', `window must be an integer from 1 to ${BOND_PAYOUT_HISTORY_MAX_WINDOW}.`);
+      }
+      window = Number(raw);
+    }
+    try {
+      const store = await getPayoutStore();
+      const tip = await store.tip();
+      if (!tip) {
+        res.set('Cache-Control', 'no-store');
+        return fail(res, 503, 'BOND_PAYOUT_HISTORY_NOT_READY', 'Bond payout history has not been recorded yet.');
+      }
+      const last = tip.tipEpoch - 1;
+      const rows = last < 0 ? [] : await store.history(bondId, Math.max(0, last - window + 1), last);
+      res.set('Cache-Control', 'public, max-age=60');
+      return res.json(bondPayoutHistoryBody(bondId, window, tip, rows));
+    } catch {
+      res.set('Cache-Control', 'no-store');
+      return fail(res, 503, 'BOND_PAYOUT_HISTORY_UNAVAILABLE', 'Bond payout history is unavailable, please try again later.');
+    }
+  }
 
   async function handle(req: Request, res: Response) {
     if (Object.keys(req.query).length > 0) return fail(res, 400, 'VALIDATION_ERROR', 'This read takes no query parameters.');

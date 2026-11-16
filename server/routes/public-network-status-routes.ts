@@ -18,11 +18,11 @@
  *   producers  how many producers of the set in force signed a block in the newest 64 blocks
  *              (/network/producers?window=64). A producer_id is operator configuration, so it is never
  *              published: each producer is shown by its approved public alias (PUBLIC_PRODUCER_ALIASES,
- *              an explicit compiled-in allowlist) or else by an opaque "producer N" (its place in the set).
+ *              an explicit compiled-in allowlist) or else by an opaque "Producer A/B/C" (its place in the set).
  *              No ids, keys, payout addresses, hosts or IPs.
  *   nodePay    the current node-pay epoch and the newest PAID epoch among the last 8
  *              (/node/bonds/<zero> for the epoch, /node/settlement/<e>). The node prunes old paid epochs,
- *              so "none in the last 8" is said as such, never as "never paid". If a read of an epoch newer
+ *              so UNKNOWN is missing evidence, not "not paid". If a read of an epoch newer
  *              than the newest PAID one found fails, the answer is `partial` (lastPaidEpoch null,
  *              epochsUnread listed), never "none recently".
  *   upgrades   features scheduled but not yet active, with their activation heights (/network/upgrade),
@@ -61,6 +61,8 @@ export const RECENT_BLOCKS = 100;
 export const PRODUCER_WINDOW_BLOCKS = 64;
 export const SETTLEMENT_EPOCHS_SCANNED = 8;
 export const MAX_PENDING_FEATURES = 24;
+export const MAX_ACTIVE_FEATURES = 64;
+const SETTLEMENT_STATES = new Set(['OPEN', 'PROVISIONAL', 'PAID', 'UNISSUED']);
 /** The day search looks back at most this many blocks (~3.5 days at 77 s). */
 export const DAY_SEARCH_SPAN = 4_000;
 const HOUR_S = 3_600;
@@ -68,24 +70,26 @@ const DAY_S = 86_400;
 const CALL_TIMEOUT_MS = 4_000;
 const MAX_REMEMBERED_TIMES = 512;
 const ZERO_ID = '0'.repeat(64);
-const MAX_PRODUCERS = 32;
+const MAX_PRODUCERS = 26; // Public labels are Producer A through Z; larger sets are unavailable.
 /** The only chain/network identity this endpoint ever publishes (chain 888 public testnet). */
 export const PUBLIC_CHAIN_ID = '888';
 export const PUBLIC_NETWORK_ID = 'testnet';
 /**
  * Approved public producer aliases, keyed by core4 producer_id. Explicit allowlist: adding an entry is an
  * owner decision (docs/plans/DECISIONS.md). A producer_id not listed here is published only as
- * "producer N", so hostnames, IPs or personal names in node configuration never reach the public.
- * Aliases must not look like "producer N".
+ * "Producer A/B/C", so hostnames, IPs or personal names in node configuration never reach the public.
+ * Aliases must match the ordinal label, "Producer A/B/C".
  */
 export const PUBLIC_PRODUCER_ALIASES: Readonly<Record<string, string>> = Object.freeze({});
-export const PUBLIC_ALIAS_RE = /^[A-Za-z][A-Za-z0-9 -]{0,31}$/;
+export const PUBLIC_ALIAS_RE = /^Producer [A-Z]$/;
 
 /** Public label for the producer at 0-based `index` of the set in force. */
 export function publicProducerLabel(producerId: unknown, index: number, aliases: Readonly<Record<string, string>> = PUBLIC_PRODUCER_ALIASES): string {
   const alias = typeof producerId === 'string' && Object.prototype.hasOwnProperty.call(aliases, producerId) ? aliases[producerId] : undefined;
-  if (typeof alias === 'string' && PUBLIC_ALIAS_RE.test(alias) && !/^producer \d+$/i.test(alias)) return alias;
-  return `producer ${index + 1}`;
+  const label = `Producer ${String.fromCharCode(65 + index)}`;
+  // Labels follow the set's stable order, never a hostname or configured identity.
+  if (typeof alias === 'string' && PUBLIC_ALIAS_RE.test(alias) && alias === label) return alias;
+  return label;
 }
 const FEATURE_RE = /^[a-z0-9_]{1,64}$/;
 
@@ -156,7 +160,10 @@ export type NetworkStatusSnapshot = {
     | {
         status: 'ok';
         activeFeatures: number;
-        pending: Array<{ feature: string; activationHeight: number; blocksRemaining: number | null }>;
+        evaluatedHeight: number | null;
+        scheduleComplete: boolean;
+        active: Array<{ feature: string; activationHeight: number; supported: boolean | null }>;
+        pending: Array<{ feature: string; activationHeight: number; blocksRemaining: number | null; supported: boolean | null }>;
         signedNotice: { activationHeight: number; blocksRemaining: number | null } | null;
       }
     | typeof unavailable;
@@ -258,9 +265,9 @@ export function createNetworkStatusRouter(deps: NetworkStatusDeps = {}): express
     }
     while (times.size > MAX_REMEMBERED_TIMES) times.delete(times.keys().next().value as number);
 
-    // Producers (approved aliases or opaque "producer N" only; producer_id is never copied).
+    // Producers (approved aliases or opaque "Producer A/B/C" only; producer_id is never copied).
     let producers: NetworkStatusSnapshot['producers'] = unavailable;
-    if (producersView && Array.isArray(producersView.producers)) {
+    if (producersView && Array.isArray(producersView.producers) && producersView.producers.length <= MAX_PRODUCERS) {
       const windowTo = safeInt(producersView.activity_window?.to_height);
       const windowFrom = safeInt(producersView.activity_window?.from_height);
       const members = producersView.producers
@@ -293,11 +300,15 @@ export function createNetworkStatusRouter(deps: NetworkStatusDeps = {}): express
       const unread: number[] = [];
       let paid: number | null = null;
       for (let i = 0; i < epochs.length; i += 1) {
-        if (records[i] === null) { unread.push(epochs[i]); continue; }
+        const record = records[i];
+        // UNKNOWN includes normally pruned PAID records. An HTTP 200 is not evidence of no payment.
+        if (!record || safeInt(record.epoch) !== epochs[i] || !SETTLEMENT_STATES.has(record.status)) {
+          unread.push(epochs[i]); continue;
+        }
         scanned.push(epochs[i]);
         if (records[i]?.status === 'PAID') { paid = epochs[i]; break; }
       }
-      if (scanned.length > 0) {
+      if (scanned.length > 0 || unread.length > 0) {
         nodePay = unread.length === 0
           ? { status: 'ok', currentEpoch: epoch, lastPaidEpoch: paid, epochsScanned: scanned }
           : { status: 'partial', currentEpoch: epoch, lastPaidEpoch: null, epochsScanned: scanned, epochsUnread: unread };
@@ -308,16 +319,25 @@ export function createNetworkStatusRouter(deps: NetworkStatusDeps = {}): express
     let upgrades: NetworkStatusSnapshot['upgrades'] = unavailable;
     if (upgrade && upgrade.scheduled && Array.isArray(upgrade.scheduled.entries)) {
       const entries: Row[] = upgrade.scheduled.entries.filter((e: Row) => e && typeof e.feature === 'string' && FEATURE_RE.test(e.feature));
+      const supported = (entry: Row): boolean | null => typeof entry.known === 'boolean' ? entry.known : null;
+      const active = entries.filter((e) => e.active_at_next === true && safeInt(e.activation_height) !== null)
+        .map((e) => ({ feature: e.feature as string, activationHeight: safeInt(e.activation_height) as number, supported: supported(e) }))
+        .sort((a, b) => a.activationHeight - b.activationHeight || a.feature.localeCompare(b.feature));
       const pending = entries
         .filter((e) => e.active_at_next === false && safeInt(e.activation_height) !== null)
-        .map((e) => ({ feature: e.feature as string, activationHeight: safeInt(e.activation_height) as number, blocksRemaining: safeInt(e.blocks_remaining) }))
-        .sort((a, b) => a.activationHeight - b.activationHeight || a.feature.localeCompare(b.feature))
-        .slice(0, MAX_PENDING_FEATURES);
+        .map((e) => ({ feature: e.feature as string, activationHeight: safeInt(e.activation_height) as number, blocksRemaining: safeInt(e.blocks_remaining), supported: supported(e) }))
+        .sort((a, b) => a.activationHeight - b.activationHeight || a.feature.localeCompare(b.feature));
       const noticeHeight = safeInt(upgrade.activation_height);
       upgrades = {
         status: 'ok',
-        activeFeatures: entries.filter((e) => e.active_at_next === true).length,
-        pending,
+        activeFeatures: active.length,
+        evaluatedHeight: safeInt(upgrade.scheduled.next_height),
+        scheduleComplete: upgrade.scheduled.truncated === false && upgrade.scheduled.base_provisional === false
+          && safeInt(upgrade.scheduled.next_height) !== null && upgrade.scheduled.total_entries === entries.length
+          && entries.length === upgrade.scheduled.entries.length && new Set(entries.map((e) => e.feature)).size === entries.length
+          && active.length + pending.length === entries.length && active.length <= MAX_ACTIVE_FEATURES && pending.length <= MAX_PENDING_FEATURES,
+        active: active.slice(0, MAX_ACTIVE_FEATURES),
+        pending: pending.slice(0, MAX_PENDING_FEATURES),
         signedNotice: noticeHeight === null ? null : { activationHeight: noticeHeight, blocksRemaining: safeInt(upgrade.blocks_remaining) },
       };
     }
