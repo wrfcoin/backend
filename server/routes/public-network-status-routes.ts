@@ -22,7 +22,7 @@
  *              No ids, keys, payout addresses, hosts or IPs.
  *   nodePay    the current node-pay epoch and the newest PAID epoch among the last 8
  *              (/node/bonds/<zero> for the epoch, /node/settlement/<e>). The node prunes old paid epochs,
- *              so "none in the last 8" is said as such, never as "never paid". If a read of an epoch newer
+ *              so UNKNOWN is missing evidence, not "not paid". If a read of an epoch newer
  *              than the newest PAID one found fails, the answer is `partial` (lastPaidEpoch null,
  *              epochsUnread listed), never "none recently".
  *   upgrades   features scheduled but not yet active, with their activation heights (/network/upgrade),
@@ -61,6 +61,8 @@ export const RECENT_BLOCKS = 100;
 export const PRODUCER_WINDOW_BLOCKS = 64;
 export const SETTLEMENT_EPOCHS_SCANNED = 8;
 export const MAX_PENDING_FEATURES = 24;
+export const MAX_ACTIVE_FEATURES = 64;
+const SETTLEMENT_STATES = new Set(['OPEN', 'PROVISIONAL', 'PAID', 'UNISSUED']);
 /** The day search looks back at most this many blocks (~3.5 days at 77 s). */
 export const DAY_SEARCH_SPAN = 4_000;
 const HOUR_S = 3_600;
@@ -156,7 +158,10 @@ export type NetworkStatusSnapshot = {
     | {
         status: 'ok';
         activeFeatures: number;
-        pending: Array<{ feature: string; activationHeight: number; blocksRemaining: number | null }>;
+        evaluatedHeight: number | null;
+        scheduleComplete: boolean;
+        active: Array<{ feature: string; activationHeight: number; supported: boolean | null }>;
+        pending: Array<{ feature: string; activationHeight: number; blocksRemaining: number | null; supported: boolean | null }>;
         signedNotice: { activationHeight: number; blocksRemaining: number | null } | null;
       }
     | typeof unavailable;
@@ -293,11 +298,15 @@ export function createNetworkStatusRouter(deps: NetworkStatusDeps = {}): express
       const unread: number[] = [];
       let paid: number | null = null;
       for (let i = 0; i < epochs.length; i += 1) {
-        if (records[i] === null) { unread.push(epochs[i]); continue; }
+        const record = records[i];
+        // UNKNOWN includes normally pruned PAID records. An HTTP 200 is not evidence of no payment.
+        if (!record || safeInt(record.epoch) !== epochs[i] || !SETTLEMENT_STATES.has(record.status)) {
+          unread.push(epochs[i]); continue;
+        }
         scanned.push(epochs[i]);
         if (records[i]?.status === 'PAID') { paid = epochs[i]; break; }
       }
-      if (scanned.length > 0) {
+      if (scanned.length > 0 || unread.length > 0) {
         nodePay = unread.length === 0
           ? { status: 'ok', currentEpoch: epoch, lastPaidEpoch: paid, epochsScanned: scanned }
           : { status: 'partial', currentEpoch: epoch, lastPaidEpoch: null, epochsScanned: scanned, epochsUnread: unread };
@@ -308,16 +317,25 @@ export function createNetworkStatusRouter(deps: NetworkStatusDeps = {}): express
     let upgrades: NetworkStatusSnapshot['upgrades'] = unavailable;
     if (upgrade && upgrade.scheduled && Array.isArray(upgrade.scheduled.entries)) {
       const entries: Row[] = upgrade.scheduled.entries.filter((e: Row) => e && typeof e.feature === 'string' && FEATURE_RE.test(e.feature));
+      const supported = (entry: Row): boolean | null => typeof entry.known === 'boolean' ? entry.known : null;
+      const active = entries.filter((e) => e.active_at_next === true && safeInt(e.activation_height) !== null)
+        .map((e) => ({ feature: e.feature as string, activationHeight: safeInt(e.activation_height) as number, supported: supported(e) }))
+        .sort((a, b) => a.activationHeight - b.activationHeight || a.feature.localeCompare(b.feature));
       const pending = entries
         .filter((e) => e.active_at_next === false && safeInt(e.activation_height) !== null)
-        .map((e) => ({ feature: e.feature as string, activationHeight: safeInt(e.activation_height) as number, blocksRemaining: safeInt(e.blocks_remaining) }))
-        .sort((a, b) => a.activationHeight - b.activationHeight || a.feature.localeCompare(b.feature))
-        .slice(0, MAX_PENDING_FEATURES);
+        .map((e) => ({ feature: e.feature as string, activationHeight: safeInt(e.activation_height) as number, blocksRemaining: safeInt(e.blocks_remaining), supported: supported(e) }))
+        .sort((a, b) => a.activationHeight - b.activationHeight || a.feature.localeCompare(b.feature));
       const noticeHeight = safeInt(upgrade.activation_height);
       upgrades = {
         status: 'ok',
-        activeFeatures: entries.filter((e) => e.active_at_next === true).length,
-        pending,
+        activeFeatures: active.length,
+        evaluatedHeight: safeInt(upgrade.scheduled.next_height),
+        scheduleComplete: upgrade.scheduled.truncated === false && upgrade.scheduled.base_provisional === false
+          && safeInt(upgrade.scheduled.next_height) !== null && upgrade.scheduled.total_entries === entries.length
+          && entries.length === upgrade.scheduled.entries.length && new Set(entries.map((e) => e.feature)).size === entries.length
+          && active.length + pending.length === entries.length && active.length <= MAX_ACTIVE_FEATURES && pending.length <= MAX_PENDING_FEATURES,
+        active: active.slice(0, MAX_ACTIVE_FEATURES),
+        pending: pending.slice(0, MAX_PENDING_FEATURES),
         signedNotice: noticeHeight === null ? null : { activationHeight: noticeHeight, blocksRemaining: safeInt(upgrade.blocks_remaining) },
       };
     }

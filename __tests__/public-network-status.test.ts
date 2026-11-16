@@ -28,6 +28,11 @@ describe('GET /api/public/network-status', () => {
   let infoIds: { chain_id: unknown; network_id: unknown } = { chain_id: '888', network_id: 'testnet' };
   let producerIds = ['n5-node-a', 'mango-mini', 'producer-standby'];
   let paidEpoch = 19;
+  let oldSettlementStatus = 'UNISSUED';
+  let allUnknown = false;
+  let invalidEpoch = false;
+  let upgradeTruncated = false;
+  let badFeature = true;
   let upstream: http.Server;
   let clock = NOW;
 
@@ -64,17 +69,17 @@ describe('GET /api/public/network-status', () => {
     if (path === `/node/bonds/${'0'.repeat(64)}`) return { status: 200, json: { epoch: '21', status: 'UNKNOWN', deployment_id: '0'.repeat(64) } };
     if ((m = /^\/node\/settlement\/(\d+)$/.exec(path))) {
       const e = Number(m[1]);
-      const status = e === 21 ? 'OPEN' : e === 20 ? 'PROVISIONAL' : e === paidEpoch ? 'PAID' : 'UNKNOWN';
-      return { status: 200, json: { epoch: String(e), status, payouts_base_units: { ['a1'.repeat(32)]: '5' } } };
+      const status = allUnknown ? 'UNKNOWN' : e === 21 ? 'OPEN' : e === 20 ? 'PROVISIONAL' : e === paidEpoch ? 'PAID' : oldSettlementStatus;
+      return { status: 200, json: { epoch: String(invalidEpoch ? e + 1 : e), status, payouts_base_units: { ['a1'.repeat(32)]: '5' } } };
     }
     if (path === '/network/upgrade') {
       return { status: 200, json: {
         status: 'none', tip_height: tip, blocks_remaining: null, activation_height: null, notice: null,
-        scheduled: { status: 'ready', entries: [
-          { feature: 'passkey_p256_auth', activation_height: 3400, active_at_next: true, blocks_remaining: 0 },
-          { feature: 'governance_proposals', activation_height: 27000, active_at_next: false, blocks_remaining: 27000 - tip },
+        scheduled: { status: 'ready', next_height: tip + 1, truncated: upgradeTruncated, base_provisional: false, total_entries: badFeature ? 4 : 3, entries: [
+          { feature: 'passkey_p256_auth', activation_height: 3400, active_at_next: true, known: true, blocks_remaining: 0 },
+          { feature: 'governance_proposals', activation_height: 27000, active_at_next: false, known: false, blocks_remaining: 27000 - tip },
           { feature: 'transfer_fee_burn', activation_height: 26000, active_at_next: false, blocks_remaining: 26000 - tip },
-          { feature: 'Bad Feature<script>', activation_height: 26500, active_at_next: false, blocks_remaining: 1 },
+          ...(badFeature ? [{ feature: 'Bad Feature<script>', activation_height: 26500, active_at_next: false, blocks_remaining: 1 }] : []),
         ] },
       } };
     }
@@ -113,6 +118,11 @@ describe('GET /api/public/network-status', () => {
     infoIds = { chain_id: '888', network_id: 'testnet' };
     producerIds = ['n5-node-a', 'mango-mini', 'producer-standby'];
     paidEpoch = 19;
+    oldSettlementStatus = 'UNISSUED';
+    allUnknown = false;
+    invalidEpoch = false;
+    upgradeTruncated = false;
+    badFeature = true;
     clock = NOW;
   });
 
@@ -146,10 +156,11 @@ describe('GET /api/public/network-status', () => {
     });
     expect(r.body.nodePay).toEqual({ status: 'ok', currentEpoch: 21, lastPaidEpoch: 19, epochsScanned: [21, 20, 19] });
     expect(r.body.upgrades).toEqual({
-      status: 'ok', activeFeatures: 1, signedNotice: null,
+      status: 'ok', activeFeatures: 1, signedNotice: null, evaluatedHeight: 25001, scheduleComplete: false,
+      active: [{ feature: 'passkey_p256_auth', activationHeight: 3400, supported: true }],
       pending: [
-        { feature: 'transfer_fee_burn', activationHeight: 26_000, blocksRemaining: 1000 },
-        { feature: 'governance_proposals', activationHeight: 27_000, blocksRemaining: 2000 },
+        { feature: 'transfer_fee_burn', activationHeight: 26_000, blocksRemaining: 1000, supported: null },
+        { feature: 'governance_proposals', activationHeight: 27_000, blocksRemaining: 2000, supported: false },
       ],
     });
     // Every node read uses the backend's own Reader credential.
@@ -226,6 +237,44 @@ describe('GET /api/public/network-status', () => {
     failing = new Set(['/node/settlement/15']);
     const p = await request(makeApp()).get('/api/public/network-status');
     expect(p.body.nodePay).toMatchObject({ status: 'partial', lastPaidEpoch: null, epochsUnread: [15] });
+  });
+
+  it('treats pruned UNKNOWN and unrecognized settlement states as missing history', async () => {
+    paidEpoch = -1;
+    for (const state of ['UNKNOWN', 'FUTURE_STATE', '']) {
+      oldSettlementStatus = state;
+      const r = await request(makeApp()).get('/api/public/network-status');
+      expect(r.body.nodePay).toEqual({ status: 'partial', currentEpoch: 21, lastPaidEpoch: null,
+        epochsScanned: [21, 20], epochsUnread: [19, 18, 17, 16, 15, 14] });
+    }
+  });
+
+  it('keeps an entirely unknown or mismatched epoch history partial', async () => {
+    allUnknown = true;
+    const r = await request(makeApp()).get('/api/public/network-status');
+    expect(r.body.nodePay).toEqual({ status: 'partial', currentEpoch: 21, lastPaidEpoch: null,
+      epochsScanned: [], epochsUnread: [21, 20, 19, 18, 17, 16, 15, 14] });
+    allUnknown = false;
+    invalidEpoch = true;
+    const mismatch = await request(makeApp()).get('/api/public/network-status');
+    expect(mismatch.body.nodePay).toEqual(r.body.nodePay);
+  });
+
+  it('publishes a complete next-block feature view when the node provides one', async () => {
+    badFeature = false;
+    const r = await request(makeApp()).get('/api/public/network-status');
+    expect(r.body.upgrades.scheduleComplete).toBe(true);
+    expect(r.body.upgrades.evaluatedHeight).toBe(25001);
+    expect(r.body.upgrades.active).toEqual([{ feature: 'passkey_p256_auth', activationHeight: 3400, supported: true }]);
+  });
+
+  it('marks a truncated schedule incomplete and keeps source support unknown rather than assuming it', async () => {
+    upgradeTruncated = true;
+    const r = await request(makeApp()).get('/api/public/network-status');
+    expect(r.body.upgrades.scheduleComplete).toBe(false);
+    expect(r.body.upgrades.pending[0].supported).toBeNull();
+    expect(r.body.upgrades.pending[1].supported).toBe(false);
+    expect(JSON.stringify(r.body.upgrades)).not.toContain('Bad Feature');
   });
 
   it('is 404 unless NETWORK_STATUS_READ_ENABLED=true, and makes no node reads', async () => {
