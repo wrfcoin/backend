@@ -330,6 +330,13 @@
       "when": 1793100000000,
       "tag": "0046_station_compare_samples",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "5",
+      "when": 1793200000000,
+      "tag": "0047_bond_payout_history",
+      "breakpoints": true
     }
   ]
 }
