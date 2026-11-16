@@ -1824,6 +1824,16 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
     } catch {
       appLogger.warn('Payout notifier not started');
     }
+    // Per-bond node-pay history (the node forgets PAID settlement epochs). OFF unless
+    // BOND_PAYOUT_HISTORY_ENABLED=true; needs migration 0047 and WRFCOIN_READER_TOKEN. Never logs ids.
+    try {
+      const { startBondPayoutHistoryRecorder } = require('./services/bond-payout-history/recorder');
+      startBondPayoutHistoryRecorder({ logger: appLogger }).catch(() => {
+        appLogger.warn('Bond payout history recorder not started');
+      });
+    } catch {
+      appLogger.warn('Bond payout history recorder not started');
+    }
     // Forecast verification against station readings (+ NOAA reference capture). OFF unless
     // FORECAST_VERIFICATION_ENABLED=true; needs WRFCOIN_READER_TOKEN and migration 0039.
     try {
