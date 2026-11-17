@@ -223,6 +223,89 @@ function dimensionLabel(key: string): string {
   return key.replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
 }
 
+// ---------------------------------------------------------------------------
+// Reward trail (plan 2026-11-17-reward-trail, slice 1). One reading's path to the owner's
+// wallet in plain stages, each derived ONLY from fields core4's reward-evidence read already
+// returns (zero extra node reads). core4's verdict walks its legs in a fixed order and names the
+// first unproven one (`rewarded_blocker`); every stage before that leg is proven, the stage that
+// holds it is pending / not eligible / unknown, and every stage after it is not reached yet.
+// No address, amount or station id is emitted here: states are fixed enums, reasons are fixed
+// codes and heights are integers.
+// ---------------------------------------------------------------------------
+
+export type TrailState = 'done' | 'pending' | 'not_eligible' | 'unknown' | 'not_reached';
+export type TrailStep = { state: TrailState; height?: number | null; reason?: string | null };
+export type RewardTrail = {
+  /** The furthest stage with a record behind it. */
+  stage: 'submitted' | 'accepted' | 'eligible' | 'settled' | 'in_wallet';
+  /** True when a read failed or history is out of reach: the trail stops at `stage` for that reason, not because nothing happened. */
+  unknown: boolean;
+  submitted: TrailStep;
+  accepted: TrailStep;
+  eligible: TrailStep;
+  settled: TrailStep;
+  inWallet: TrailStep;
+};
+
+/** core4 reward_evidence_verdict blockers, mapped to the stage that holds them and that stage's state. */
+const TRAIL_BLOCKERS: Record<string, { at: 'eligible' | 'settled' | 'inWallet'; state: TrailState }> = {
+  no_reward_record: { at: 'eligible', state: 'pending' },
+  provenance_not_reward_eligible: { at: 'eligible', state: 'not_eligible' },
+  zero_amount: { at: 'eligible', state: 'not_eligible' },
+  reward_not_finalized: { at: 'settled', state: 'pending' },
+  block_not_finalized: { at: 'settled', state: 'pending' },
+  block_not_found_in_scan_window: { at: 'settled', state: 'unknown' },
+  block_scan_incomplete: { at: 'settled', state: 'unknown' },
+  account_missing: { at: 'inWallet', state: 'unknown' },
+  account_credit_short: { at: 'inWallet', state: 'unknown' },
+};
+const TRAIL_ORDER = ['eligible', 'settled', 'inWallet'] as const;
+
+export function rewardTrail(readingHeight: number | null, evidence: Row | null): RewardTrail {
+  const accepted: TrailStep = readingHeight !== null
+    ? { state: 'done', height: readingHeight }
+    : { state: 'unknown', height: null, reason: 'reading_height_unavailable' };
+  const notReached: TrailStep = { state: 'not_reached' };
+  const trail: RewardTrail = {
+    stage: readingHeight !== null ? 'accepted' : 'submitted',
+    unknown: readingHeight === null,
+    submitted: { state: 'done' },
+    accepted,
+    eligible: notReached,
+    settled: notReached,
+    inWallet: notReached,
+  };
+  if (!evidence || typeof evidence.rewarded !== 'boolean') {
+    // The evidence read failed: say so at the first stage we could not check.
+    return { ...trail, unknown: true, eligible: { state: 'unknown', reason: 'evidence_unavailable' } };
+  }
+  const block = evidence.block && typeof evidence.block === 'object' ? evidence.block as Row : null;
+  const blockHeight = block && typeof block.height === 'number' && Number.isSafeInteger(block.height) && block.height >= 0
+    ? block.height : null;
+  let held: { at: (typeof TRAIL_ORDER)[number]; state: TrailState; reason: string } | null = null;
+  if (evidence.rewarded !== true) {
+    const code = typeof evidence.rewarded_blocker === 'string' ? evidence.rewarded_blocker : '';
+    const known = TRAIL_BLOCKERS[code];
+    // A blocker this backend does not know: the furthest it can vouch for is "accepted".
+    held = known ? { ...known, reason: code } : { at: 'eligible', state: 'unknown', reason: 'unrecognised_blocker' };
+  }
+  const heldIndex = held ? TRAIL_ORDER.indexOf(held.at) : TRAIL_ORDER.length;
+  TRAIL_ORDER.forEach((name, i) => {
+    let step: TrailStep;
+    if (i < heldIndex) step = { state: 'done' };
+    else if (i === heldIndex && held) step = { state: held.state, reason: held.reason };
+    else step = notReached;
+    if (name === 'settled' && blockHeight !== null && (step.state === 'done' || held?.reason === 'block_not_finalized')) {
+      step = { ...step, height: blockHeight };
+    }
+    trail[name] = step;
+  });
+  const lastDone = heldIndex - 1;
+  if (lastDone >= 0) trail.stage = (['eligible', 'settled', 'in_wallet'] as const)[lastDone];
+  trail.unknown = trail.unknown || held?.state === 'unknown';
+  return trail;
+}
+
 /** Re-exported for callers/tests that import it from this module. */
 export const scrubRawId = scrubRawIdImpl as <T>(value: T, rawId: string) => T;
 
@@ -744,6 +827,41 @@ export function createStationDetailRouter(deps: {
       rate,
       // Additive (backend#1232). Kept apart from `unavailable`, which stays absent on a readable window.
       fieldsUnavailable: [...(lifetime ? [] : ['lifetime']), ...(rate ? [] : ['rate'])],
+    });
+  }));
+
+  // Reward trail (plan 2026-11-17-reward-trail, slice 1): where each of the station's newest chain readings
+  // is on its way to the owner's wallet, as plain stages (rewardTrail above). Its own leaf, apart from
+  // /earnings, so the public site can show it without receiving any amount: the body carries the commit id
+  // (already public on /observations), heights, fixed states and fixed reason codes. No amount, no lifetime,
+  // no rate, no address. Bare form only (no query): a fixed window of the newest TRAIL_READINGS commits, read
+  // through the same per-commit evidence cache as /earnings (zero extra reads when both are asked).
+  const TRAIL_READINGS = 10;
+  router.get('/stations/:stationId/reward-trail', failSafe(async (_req, res) => {
+    const token = readerToken();
+    const unavailable = (reason: string) => send(res, { readings: [], unavailable: ['readings'], reason, source: null });
+    if (!token) return unavailable('the core4 reader credential is not configured');
+    const tail = await chainTail.latest(stationIdOf(res));
+    if (tail.kind === 'mismatch') {
+      return res.status(502).json({
+        error: { code: 'CORE4_CONTRACT_MISMATCH', message: 'core4 station observations response did not match the expected shape' },
+      });
+    }
+    if (tail.kind !== 'ok') return unavailable('core4 is unavailable, so no reading stages can be read');
+    const picked: Array<{ commitId: string; readingHeight: number | null }> = [];
+    for (const item of tail.items) {
+      const commitId = hashOrNull(item.commit_id);
+      if (!commitId || picked.some((p) => p.commitId === commitId)) continue;
+      const h = nullableNumber(item.height);
+      picked.push({ commitId, readingHeight: h !== null && Number.isSafeInteger(h) && h >= 0 ? h : null });
+      if (picked.length >= TRAIL_READINGS) break;
+    }
+    const evidence = await Promise.all(picked.map((p) => rewardEvidenceFor(p.commitId, token)));
+    const readings = picked.map((p, i) => ({ ...p, trail: rewardTrail(p.readingHeight, evidence[i]) }));
+    return send(res, {
+      readings,
+      window: { readings: readings.length, complete: tail.complete, scope: 'recent-observations' },
+      source: 'core4',
     });
   }));
 
