@@ -17,6 +17,25 @@ export function stationEarningsUnits(available: boolean) {
 }
 
 /**
+ * Station reward trail (owner ruling 2026-11-19): each reading's own reward amount, on its eligible and
+ * settled steps. Per reading only; the body carries no total.
+ */
+export function stationRewardTrailUnits() {
+  return {
+    denomination: 'WRF',
+    baseUnitDecimals: WRF_DECIMALS,
+    baseUnitsPerUnit: WRF_UNITS_PER_COIN.toString(),
+    available: true,
+    fields: {
+      'readings[].trail.eligible.amount.baseUnits': 'base_units',
+      'readings[].trail.eligible.amount.wrf': 'display_units',
+      'readings[].trail.settled.amount.baseUnits': 'base_units',
+      'readings[].trail.settled.amount.wrf': 'display_units',
+    },
+  };
+}
+
+/**
  * Public leaderboard per-row earnings (S55, owner ruling 2026-10-03): lifetime
  * contribution_rewards.real_paid read from core4 per address. `available` is true
  * only when every row carries a node-proven amount.
