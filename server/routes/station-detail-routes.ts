@@ -1,6 +1,6 @@
 import express from 'express';
 import { baseUnitsToWrf } from '../../shared/currency.js';
-import { stationEarningsUnits } from '../../shared/amount-unit-contract.js';
+import { stationEarningsUnits, stationRewardTrailUnits } from '../../shared/amount-unit-contract.js';
 import { fetchCore4Json as defaultFetchCore4Json } from '../../shared/core4-route-client.js';
 import {
   CORE4_ADDRESS_RE,
@@ -229,12 +229,16 @@ function dimensionLabel(key: string): string {
 // returns (zero extra node reads). core4's verdict walks its legs in a fixed order and names the
 // first unproven one (`rewarded_blocker`); every stage before that leg is proven, the stage that
 // holds it is pending / not eligible / unknown, and every stage after it is not reached yet.
-// No address, amount or station id is emitted here: states are fixed enums, reasons are fixed
-// codes and heights are integers.
+// No address or station id is emitted here: states are fixed enums, reasons are fixed codes and
+// heights are integers. Owner ruling 2026-11-19: the reading's reward amount IS shown, on the
+// "eligible" step once core4 has a reward record that counts, and again on "settled" once that
+// step is proven. It is per reading only: never a total, lifetime or address-scoped sum.
 // ---------------------------------------------------------------------------
 
 export type TrailState = 'done' | 'pending' | 'not_eligible' | 'unknown' | 'not_reached';
-export type TrailStep = { state: TrailState; height?: number | null; reason?: string | null };
+/** One reading's reward, from core4's reward record (base units are integer strings). */
+export type TrailAmount = { baseUnits: string; wrf: string };
+export type TrailStep = { state: TrailState; height?: number | null; reason?: string | null; amount?: TrailAmount };
 export type RewardTrail = {
   /** The furthest stage with a record behind it. */
   stage: 'submitted' | 'accepted' | 'eligible' | 'settled' | 'in_wallet';
@@ -290,6 +294,13 @@ export function rewardTrail(readingHeight: number | null, evidence: Row | null):
     held = known ? { ...known, reason: code } : { at: 'eligible', state: 'unknown', reason: 'unrecognised_blocker' };
   }
   const heldIndex = held ? TRAIL_ORDER.indexOf(held.at) : TRAIL_ORDER.length;
+  // The amount comes only from a reward record core4 counts (reward_eligible, non-zero, integer
+  // string); a malformed or zero amount is simply not shown, never guessed.
+  const reward = evidence.reward && typeof evidence.reward === 'object' ? evidence.reward as Row : null;
+  const amountRaw = reward && reward.reward_eligible !== false && typeof reward.amount === 'string'
+    && /^\d{1,39}$/.test(reward.amount) ? BigInt(reward.amount) : null;
+  const amount: TrailAmount | null = amountRaw !== null && amountRaw > 0n
+    ? { baseUnits: amountRaw.toString(), wrf: baseUnitsToWrf(amountRaw) } : null;
   TRAIL_ORDER.forEach((name, i) => {
     let step: TrailStep;
     if (i < heldIndex) step = { state: 'done' };
@@ -298,6 +309,7 @@ export function rewardTrail(readingHeight: number | null, evidence: Row | null):
     if (name === 'settled' && blockHeight !== null && (step.state === 'done' || held?.reason === 'block_not_finalized')) {
       step = { ...step, height: blockHeight };
     }
+    if (amount && step.state === 'done' && (name === 'eligible' || name === 'settled')) step = { ...step, amount };
     trail[name] = step;
   });
   const lastDone = heldIndex - 1;
@@ -832,9 +844,9 @@ export function createStationDetailRouter(deps: {
 
   // Reward trail (plan 2026-11-17-reward-trail, slice 1): where each of the station's newest chain readings
   // is on its way to the owner's wallet, as plain stages (rewardTrail above). Its own leaf, apart from
-  // /earnings, so the public site can show it without receiving any amount: the body carries the commit id
-  // (already public on /observations), heights, fixed states and fixed reason codes. No amount, no lifetime,
-  // no rate, no address. Bare form only (no query): a fixed window of the newest TRAIL_READINGS commits, read
+  // /earnings: the body carries the commit id (already public on /observations), heights, fixed states,
+  // fixed reason codes and (owner ruling 2026-11-19) each reading's own reward amount on its eligible and
+  // settled steps. No total, no lifetime, no rate, no address. Bare form only (no query): a fixed window of the newest TRAIL_READINGS commits, read
   // through the same per-commit evidence cache as /earnings (zero extra reads when both are asked).
   const TRAIL_READINGS = 10;
   router.get('/stations/:stationId/reward-trail', failSafe(async (_req, res) => {
@@ -861,6 +873,7 @@ export function createStationDetailRouter(deps: {
     return send(res, {
       readings,
       window: { readings: readings.length, complete: tail.complete, scope: 'recent-observations' },
+      amountUnits: stationRewardTrailUnits(),
       source: 'core4',
     });
   }));
