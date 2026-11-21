@@ -525,6 +525,13 @@ export function createStationOwnerRouter(deps: {
         return send(res, problem(502, 'CORE4_CONTRACT_MISMATCH', 'the node did not report ownership state in the expected shape'));
       }
       const frozen = frozenRaw === null ? null : { sinceHeight: frozenRaw.since_height as number };
+      // The station's approved submitter key (core4 owner-ledger submitter_pubkey / submitter_class). Reported only when
+      // BOTH are well-formed; both null or absent (a node that predates them, or no key approved) and anything malformed
+      // or half-set read as null. Never a 502 and never a guessed value: this is display data, not a safety gate.
+      const submitterKey = typeof ledger.submitter_pubkey === 'string' && SUBMITTER_PUBKEY.test(ledger.submitter_pubkey)
+        && typeof ledger.submitter_class === 'string' && SUBMITTER_CLASSES.has(ledger.submitter_class)
+        ? { pubkey: ledger.submitter_pubkey, class: ledger.submitter_class }
+        : null;
       // Explicit allowlist: nothing else from the node (coordinates, raw id, hardware) is passed through.
       return res.json({
         success: true,
@@ -548,6 +555,7 @@ export function createStationOwnerRouter(deps: {
         },
         observedAtHeight: data.observed_at_height,
         settledHeight: data.settled_height,
+        submitterKey,
       });
     } catch {
       if (!res.headersSent) send(res, problem(503, 'OWNERSHIP_STATE_UNAVAILABLE', 'ownership state is unavailable'));
