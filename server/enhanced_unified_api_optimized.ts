@@ -1647,6 +1647,9 @@ async function startEnhancedUnifiedApiServer(): Promise<void> {
   // Epic 6 option B (owner ruling 2026-11-14): default-OFF public POST of a node's own signed address record
   // to the claim mailbox. NODE_ADDRESS_PROXY_ENABLED=true + CLAIM_MAILBOX_URL. POST only; reads never go through here.
   safeMount('/api/node-addresses',          './routes/node-address-routes');
+  // Phone stations: default-OFF proxy to the station registrar service (infra station-registrar, core4
+  // station_registrar_key). STATION_REGISTRAR_PROXY_ENABLED=true + STATION_REGISTRAR_URL. No credential.
+  safeMount('/api/station-registrar',       './routes/station-registrar-routes');
   // Owner ruling 2026-10-28 (b): passkey wallets have no JWT; default-OFF public balance read (3 fields).
   safeMount('/api/public/balance',          './routes/public-balance-routes');
   // Skill-pay backtest (DECISIONS 2026-11-12 item 3): default-OFF public station history read, alias only,
