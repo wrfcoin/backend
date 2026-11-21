@@ -292,6 +292,68 @@ describe('POST /api/stations/:stationId/owner-actions: the relay', () => {
     expect(calls).toHaveLength(0);
   });
 
+  describe('set_submitter_key (feature station_submitter_key, core4 StationSubmitterKeyPayload)', () => {
+    const SET = { ...PAYLOADS.action, action: 'set_submitter_key', submitter_pubkey: PK('b'), submitter_class: 'device' };
+    const CLEAR = { ...PAYLOADS.action, action: 'set_submitter_key' };
+
+    it.each([
+      ['approves a device key', SET],
+      ['approves a relay key', { ...SET, submitter_class: 'relay' }],
+      ['clears the key (both fields absent)', CLEAR],
+      ['clears the key (both fields null, read as absent by serde)', { ...CLEAR, submitter_pubkey: null, submitter_class: null }],
+    ])('%s: forwarded byte for byte as station_owner_action_v1', async (_name, payload) => {
+      const { app, calls } = makeApp();
+      const payloadText = JSON.stringify(payload);
+      const res = await post(app, `{"kind":"owner_action","payload":${payloadText}}`, OWNER);
+      expect(res.status).toBe(201);
+      expect(calls).toHaveLength(1);
+      const sent = JSON.parse(calls[0].options.body);
+      expect(sent.payloads).toEqual([{ kind: 'station_owner_action_v1', payload_json: payloadText }]);
+    });
+
+    it('needs the owner wallet login like every owner action', async () => {
+      const { app, calls } = makeApp();
+      expect((await post(app, envelope(SET))).status).toBe(401);
+      expect((await post(app, envelope(SET), STRANGER)).status).toBe(403);
+      expect(calls).toHaveLength(0);
+    });
+
+    it.each([
+      ['a key without a class', () => { const p = { ...SET } as any; delete p.submitter_class; return envelope(p); }],
+      ['a class without a key', () => { const p = { ...SET } as any; delete p.submitter_pubkey; return envelope(p); }],
+      ['a key with a null class', () => envelope({ ...SET, submitter_class: null })],
+      ['an uppercase key (not canonical)', () => envelope({ ...SET, submitter_pubkey: PK('B') })],
+      ['a mixed-case key', () => envelope({ ...SET, submitter_pubkey: `A${PK('b').slice(1)}` })],
+      ['a short key', () => envelope({ ...SET, submitter_pubkey: PK('b').slice(2) })],
+      ['a long key', () => envelope({ ...SET, submitter_pubkey: `${PK('b')}bb` })],
+      ['a 0x-prefixed key', () => envelope({ ...SET, submitter_pubkey: `0x${PK('b').slice(2)}` })],
+      ['a non-hex key', () => envelope({ ...SET, submitter_pubkey: PK('g') })],
+      ['a numeric key', () => envelope({ ...SET, submitter_pubkey: 12 })],
+      ['an unknown class', () => envelope({ ...SET, submitter_class: 'phone' })],
+      ['a capitalised class', () => envelope({ ...SET, submitter_class: 'Device' })],
+      ['a non-string class', () => envelope({ ...SET, submitter_class: 1 })],
+      ['submitter fields on an older action', () => envelope({ ...SET, action: 'report_stolen' })],
+      ['a submitter key alone on an older action', () => envelope({ ...PAYLOADS.action, submitter_pubkey: PK('b') })],
+      ['an unknown extra field', () => envelope({ ...SET, submitter_note: 'x' })],
+      ['a missing owner signature', () => { const p = { ...SET } as any; delete p.owner_signature; return envelope(p); }],
+      ['the wrong client kind', () => ({ ...envelope(SET), kind: 'transfer' })],
+    ])('refuses %s with 422 and forwards nothing', async (_name, build) => {
+      const { app, calls } = makeApp();
+      const res = await post(app, (build as () => unknown)(), OWNER);
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBe('INVALID_OWNER_ACTION');
+      expect(calls).toHaveLength(0);
+    });
+
+    it('passes the node refusal through while the feature is not active', async () => {
+      const { app } = makeApp({ core4: () => ({ ok: false, status: 422, payload: { error: { code: 'OWNER_TX_FEATURE_NOT_ACTIVE', message: 'node text' } } }) });
+      const res = await post(app, envelope(SET), OWNER);
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBe('OWNER_TX_FEATURE_NOT_ACTIVE');
+      expect(JSON.stringify(res.body)).not.toContain('node text');
+    });
+  });
+
   it('addresses stations by alias only: a raw id or an unknown alias is 404', async () => {
     const { app, calls } = makeApp();
     expect((await post(app, envelope(PAYLOADS.action), OWNER, STATION)).status).toBe(404);
@@ -446,7 +508,7 @@ describe('GET /api/stations/:stationId/ownership: the read', () => {
       success: true, stationAlias: ALIAS, isOwner: false, ownerNonce: 7, frozen: { sinceHeight: 900 },
       ownerDeactivated: false, rewardsSuspended: true,
       pendingRecovery: { recoveryNonce: 7, filedAtHeight: 1000, executableAtHeight: 35000, noticeBlocks: 34000 },
-      features: { stationOwnerConsent: true, stationOwnerActions: true, stationActiveRewardGate: false },
+      features: { stationOwnerConsent: true, stationOwnerActions: true, stationActiveRewardGate: false, stationSubmitterKey: false },
     });
     const text = JSON.stringify(res.body);
     expect(text).not.toContain(OWNER);
@@ -518,6 +580,25 @@ describe('GET /api/stations/:stationId/ownership: the read', () => {
     expect(res.status).toBe(502);
     expect(res.body.error.code).toBe('CORE4_CONTRACT_MISMATCH');
     expect(JSON.stringify(res.body)).not.toMatch(/ownerCommitment/);
+  });
+
+  it.each([
+    ['node reports station_submitter_key true', true, true],
+    ['node reports station_submitter_key false', false, false],
+    ['node omits station_submitter_key (a node that predates it)', undefined, false],
+    ['node sends the string "true"', 'true', false],
+    ['node sends 1', 1, false],
+    ['node sends null', null, false],
+    ['node sends an object', { on: true }, false],
+  ])('features.stationSubmitterKey: %s', async (_name, flag, want) => {
+    const reply = ledgerReply();
+    if (flag !== undefined) reply.payload.features.station_submitter_key = flag;
+    else expect(reply.payload.features).not.toHaveProperty('station_submitter_key');
+    const { app } = makeApp({ core4: () => reply });
+    const res = await get(app);
+    expect(res.status).toBe(200);
+    expect(res.body.features.stationSubmitterKey).toBe(want);
+    expect(res.body.features).toMatchObject({ stationOwnerConsent: true, stationOwnerActions: true, stationActiveRewardGate: false });
   });
 
   it('a clean ledger reports no frozen and no pending recovery explicitly', async () => {

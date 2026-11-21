@@ -89,7 +89,19 @@ const CLIENT_KINDS: Record<string, OwnerKind> = {
   recovery_execute: 'recovery_execute',
   recovery_file: 'recovery_file',
 };
-const ACTIONS = new Set(['report_stolen', 'unfreeze', 'deactivate', 'reactivate']);
+const ACTIONS = new Set(['report_stolen', 'unfreeze', 'deactivate', 'reactivate', 'set_submitter_key']);
+
+/**
+ * `set_submitter_key` (feature `station_submitter_key`, core4 `StationSubmitterKeyPayload`): the same
+ * station_owner_action_v1 fields plus the approved submitter key and class. Both present approves that key, both
+ * absent (or JSON null, which serde reads as absent) clears it; one without the other is malformed. The key is
+ * 64 LOWERCASE hex digits (core4 `is_canonical_submitter_pubkey`; the node also checks it decodes to an ed25519 key).
+ * These fields are accepted ONLY on this action; the four older actions keep their exact shape.
+ */
+const SET_SUBMITTER_KEY = 'set_submitter_key';
+const SUBMITTER_PUBKEY = /^[0-9a-f]{64}$/;
+const SUBMITTER_CLASSES = new Set(['device', 'relay']);
+const SUBMITTER_FIELDS = ['submitter_pubkey', 'submitter_class'] as const;
 
 /**
  * Kinds a caller with no wallet login may submit (the claimant has typically lost the owner key).
@@ -245,8 +257,16 @@ export function validateOwnerActionBody(body: unknown, stationId: string): Valid
   const spec = typeof p.tx_kind === 'string' ? KIND_SPECS[p.tx_kind] : undefined;
   if (!spec) return bad('tx_kind is not a station owner action');
   if (spec.kind !== wantKind) return bad('kind does not match the payload tx_kind');
-  const allowed = new Set(['tx_kind', ...Object.keys(spec.fields)]);
+  const setsSubmitter = spec.kind === 'action' && p.action === SET_SUBMITTER_KEY;
+  const allowed = new Set(['tx_kind', ...Object.keys(spec.fields), ...(setsSubmitter ? SUBMITTER_FIELDS : [])]);
   if (Object.keys(p).some((k) => !allowed.has(k))) return bad('unexpected payload fields');
+  if (setsSubmitter) {
+    const key = p.submitter_pubkey ?? null;
+    const cls = p.submitter_class ?? null;
+    if ((key === null) !== (cls === null)) return bad('submitter_pubkey and submitter_class are both present (approve) or both absent (clear)');
+    if (key !== null && !(typeof key === 'string' && SUBMITTER_PUBKEY.test(key))) return bad('submitter_pubkey must be 64 lowercase hex digits');
+    if (cls !== null && !(typeof cls === 'string' && SUBMITTER_CLASSES.has(cls))) return bad('submitter_class must be device or relay');
+  }
   for (const [field, type] of Object.entries(spec.fields)) {
     const v = p[field];
     const ok =
@@ -522,6 +542,9 @@ export function createStationOwnerRouter(deps: {
           stationOwnerConsent: features.station_owner_consent,
           stationOwnerActions: features.station_owner_actions,
           stationActiveRewardGate: features.station_active_reward_gate,
+          // Newer than the other three: only a literal true from the node is true. Absent (a node that predates the
+          // flag) or any other value is false, which keeps the frontend control disabled.
+          stationSubmitterKey: features.station_submitter_key === true,
         },
         observedAtHeight: data.observed_at_height,
         settledHeight: data.settled_height,
