@@ -601,6 +601,58 @@ describe('GET /api/stations/:stationId/ownership: the read', () => {
     expect(res.body.features).toMatchObject({ stationOwnerConsent: true, stationOwnerActions: true, stationActiveRewardGate: false });
   });
 
+  describe('submitterKey (core4 owner_ledger.submitter_pubkey / submitter_class)', () => {
+    const KEY = 'fd1724385aa0c75b64fb78cd602fa1d991fdebf76b13c58ed702eac835e9f618'; // pragma: allowlist secret -- public ed25519 key of the core4 test seed [9;32]
+    const read = async (ledger: Record<string, unknown>, drop: string[] = []) => {
+      const reply = ledgerReply({}, ledger);
+      for (const k of drop) delete reply.payload.owner_ledger[k];
+      const { app } = makeApp({ core4: () => reply });
+      const res = await get(app);
+      expect(res.status).toBe(200); // never a 502 for these fields
+      expect(res.body).toHaveProperty('submitterKey');
+      return res.body.submitterKey;
+    };
+
+    it.each(['device', 'relay'])('a valid key with class %s is reported as {pubkey, class}', async (cls) => {
+      expect(await read({ submitter_pubkey: KEY, submitter_class: cls })).toEqual({ pubkey: KEY, class: cls });
+    });
+
+    it('both null (no key approved) is null', async () => {
+      expect(await read({ submitter_pubkey: null, submitter_class: null })).toBeNull();
+    });
+
+    it('both absent (a node that predates the fields) is null', async () => {
+      expect(await read({}, ['submitter_pubkey', 'submitter_class'])).toBeNull();
+    });
+
+    it.each([
+      ['a key with a null class', { submitter_pubkey: KEY, submitter_class: null }],
+      ['a key with no class', { submitter_pubkey: KEY }],
+      ['a class with a null key', { submitter_pubkey: null, submitter_class: 'device' }],
+      ['a class with no key', { submitter_class: 'relay' }],
+      ['an uppercase key', { submitter_pubkey: KEY.toUpperCase(), submitter_class: 'device' }],
+      ['a short key', { submitter_pubkey: KEY.slice(2), submitter_class: 'device' }],
+      ['a long key', { submitter_pubkey: `${KEY}00`, submitter_class: 'device' }],
+      ['a 0x-prefixed key', { submitter_pubkey: `0x${KEY.slice(2)}`, submitter_class: 'device' }],
+      ['a non-hex key', { submitter_pubkey: 'g'.repeat(64), submitter_class: 'device' }],
+      ['a numeric key', { submitter_pubkey: 12, submitter_class: 'device' }],
+      ['an unknown class', { submitter_pubkey: KEY, submitter_class: 'phone' }],
+      ['a capitalised class', { submitter_pubkey: KEY, submitter_class: 'Device' }],
+      ['a non-string class', { submitter_pubkey: KEY, submitter_class: 1 }],
+      ['an object for both', { submitter_pubkey: { hex: KEY }, submitter_class: { device: null } }],
+    ])('%s is null, not a 502 and not a guessed value', async (_name, ledger) => {
+      expect(await read(ledger)).toBeNull();
+    });
+
+    it('the rest of the ownership read is unchanged when a key is reported', async () => {
+      const reply = ledgerReply({}, { submitter_pubkey: KEY, submitter_class: 'relay' });
+      const { app } = makeApp({ core4: () => reply });
+      const res = await get(app);
+      expect(res.body).toMatchObject({ success: true, ownerNonce: 7, frozen: null, pendingRecovery: null });
+      expect(JSON.stringify(res.body)).not.toMatch(/submitter_pubkey|submitter_class/);
+    });
+  });
+
   it('a clean ledger reports no frozen and no pending recovery explicitly', async () => {
     const { app } = makeApp({ core4: () => ledgerReply() });
     const res = await get(app);

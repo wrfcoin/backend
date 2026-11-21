@@ -57,7 +57,8 @@
             "stationSubmitterKey": false
           },
           "observedAtHeight": 500,
-          "settledHeight": 480
+          "settledHeight": 480,
+          "submitterKey": null
         }
       }
     },
@@ -97,7 +98,8 @@
             "stationSubmitterKey": false
           },
           "observedAtHeight": 500,
-          "settledHeight": 480
+          "settledHeight": 480,
+          "submitterKey": null
         }
       }
     },
@@ -139,7 +141,8 @@
             "stationSubmitterKey": false
           },
           "observedAtHeight": 500,
-          "settledHeight": 480
+          "settledHeight": 480,
+          "submitterKey": null
         }
       }
     },
@@ -170,7 +173,8 @@
             "stationSubmitterKey": false
           },
           "observedAtHeight": 500,
-          "settledHeight": 480
+          "settledHeight": 480,
+          "submitterKey": null
         }
       }
     },
