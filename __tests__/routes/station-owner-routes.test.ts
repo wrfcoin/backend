@@ -586,6 +586,10 @@ describe('GET /api/stations/:stationId/ownership: the read', () => {
     ['node reports station_submitter_key true', true, true],
     ['node reports station_submitter_key false', false, false],
     ['node omits station_submitter_key (a node that predates it)', undefined, false],
+    ['node sends the string "true"', 'true', false],
+    ['node sends 1', 1, false],
+    ['node sends null', null, false],
+    ['node sends an object', { on: true }, false],
   ])('features.stationSubmitterKey: %s', async (_name, flag, want) => {
     const reply = ledgerReply();
     if (flag !== undefined) reply.payload.features.station_submitter_key = flag;
@@ -629,8 +633,6 @@ describe('GET /api/stations/:stationId/ownership: the read', () => {
     ['features omitted', (d: any) => { delete d.features; }],
     ['one feature flag omitted', (d: any) => { delete d.features.station_owner_actions; }],
     ['a feature flag that is not a boolean', (d: any) => { d.features.station_owner_consent = 'yes'; }],
-    ['a station_submitter_key flag that is present but not a boolean', (d: any) => { d.features.station_submitter_key = 'true'; }],
-    ['a station_submitter_key flag that is null', (d: any) => { d.features.station_submitter_key = null; }],
     ['is_active omitted', (d: any) => { delete d.is_active; }],
     ['observed_at_height omitted', (d: any) => { delete d.observed_at_height; }],
     ['settled_height omitted', (d: any) => { delete d.settled_height; }],
