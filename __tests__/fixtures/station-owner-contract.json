@@ -53,7 +53,8 @@
           "features": {
             "stationOwnerConsent": true,
             "stationOwnerActions": true,
-            "stationActiveRewardGate": false
+            "stationActiveRewardGate": false,
+            "stationSubmitterKey": false
           },
           "observedAtHeight": 500,
           "settledHeight": 480
@@ -92,7 +93,8 @@
           "features": {
             "stationOwnerConsent": true,
             "stationOwnerActions": true,
-            "stationActiveRewardGate": false
+            "stationActiveRewardGate": false,
+            "stationSubmitterKey": false
           },
           "observedAtHeight": 500,
           "settledHeight": 480
@@ -133,7 +135,8 @@
           "features": {
             "stationOwnerConsent": true,
             "stationOwnerActions": true,
-            "stationActiveRewardGate": false
+            "stationActiveRewardGate": false,
+            "stationSubmitterKey": false
           },
           "observedAtHeight": 500,
           "settledHeight": 480
@@ -163,7 +166,8 @@
           "features": {
             "stationOwnerConsent": true,
             "stationOwnerActions": true,
-            "stationActiveRewardGate": false
+            "stationActiveRewardGate": false,
+            "stationSubmitterKey": false
           },
           "observedAtHeight": 500,
           "settledHeight": 480

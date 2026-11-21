@@ -482,6 +482,9 @@ export function createStationOwnerRouter(deps: {
         || typeof data.rewards_suspended !== 'boolean' || typeof data.is_active !== 'boolean'
         || !features || typeof features !== 'object'
         || ['station_owner_consent', 'station_owner_actions', 'station_active_reward_gate'].some((k) => typeof features[k] !== 'boolean')
+        // station_submitter_key is newer than the other three: a node that predates it omits it (read as false, never
+        // true), but a value that is present must still be a boolean.
+        || (has(features, 'station_submitter_key') && typeof features.station_submitter_key !== 'boolean')
         || !isInt(data.recovery_notice_blocks) || !isInt(data.observed_at_height) || !isInt(data.settled_height);
       if (mismatch) {
         return send(res, problem(502, 'CORE4_CONTRACT_MISMATCH', 'the node did not report ownership state in the expected shape'));
@@ -542,6 +545,7 @@ export function createStationOwnerRouter(deps: {
           stationOwnerConsent: features.station_owner_consent,
           stationOwnerActions: features.station_owner_actions,
           stationActiveRewardGate: features.station_active_reward_gate,
+          stationSubmitterKey: features.station_submitter_key === true,
         },
         observedAtHeight: data.observed_at_height,
         settledHeight: data.settled_height,
